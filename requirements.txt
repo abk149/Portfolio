@@ -1,0 +1,38 @@
+# Core — all of these have arm64 wheels for macOS (M-series).
+# Tested with Python 3.11 / 3.12 / 3.13.
+# NOTE: Python 3.14 is too new for some scientific wheels (numba, etc.).
+#       On Mac mini M4: `brew install python@3.12` and use that interpreter.
+requests>=2.31
+pandas>=2.1
+numpy>=1.26
+scipy>=1.11
+python-dotenv>=1.0
+typer>=0.12
+rich>=13.7
+anthropic>=0.39
+jinja2>=3.1
+tabulate>=0.9
+
+# Reports
+openpyxl>=3.1
+xlsxwriter>=3.2
+
+# Dashboard
+fastapi>=0.115
+uvicorn[standard]>=0.30
+
+# D-R1-Quant: web search, PDF parsing, vector store, DB, scheduler
+ddgs>=9.0
+beautifulsoup4>=4.12
+lxml>=5.2
+pypdf>=4.3
+ebooklib>=0.18                # EPUB support for knowledge-base uploads
+python-multipart>=0.0.9       # FastAPI file uploads
+# Knowledge Base uses SQLite FTS5 (Python stdlib) — no vector-DB dependency.
+psycopg2-binary>=2.9         # comment out if you don't use TimescaleDB
+APScheduler>=3.10
+python-telegram-bot>=20.7
+
+# Optional native deps (install separately if you want them):
+#   brew install ta-lib   then:  pip install TA-Lib
+# (we ship a pure-pandas fallback if TA-Lib is absent)

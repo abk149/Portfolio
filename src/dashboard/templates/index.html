@@ -1,0 +1,430 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Upstox Portfolio Dashboard</title>
+<link rel="stylesheet" href="/static/styles.css">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+</head>
+<body>
+<header>
+  <h1>🪙 Upstox Portfolio Intelligence</h1>
+  <nav>
+    <button data-tab="portfolio" class="active">Portfolio</button>
+    <button data-tab="performance">📈 Performance</button>
+    <button data-tab="optimize">MPT Optimize</button>
+    <button data-tab="screener">Screener</button>
+    <button data-tab="intraday">Intraday</button>
+    <button data-tab="quant">D-R1-Quant</button>
+    <button data-tab="umap">🗺 Universe Map</button>
+    <button data-tab="agent">Ask AI</button>
+    <button data-tab="kb">📚 Knowledge</button>
+    <button data-tab="settings">⚙ Settings</button>
+  </nav>
+</header>
+
+<main>
+
+<!-- ===== Portfolio ===== -->
+<section id="tab-portfolio" class="tab active">
+  <div class="card" style="border-color:var(--accent)">
+    <h3>💸 Deploy new cash → toward efficient frontier</h3>
+    <p style="color:var(--muted); font-size:13px; margin:4px 0 12px">
+      Tell me how much you want to invest and I'll compute the BUY-ONLY allocation
+      (no sells — preserves your tax basis) that maximises the resulting Sharpe.
+      Optionally folds in STRONG_BUY names from the Universe Map.
+    </p>
+    <div class="row">
+      <label>Amount (₹)
+        <input type="number" id="deploy-cash" value="15000" min="1000" step="500" style="width:120px">
+      </label>
+      <label>Per-name cap
+        <input type="number" id="deploy-maxw" value="0.25" min="0.05" max="1" step="0.05" style="width:80px">
+      </label>
+      <label style="flex-direction:row; align-items:center; gap:6px">
+        <input type="checkbox" id="deploy-universe" checked>
+        Include STRONG_BUY from Universe Map
+      </label>
+      <button class="primary" onclick="deployCash()">🎯 Suggest allocation</button>
+    </div>
+    <div id="deploy-out" style="margin-top:12px"></div>
+  </div>
+
+  <div class="row">
+    <button class="primary" onclick="loadPortfolio()">↻ Refresh portfolio</button>
+    <button onclick="loadRisk()">⚠ Risk check</button>
+    <button onclick="sendTelegram()">📲 Send Excel to Telegram</button>
+    <a class="btn" href="/api/reports/latest">⬇ Download latest XLSX</a>
+  </div>
+  <div id="port-kpis" class="kpis"></div>
+  <div class="grid-2">
+    <div class="card"><h3>Holdings</h3><div id="port-holdings"></div></div>
+    <div class="card"><h3>Allocation</h3><canvas id="alloc-chart" height="220"></canvas><div id="port-alloc"></div></div>
+  </div>
+  <div class="card"><h3>Risk</h3><div id="risk-out"></div></div>
+</section>
+
+<!-- ===== Performance ===== -->
+<section id="tab-performance" class="tab">
+  <div class="row">
+    <button class="primary" onclick="loadPerformance()">📈 Analyze performance</button>
+    <span id="perf-status" class="status"></span>
+  </div>
+  <div style="color:var(--muted); font-size:12px; margin:-6px 0 14px; line-height:1.5">
+    Fetches your full trade history, reconstructs daily portfolio value,
+    calculates XIRR (money-weighted annual return), period returns, and identifies
+    winners, losers, and stocks you sold too early. First run may take 15-30 seconds.
+  </div>
+
+  <div id="perf-kpis" class="kpis"></div>
+
+  <div class="card perf-chart-wrapper">
+    <h3>💰 Portfolio equity curve
+      <span style="float:right; font-weight:400; font-size:11px; color:var(--muted)">
+        portfolio value vs invested capital over time
+      </span>
+    </h3>
+    <div style="position:relative; height:340px">
+      <canvas id="perf-equity-chart"></canvas>
+    </div>
+  </div>
+
+  <div class="perf-grid">
+    <div class="card perf-card perf-card--winners">
+      <h3>🏆 Top Winners</h3>
+      <div id="perf-winners"></div>
+    </div>
+    <div class="card perf-card perf-card--losers">
+      <h3>📉 Biggest Losers</h3>
+      <div id="perf-losers"></div>
+    </div>
+    <div class="card perf-card perf-card--misses">
+      <h3>💸 Opportunity Misses</h3>
+      <p style="color:var(--muted); font-size:11px; margin:0 0 8px">
+        Stocks you fully exited, but current price is &gt;20% above your sell price.
+      </p>
+      <div id="perf-misses"></div>
+    </div>
+  </div>
+</section>
+
+<!-- ===== Optimize ===== -->
+<section id="tab-optimize" class="tab">
+  <div class="row">
+    <label>Mode
+      <select id="opt-mode">
+        <option value="max_sharpe">Max Sharpe (best return/risk)</option>
+        <option value="min_variance">Min Variance</option>
+        <option value="target_return">Target Return</option>
+      </select>
+    </label>
+    <label>Target return (if applicable) <input type="number" id="opt-target" value="0.20" step="0.01"></label>
+    <label>Max weight <input type="number" id="opt-mw" value="0.25" step="0.05"></label>
+    <button class="primary" onclick="runOptimize()">🧮 Optimize</button>
+  </div>
+  <div id="opt-kpis" class="kpis"></div>
+  <div class="grid-2">
+    <div class="card"><h3>Target weights</h3><div id="opt-weights"></div></div>
+    <div class="card"><h3>Efficient frontier</h3><canvas id="frontier-chart" height="240"></canvas></div>
+  </div>
+  <div class="card"><h3>Rebalance plan</h3><div id="opt-rebal"></div></div>
+</section>
+
+<!-- ===== Screener ===== -->
+<section id="tab-screener" class="tab">
+  <div class="row">
+    <label>Universe
+      <select id="scr-uni">
+        <option value="nifty50">nifty50 (fast)</option>
+        <option value="all_nse">all NSE</option>
+        <option value="all_bse">all BSE</option>
+        <option value="all">all (slow)</option>
+      </select>
+    </label>
+    <label>Tech ≥ <input type="number" id="scr-tech" value="60"></label>
+    <label>Fund ≥ <input type="number" id="scr-fund" value="50"></label>
+    <button class="primary" onclick="runScreener()">🔎 Run funnel scan</button>
+  </div>
+  <div id="scr-status" class="status"></div>
+  <div class="card"><h3>Recommendations</h3><div id="scr-out"></div></div>
+</section>
+
+<!-- ===== Intraday ===== -->
+<section id="tab-intraday" class="tab">
+  <div class="row">
+    <button class="primary" onclick="runIntradayAnalyze()">📊 Analyze my last 60 days</button>
+    <button onclick="runIntradayScan()">⚡ Scan live opportunities</button>
+  </div>
+  <div id="intra-kpis" class="kpis"></div>
+  <div class="grid-2">
+    <div class="card"><h3>Best / Worst trades</h3><div id="intra-bw"></div></div>
+    <div class="card"><h3>By symbol</h3><div id="intra-sym"></div></div>
+  </div>
+  <div class="card"><h3>Mistakes</h3><div id="intra-mistakes"></div></div>
+  <div class="card"><h3>Live opportunities</h3><div id="intra-scan"></div></div>
+</section>
+
+<!-- ===== D-R1-Quant ===== -->
+<section id="tab-quant" class="tab">
+  <div class="row">
+    <button onclick="loadMacro()">🌐 Macro snapshot</button>
+    <label>Universe
+      <select id="quant-uni">
+        <option value="nifty50">Nifty 50 (curated · ~20 stocks · fast)</option>
+        <option value="all_nse">All NSE equities (~2000 · slow first run)</option>
+        <option value="all_bse">All BSE equities</option>
+        <option value="all">All NSE + BSE (very slow)</option>
+      </select>
+    </label>
+    <label>Stage-1 top N
+      <input id="quant-topn" type="number" value="20" min="1" max="500" style="width:80px">
+    </label>
+    <button class="primary" onclick="runQuant()">🧠 Run full funnel</button>
+    <button onclick="killQuant()">⏹ Kill current run</button>
+    <span id="quant-job-meta" style="color:var(--muted); font-size:12px"></span>
+  </div>
+  <div style="color:var(--muted); font-size:12px; margin:-6px 0 12px">
+    <b>Stage-1 top N</b> = how many highest-scoring technical candidates feed into Stage 2.
+    Stage 2 calls the local LLM per ticker (~30–60s each on M4), so set this modestly
+    (10–30) for a full-NSE run unless you're happy to wait.
+  </div>
+  <div id="macro-kpis" class="kpis"></div>
+  <div class="card">
+    <h3>🔎 Live debug — what's being analyzed
+      <span style="float:right; font-weight:400; font-size:11px; color:var(--muted)">
+        <label><input type="checkbox" id="quant-debug-autoscroll" checked> auto-scroll</label>
+      </span>
+    </h3>
+    <div id="quant-debug" style="font-family:ui-monospace,SFMono-Regular,monospace;font-size:11px;line-height:1.55;background:#0a0d12;border:1px solid var(--border);border-radius:6px;padding:10px;max-height:300px;min-height:120px;overflow:auto;color:#c9d1d9">
+      <span style="color:var(--muted)">(no run yet — hit "Run full funnel")</span>
+    </div>
+  </div>
+  <div class="grid-2">
+    <div class="card"><h3>Validated (Stage 2)</h3><div id="quant-validated"></div></div>
+    <div class="card"><h3>MPT target weights (Stage 3)</h3><div id="quant-weights"></div></div>
+  </div>
+  <div class="card"><h3>Intraday alerts (Stage 4)</h3><div id="quant-alerts"></div></div>
+  <div class="card"><h3>Rejected</h3><div id="quant-rejected" style="color:var(--muted)"></div></div>
+</section>
+
+<!-- ===== Universe Map ===== -->
+<section id="tab-umap" class="tab">
+  <div class="row">
+    <label>Universe
+      <select id="umap-uni">
+        <option value="nifty50">Nifty 50</option>
+        <option value="all_nse" selected>All NSE</option>
+        <option value="all_bse">All BSE</option>
+      </select>
+    </label>
+    <label>Refresh if older than (days)
+      <input type="number" id="umap-maxage" value="7" min="0" max="90" style="width:90px">
+    </label>
+    <button class="primary" onclick="umapBuild()">🛠 Build map (slow first time)</button>
+    <button onclick="umapLoad()">↻ Load cached</button>
+    <button onclick="umapReset()" style="color:#f85149">🧹 Reset & redownload</button>
+    <a class="btn" id="umap-dl-xlsx" href="#" onclick="umapDownload('xlsx')">⬇ Excel report</a>
+    <a class="btn" id="umap-dl-csv" href="#" onclick="umapDownload('csv')">⬇ CSV</a>
+    <span id="umap-meta" style="color:var(--muted); font-size:12px"></span>
+  </div>
+  <div style="color:var(--muted); font-size:12px; margin:-6px 0 12px; line-height:1.5">
+    <b>How this differs from D-R1-Quant:</b> the Universe Map is <b>deterministic</b> —
+    pure technical and fundamental scoring, NO LLM. Designed to plot thousands
+    of stocks in seconds-per-stock, not minutes. The D-R1-Quant funnel uses the
+    LLM for per-stock reasoning over its 20 candidates; this view is the
+    visual cross-reference.
+  </div>
+
+  <div class="card">
+    <h3>🗺 Technical × Fundamental — every stock
+      <span style="float:right; font-weight:400; font-size:11px; color:var(--muted)">
+        click a dot to see details · drag to zoom
+      </span>
+    </h3>
+    <div style="position:relative">
+      <canvas id="umap-chart" height="500"></canvas>
+    </div>
+    <div id="umap-detail" style="margin-top:10px; min-height:60px"></div>
+  </div>
+
+  <div class="card">
+    <h3>🔍 Top quadrants</h3>
+    <div class="grid-2">
+      <div>
+        <h4 style="color:var(--pos); margin:0 0 6px">🟢 Top-right · STRONG_BUY candidates (high tech, high fund)</h4>
+        <div id="umap-q-best"></div>
+      </div>
+      <div>
+        <h4 style="color:#d29922; margin:0 0 6px">🟡 Top-left · Momentum-only (high tech, weak fund)</h4>
+        <div id="umap-q-momo"></div>
+      </div>
+      <div>
+        <h4 style="color:#79c0ff; margin:0 0 6px">🔵 Bottom-right · Value/contrarian (weak tech, strong fund)</h4>
+        <div id="umap-q-value"></div>
+      </div>
+      <div>
+        <h4 style="color:var(--neg); margin:0 0 6px">🔴 Bottom-left · Avoid</h4>
+        <div id="umap-q-avoid"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>📜 Build log</h3>
+    <div id="umap-log" style="font-family:ui-monospace,monospace;font-size:11px;line-height:1.5;background:#0a0d12;border:1px solid var(--border);border-radius:6px;padding:10px;max-height:200px;min-height:80px;overflow:auto;color:#c9d1d9"></div>
+  </div>
+</section>
+
+<!-- ===== Agent ===== -->
+<section id="tab-agent" class="tab">
+  <div class="row">
+    <label>Agent
+      <select id="agent-pick">
+        <option value="portfolio">Portfolio</option>
+        <option value="screener">Screener</option>
+        <option value="intraday">Intraday</option>
+      </select>
+    </label>
+  </div>
+  <div class="row">
+    <textarea id="agent-q" rows="3" placeholder="Ask anything — e.g. 'Optimize my portfolio for best Sharpe and tell me what to trim.'"></textarea>
+  </div>
+  <div class="row"><button class="primary" onclick="runAgent()">💬 Ask</button></div>
+  <div class="card"><div id="agent-out" class="agent-out"></div></div>
+</section>
+
+<!-- ===== Knowledge Base ===== -->
+<section id="tab-kb" class="tab">
+  <div id="kb-kpis" class="kpis"></div>
+
+  <div class="card">
+    <h3>📤 Upload a finance book, journal, or note</h3>
+    <p style="color:var(--muted); font-size:13px; margin:4px 0 12px">
+      Supported: PDF, EPUB, TXT, Markdown. Files are chunked (~500 words, 50 overlap),
+      embedded by ChromaDB's sentence-transformer, and stored compressed in
+      <code>.cache/chroma/kb/</code>. Once indexed, the Ask-AI agents can cite them.
+    </p>
+    <div class="row">
+      <input type="file" id="kb-file" accept=".pdf,.epub,.txt,.md,.markdown">
+      <input type="text" id="kb-title" placeholder="Optional title (defaults to filename)" style="flex:1; min-width:240px">
+      <button class="primary" onclick="kbUpload()">⤴ Upload & index</button>
+    </div>
+    <div id="kb-upload-state" style="margin-top:8px; font-size:13px"></div>
+
+    <h3 style="margin-top:22px">✏ Or paste a snippet directly</h3>
+    <div class="row">
+      <input id="kb-snippet-title" placeholder="Title (e.g. 'Buffett — Mr Market')" style="flex:1; min-width:240px">
+    </div>
+    <textarea id="kb-snippet-text" rows="4" placeholder="Paste text here…"></textarea>
+    <div class="row" style="margin-top:8px">
+      <button onclick="kbIngestText()">＋ Add to KB</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>🔍 Search the KB</h3>
+    <div class="row">
+      <input id="kb-search-q" placeholder="Try: 'Kelly criterion', 'when to sell', 'margin of safety'…" style="flex:1; min-width:300px">
+      <button class="primary" onclick="kbSearch()">Search</button>
+    </div>
+    <div id="kb-search-out" style="margin-top:10px"></div>
+  </div>
+
+  <div class="card">
+    <h3>🤖 Captured agent decisions (auto-RAG training corpus)
+      <span style="float:right; font-size:11px; color:var(--muted)">populated by every Stage-2 verdict</span>
+    </h3>
+    <p style="color:var(--muted); font-size:12px; margin:4px 0 12px">
+      Every time the funnel decides KEEP/REJECT on a stock, the full reasoning
+      trace (prompt + tools + verdict) is indexed here. Searchable now,
+      exportable as MLX-LM fine-tuning data when ready.
+    </p>
+    <div class="row">
+      <input id="kb-dec-q" placeholder="e.g. 'high P/E with growth', 'why REJECT', 'small-cap signals'…" style="flex:1; min-width:300px">
+      <button class="primary" onclick="kbSearchDecisions()">Search decisions</button>
+    </div>
+    <div id="kb-dec-out" style="margin-top:10px"></div>
+  </div>
+
+  <div class="card">
+    <h3>📚 Indexed documents
+      <span style="float:right">
+        <button onclick="kbRefresh()" style="font-size:12px">refresh</button>
+        <button onclick="kbExport()" style="font-size:12px">🛠 Export for fine-tuning</button>
+      </span>
+    </h3>
+    <div id="kb-docs"></div>
+    <p style="color:var(--muted); font-size:12px; margin-top:8px">
+      Fine-tuning workflow: click <b>Export for fine-tuning</b> → produces
+      <code>.cache/finetune_corpus.jsonl</code> → run
+      <code>python -m mlx_lm.lora --model deepseek-ai/DeepSeek-R1-Distill-Llama-8B
+      --train --data .cache/finetune_corpus.jsonl --iters 600 --batch-size 1</code>
+      to LoRA-tune your local DeepSeek on the M4 GPU.
+    </p>
+  </div>
+</section>
+
+<!-- ===== Settings ===== -->
+<section id="tab-settings" class="tab">
+  <div class="row">
+    <button class="primary" onclick="loadStatus()">↻ Refresh status</button>
+    <button onclick="testTelegram()">📲 Send Telegram test</button>
+    <button onclick="startTgBot()">🤖 Start Telegram bot</button>
+    <button onclick="stopTgBot()">⏹ Stop bot</button>
+    <button onclick="tgBotLog()">📜 Bot log</button>
+  </div>
+  <div id="tg-bot-log" style="white-space:pre-wrap;font-family:ui-monospace,monospace;font-size:11px;color:var(--muted);max-height:240px;overflow:auto;margin-top:8px"></div>
+
+  <div id="status-cards" class="kpis"></div>
+
+  <div class="card">
+    <h3>🔐 Upstox login</h3>
+    <p style="color:var(--muted); margin:4px 0 12px; font-size:13px">
+      Upstox tokens expire daily (~3:30 AM IST). Two steps:
+    </p>
+    <ol style="margin:0 0 12px 20px; color:var(--muted); font-size:13px; line-height:1.7">
+      <li><b>Step 1</b> — click <b>Open Upstox login</b>, a new tab will open.</li>
+      <li>Log in to Upstox. You'll be redirected to a URL like
+        <code>http://localhost:8765/callback?code=XXXX</code> (page may show "can't connect" — that's expected).</li>
+      <li><b>Step 2</b> — copy that entire URL from the address bar and paste it below, then click <b>Submit</b>.</li>
+    </ol>
+    <div class="row">
+      <button class="primary" onclick="openUpstoxLogin()">🔗 Open Upstox login</button>
+      <span id="upstox-auth-state" style="color:var(--muted); font-size:12px"></span>
+    </div>
+    <div class="row" style="margin-top:8px">
+      <input id="upstox-code" placeholder="Paste redirected URL or code here…" style="flex:1; min-width:300px">
+      <button class="primary" onclick="submitUpstoxCode()">✓ Submit</button>
+    </div>
+    <div id="upstox-auth-result" style="margin-top:8px; font-size:13px"></div>
+  </div>
+
+  <div class="card">
+    <h3>Scheduler — IST market hours</h3>
+    <div id="sched-state" style="color:var(--muted); margin-bottom:10px"></div>
+    <div class="row">
+      <button class="primary" onclick="schedStart()">▶ Start scheduler</button>
+      <button onclick="schedStop()">⏹ Stop</button>
+      <button onclick="runNow('macro')">Run macro now</button>
+      <button onclick="runNow('funnel')">Run funnel now</button>
+      <button onclick="runNow('intraday')">Run intraday now</button>
+      <button onclick="runNow('eod')">Run EOD report now</button>
+    </div>
+    <div id="sched-jobs"></div>
+  </div>
+
+  <div class="card">
+    <h3>Active configuration</h3>
+    <div id="config-table"></div>
+    <p style="color:var(--muted); margin-top:10px; font-size:12px">
+      Edit values in <code>.env</code> at the project root, then restart the dashboard.
+    </p>
+  </div>
+</section>
+
+</main>
+<div id="toast"></div>
+<script src="/static/app.js"></script>
+</body>
+</html>
