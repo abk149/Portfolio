@@ -26,6 +26,7 @@ from src.utils.compat import minimize
 
 from src.data import MarketData
 from src.upstox.client import UpstoxClient
+from src.brokers import get_broker
 from src.utils.logger import get_logger
 
 log = get_logger("optimizer")
@@ -114,7 +115,7 @@ def _variance(w, mu, cov, rf):
 class PortfolioOptimizer:
     def __init__(self, upstox: Optional[UpstoxClient] = None, risk_free: float = 0.07):
         try:
-            self.upstox = upstox or UpstoxClient()
+            self.upstox = upstox or get_broker()
         except Exception:
             self.upstox = None
         self.md = MarketData(self.upstox)

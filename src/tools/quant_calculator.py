@@ -12,12 +12,13 @@ import pandas as pd
 from src.data import MarketData
 from src.portfolio import PortfolioOptimizer
 from src.upstox.client import UpstoxClient
+from src.brokers import get_broker
 
 
 class QuantCalculator:
     def __init__(self, upstox: Optional[UpstoxClient] = None):
         try:
-            self.up = upstox or UpstoxClient()
+            self.up = upstox or get_broker()
         except Exception:
             self.up = None
         self.md = MarketData(self.up)

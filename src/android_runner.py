@@ -9,11 +9,12 @@ def start_dashboard(app_files_dir: str, receiver: Any) -> None:
     # Configure environment variables before importing anything else
     os.environ["APP_FILES_DIR"] = app_files_dir
 
-    # ── LLM: NVIDIA NIM over the internet (no on-device model) ───────────────
-    # The analysis brain runs in NVIDIA's cloud. The NVIDIA_API_KEY comes from
-    # the bundled .env (copied from the Mac project at build time) OR from an
-    # env var the Kotlin layer set before calling us. We do NOT hardcode it.
-    os.environ["LLM_PROVIDER"] = "nvidia"
+    # ── LLM Configuration ──────────────────────────────────────────────────
+    # The LLM_PROVIDER and API keys are injected by the Kotlin layer
+    # (PortfolioService.startServers) into os.environ before calling this.
+    # We only set a default if they are missing.
+    if not os.environ.get("LLM_PROVIDER"):
+        os.environ["LLM_PROVIDER"] = "nvidia"
 
     # Make sure the bundled .env is loaded so NVIDIA_API_KEY / UPSTOX_* resolve,
     # regardless of Chaquopy's working directory.
@@ -59,6 +60,48 @@ def start_dashboard(app_files_dir: str, receiver: Any) -> None:
     import uvicorn
     # Import the FastAPI app
     from src.dashboard.app import app
-    
-    # Run uvicorn server
-    uvicorn.run(app, host="127.0.0.1", port=8000, reload=False, log_level="info")
+    from config import settings
+
+    # Force settings to reload environment variables injected by Kotlin
+    print("[Android Runner] Refreshing settings from os.environ...")
+    settings.refresh()
+
+    if settings.upstox_api_key:
+        print(f"[Android Runner] UPSTOX_API_KEY loaded: {settings.upstox_api_key[:4]}***")
+    else:
+        print("[Android Runner] ERROR: UPSTOX_API_KEY is still empty after refresh!")
+
+    # Use a minimal log config to avoid "formatter 'default'" errors on Android
+    log_config = {
+        "version": 1,
+        "disable_existing_loggers": False,
+        "formatters": {
+            "simple": {
+                "format": "%(levelname)s: %(message)s"
+            }
+        },
+        "handlers": {
+            "stdout": {
+                "class": "logging.StreamHandler",
+                "formatter": "simple",
+                "stream": "ext://sys.stdout"
+            }
+        },
+        "loggers": {
+            "uvicorn": {
+                "handlers": ["stdout"],
+                "level": "INFO"
+            },
+            "uvicorn.error": {
+                "level": "INFO"
+            },
+            "uvicorn.access": {
+                "handlers": ["stdout"],
+                "level": "INFO",
+                "propagate": False
+            }
+        }
+    }
+
+    # Run uvicorn server with custom log_config
+    uvicorn.run(app, host="127.0.0.1", port=8000, reload=False, log_config=log_config)

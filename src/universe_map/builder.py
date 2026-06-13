@@ -80,8 +80,8 @@ def _scrub(v):
 
 def _upstox_health_check() -> tuple[bool, str]:
     try:
-        from src.upstox.client import UpstoxClient
-        prof = UpstoxClient().profile()
+        from src.brokers import get_broker
+        prof = get_broker().profile()
         return True, prof.get("user_name") or prof.get("email") or "(unknown)"
     except Exception as e:
         return False, f"{type(e).__name__}: {e}"
@@ -179,19 +179,23 @@ def build_universe_map(
         sym = row["symbol"]
 
         # Incremental: reuse fresh KB data
-        age = kb.stock_age_days(sym)
-        if age is not None and age < max_age_days:
-            stored = kb.get_stock(sym) or {}
-            merged = {**row}
-            for k in ("fund_score", "PE", "ROE", "DE", "sector", "industry",
-                      "combined", "recommendation", "market_cap_cr"):
-                if stored.get(k) not in (None, ""):
-                    merged[k] = stored[k]
-            n_reused += 1
-            return merged
+        try:
+            age = kb.stock_age_days(sym)
+            if age is not None and age < max_age_days:
+                stored = kb.get_stock(sym) or {}
+                merged = {**row}
+                for k in ("fund_score", "PE", "ROE", "DE", "sector", "industry",
+                        "combined", "recommendation", "market_cap_cr"):
+                    if stored.get(k) not in (None, ""):
+                        merged[k] = stored[k]
+                n_reused += 1
+                return merged
+        except Exception as e:
+            log.debug(f"KB check failed for {sym}: {e}")
 
         # Fresh fetch
         try:
+            from src.tools.screener_in import fetch_fundamentals
             raw = fetch_fundamentals(sym) or {}
             fund = _adapt_fundamentals(sym, raw)
             srcs = raw.get("_sources", [])
@@ -203,6 +207,7 @@ def build_universe_map(
         except Exception as e:
             log.info(f"  {sym}: fund fetch FAILED — {type(e).__name__}: {e}")
             fund = {"fund_score": None}
+
         n_fetched += 1
         merged = {**row, **fund}
 
@@ -221,22 +226,40 @@ def build_universe_map(
                 "TECH_WATCH" if (t or 0) >= 55 else "AVOID")
 
         # Persist into the KB
-        kb.upsert_stock(sym, merged)
+        try:
+            kb.upsert_stock(sym, merged)
+        except Exception as e:
+            log.warning(f"KB upsert failed for {sym}: {e}")
+
         return merged
 
-    with ThreadPoolExecutor(max_workers=workers) as ex:
-        futs = {ex.submit(_process, r): r["symbol"] for r in rows}
+    # Android check: use simple loop for stability
+    import os
+    if os.getenv("APP_FILES_DIR"):
+        print("[UMAP] Android detected — using sequential processing for stability",
+              flush=True, file=sys.stderr)
         done = 0
-        for fut in as_completed(futs):
+        for r in rows:
+            out_records.append(_process(r))
             done += 1
-            try:
-                out_records.append(fut.result())
-            except Exception as e:
-                log.debug(f"process error: {e}")
-            if done % 50 == 0 or done == total:
+            if done % 20 == 0 or done == total:
                 print(f"[UMAP] {done}/{total} processed "
-                      f"({n_fetched} fetched, {n_reused} reused from KB)",
+                      f"({n_fetched} fetched, {n_reused} reused)",
                       flush=True, file=sys.stderr)
+    else:
+        with ThreadPoolExecutor(max_workers=workers) as ex:
+            futs = {ex.submit(_process, r): r["symbol"] for r in rows}
+            done = 0
+            for fut in as_completed(futs):
+                done += 1
+                try:
+                    out_records.append(fut.result())
+                except Exception as e:
+                    log.debug(f"process error: {e}")
+                if done % 50 == 0 or done == total:
+                    print(f"[UMAP] {done}/{total} processed "
+                        f"({n_fetched} fetched, {n_reused} reused from KB)",
+                        flush=True, file=sys.stderr)
 
     records = [_scrub(r) for r in out_records]
     result = {

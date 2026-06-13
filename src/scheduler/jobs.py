@@ -48,9 +48,12 @@ def job_macro_check():
 
 
 def job_full_funnel():
+    job_full_funnel_sync()
+
+def job_full_funnel_sync(universe: str = "nifty50"):
     from src.agents.quant_agent import DR1QuantAgent
     from src.telegram.bot import TelegramBot
-    res = DR1QuantAgent(universe="nifty50").run()
+    res = DR1QuantAgent(universe=universe).run()
     try:
         TelegramBot().broadcast(
             f"🧠 D-R1-Quant funnel done · {res['candidates']} candidates · "
@@ -59,6 +62,7 @@ def job_full_funnel():
         )
     except Exception:
         pass
+    return res
 
 
 def job_intraday():

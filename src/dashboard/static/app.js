@@ -758,8 +758,24 @@ async function openUpstoxLogin() {
     $("upstox-auth-state").innerHTML = `<span class="neg">${r.error}</span>`;
     return;
   }
-  $("upstox-auth-state").innerHTML = `Redirect URI: <code>${r.redirect_uri}</code> — paste the URL Upstox sends you back to.`;
-  window.open(r.url, "_blank", "noopener");
+  // In the Android app: run the whole OAuth inside the WebView and auto-capture
+  // the code on redirect — no external browser, no copy-paste.
+  if (window.AndroidApp && window.AndroidApp.startUpstoxLogin) {
+    $("upstox-auth-state").innerHTML =
+      `Opening Upstox login… you'll return here automatically.<br>` +
+      `<small>This redirect URI must be registered verbatim in your Upstox app: <code>${r.redirect_uri}</code></small>`;
+    window.AndroidApp.startUpstoxLogin(r.url, r.redirect_uri);
+    return;
+  }
+  // Desktop / browser: open a tab; paste the redirected URL back below.
+  $("upstox-auth-state").innerHTML =
+    `Redirect URI (must match your Upstox app): <code>${r.redirect_uri}</code> — ` +
+    `log in, then paste the URL Upstox sends you back to.`;
+  if (window.AndroidApp && window.AndroidApp.openBrowser) {
+    window.AndroidApp.openBrowser(r.url);
+  } else {
+    window.open(r.url, "_blank", "noopener");
+  }
 }
 
 async function submitUpstoxCode() {
@@ -777,6 +793,51 @@ async function submitUpstoxCode() {
     loadStatus(); loadPortfolio();
   } else {
     $("upstox-auth-result").innerHTML = `<span class="neg">❌ ${r.error}</span>`;
+  }
+}
+
+// ---------- broker (either/or) ----------
+async function loadBrokerState() {
+  try {
+    const r = await fetch("/api/broker").then(r=>r.json());
+    const active = r.active || "upstox";
+    // highlight the active broker button
+    const up = $("broker-upstox"), gw = $("broker-groww");
+    if (up && gw) {
+      up.className = active === "upstox" ? "primary" : "";
+      gw.className = active === "groww" ? "primary" : "";
+    }
+    $("broker-state").innerHTML = r.ok
+      ? `<span class="pos">● ${active} — ${r.user || "authenticated"}</span>`
+      : `<span class="neg">● ${active} — not authenticated${r.error ? " (" + r.error + ")" : ""}</span>`;
+  } catch (e) { /* ignore */ }
+}
+
+async function setBroker(broker) {
+  $("broker-state").innerHTML = "<span class='spin'></span> switching…";
+  const r = await fetch("/api/broker", {
+    method: "POST", headers: {"Content-Type":"application/json"},
+    body: JSON.stringify({broker}),
+  }).then(r=>r.json());
+  if (r.ok === false) { toast("✗ " + r.error); return; }
+  toast(`Active broker: ${broker}`);
+  loadBrokerState(); loadStatus();
+}
+
+async function saveGrowwToken() {
+  const tok = $("groww-token").value.trim();
+  if (!tok) { toast("Paste a Groww access token first."); return; }
+  $("groww-result").innerHTML = "<span class='spin'></span> saving + verifying…";
+  const r = await fetch("/api/groww/save-token", {
+    method: "POST", headers: {"Content-Type":"application/json"},
+    body: JSON.stringify({token: tok}),
+  }).then(r=>r.json());
+  if (r.ok) {
+    $("groww-result").innerHTML = `<span class="pos">✅ Groww active — ${r.user || "authenticated"}</span>`;
+    $("groww-token").value = "";
+    loadBrokerState(); loadStatus(); loadPortfolio();
+  } else {
+    $("groww-result").innerHTML = `<span class="neg">❌ ${r.error || "failed"}</span>`;
   }
 }
 
@@ -900,10 +961,12 @@ function dot(ok) { return `<span style="display:inline-block;width:8px;height:8p
 
 async function loadStatus() {
   $("status-cards").innerHTML = "<span class='spin'></span> checking subsystems …";
+  loadBrokerState();
   const s = await fetch("/api/status").then(r=>r.json());
 
+  const brk = s.broker || {active: "?", ok: false};
   $("status-cards").innerHTML = [
-    `<div class="kpi"><div class="label">Upstox</div><div class="value" style="font-size:14px">${dot(s.upstox.ok)}${s.upstox.ok ? s.upstox.user : "not authed"}</div></div>`,
+    `<div class="kpi"><div class="label">Broker (${brk.active})</div><div class="value" style="font-size:14px">${dot(brk.ok)}${brk.ok ? (brk.user || "authed") : "not authed"}</div></div>`,
     `<div class="kpi"><div class="label">LLM (${s.llm.provider})</div><div class="value" style="font-size:14px">${dot(s.llm.ok)}${s.llm.model || "—"}</div></div>`,
     `<div class="kpi"><div class="label">Telegram</div><div class="value" style="font-size:14px">${dot(s.telegram.configured)}${s.telegram.configured ? s.telegram.authorized_chats.length + " chats" : "not set"}</div></div>`,
     `<div class="kpi"><div class="label">TimescaleDB</div><div class="value" style="font-size:14px">${dot(s.db.timescale)}${s.db.timescale ? "connected" : (s.db.dsn_set ? "DSN set, no conn" : "JSONL fallback")}</div></div>`,

@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical">
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Upstox &amp; App Config"
+        android:textColor="#E6EDF3"
+        android:textSize="20sp"
+        android:fontFamily="sans-serif-medium"
+        android:layout_marginBottom="16dp" />
+
+    <!-- 1. Upstox API Credentials -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="#161B22"
+        android:orientation="vertical"
+        android:padding="16dp"
+        android:layout_marginBottom="16dp">
+        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="API Credentials (OAuth)" android:textColor="#58A6FF" android:layout_marginBottom="12dp" />
+        <EditText android:id="@+id/etUpstoxApiKey" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="Client ID" android:textColor="#E6EDF3" />
+        <EditText android:id="@+id/etUpstoxSecret" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="Client Secret" android:textColor="#E6EDF3" android:inputType="textPassword" />
+        <EditText android:id="@+id/etRedirectUri" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="Redirect URI" android:textColor="#E6EDF3" />
+        <EditText android:id="@+id/etUpstoxBaseUrl" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="Base URL" android:textColor="#E6EDF3" />
+    </LinearLayout>
+
+    <!-- 2. Direct Bearer Token -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="#161B22"
+        android:orientation="vertical"
+        android:padding="16dp"
+        android:layout_marginBottom="16dp">
+        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Direct Bearer Token (Optional)" android:textColor="#3FB950" android:layout_marginBottom="8dp" />
+        <EditText android:id="@+id/etUpstoxBearerToken" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="Paste Token here (Bypasses Login)" android:textColor="#3FB950" android:textSize="13sp" />
+
+        <Button
+            android:id="@+id/btnTestToken"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="Test Authentication"
+            android:backgroundTint="#21262D"
+            android:textColor="#3FB950"
+            style="@style/Widget.MaterialComponents.Button.TextButton" />
+    </LinearLayout>
+
+    <!-- 3. Telegram -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="#161B22"
+        android:orientation="vertical"
+        android:padding="16dp"
+        android:layout_marginBottom="24dp">
+        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Notifications" android:textColor="#58A6FF" android:layout_marginBottom="12dp" />
+        <EditText android:id="@+id/etTeleToken" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="Telegram Bot Token" android:textColor="#E6EDF3" />
+        <EditText android:id="@+id/etTeleChatId" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="Chat ID" android:textColor="#E6EDF3" />
+    </LinearLayout>
+
+    <Button
+        android:id="@+id/btnSaveApp"
+        android:layout_width="match_parent"
+        android:layout_height="56dp"
+        android:text="Save App Config"
+        android:backgroundTint="#58A6FF"
+        android:textColor="#FFFFFF" />
+
+</LinearLayout>

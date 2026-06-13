@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<menu xmlns:android="http://schemas.android.com/apk/res/android">
+    <item
+        android:id="@+id/nav_portfolio"
+        android:icon="@android:drawable/ic_menu_myplaces"
+        android:title="Portfolio" />
+    <item
+        android:id="@+id/nav_performance"
+        android:icon="@android:drawable/ic_menu_sort_by_size"
+        android:title="Performance" />
+    <item
+        android:id="@+id/nav_optimize"
+        android:icon="@android:drawable/ic_menu_compass"
+        android:title="MPT" />
+    <item
+        android:id="@+id/nav_quant"
+        android:icon="@android:drawable/ic_menu_view"
+        android:title="DR Quant" />
+    <item
+        android:id="@+id/nav_umap"
+        android:icon="@android:drawable/ic_menu_mapmode"
+        android:title="U-Map" />
+</menu>

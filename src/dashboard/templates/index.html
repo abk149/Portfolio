@@ -428,6 +428,27 @@
   <div id="status-cards" class="kpis"></div>
 
   <div class="card">
+    <h3>🏦 Active broker (either / or)</h3>
+    <p style="color:var(--muted); margin:4px 0 12px; font-size:13px">
+      Exactly one broker is active. Switch it here — the whole app (portfolio,
+      analysis, market data) uses the selected broker.
+    </p>
+    <div class="row">
+      <button id="broker-upstox" class="primary" onclick="setBroker('upstox')">Use Upstox</button>
+      <button id="broker-groww" onclick="setBroker('groww')">Use Groww</button>
+      <span id="broker-state" style="color:var(--muted); font-size:12px"></span>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <input id="groww-token" placeholder="Paste Groww daily access token…" style="flex:1; min-width:300px">
+      <button class="primary" onclick="saveGrowwToken()">✓ Save Groww token</button>
+    </div>
+    <div id="groww-result" style="margin-top:8px; font-size:13px; color:var(--muted)">
+      Groww uses a daily access token (or API key + TOTP). Paste a token to
+      activate Groww. <a href="https://groww.in/trade-api/docs" target="_blank" style="color:var(--accent)">Groww API docs</a>.
+    </div>
+  </div>
+
+  <div class="card">
     <h3>🔐 Upstox login</h3>
     <p style="color:var(--muted); margin:4px 0 12px; font-size:13px">
       Upstox tokens expire daily (~3:30 AM IST). Two steps:

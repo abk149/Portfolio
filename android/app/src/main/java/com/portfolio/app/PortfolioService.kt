@@ -88,26 +88,53 @@ class PortfolioService : LifecycleService() {
     }
 
     fun startServers() {
-        appendLog("[Service] Starting backend (analysis runs on NVIDIA NIM cloud)...")
+        // Load credentials from preferences (passed into Python's os.environ).
+        val prefs = getSharedPreferences("PortfolioQuantPrefs", Context.MODE_PRIVATE)
+        val provider = prefs.getString("llm_provider", "nvidia") ?: "nvidia"
+        
+        appendLog("[Service] Starting backend (LLM provider: $provider)...")
         startForeground(notificationId, createNotification("Backend booting..."))
 
-        // No on-device model — the LLM is NVIDIA NIM over the internet.
-        llamaState = ServerState.RUNNING
+        // Update UI indicator
+        if (provider == "nvidia" || provider == "anthropic") {
+            llamaState = ServerState.RUNNING // Acts as "Cloud Active"
+        } else {
+            llamaState = ServerState.STOPPED
+        }
+        
         pythonState = ServerState.STARTING
 
-        // Load credentials from preferences (passed into Python's os.environ).
-        // NVIDIA_API_KEY is read by Python from the bundled .env; if the user
-        // also pastes one in Settings we forward it here so it overrides.
-        val prefs = getSharedPreferences("PortfolioQuantPrefs", Context.MODE_PRIVATE)
         val config = mutableMapOf(
             "UPSTOX_API_KEY" to (prefs.getString("upstox_api_key", "") ?: ""),
             "UPSTOX_API_SECRET" to (prefs.getString("upstox_secret", "") ?: ""),
             "UPSTOX_REDIRECT_URI" to (prefs.getString("redirect_uri", "http://localhost:8765/callback") ?: ""),
-            "LLM_PROVIDER" to "nvidia"
+            "UPSTOX_BASE_URL" to (prefs.getString("upstox_base_url", "https://api.upstox.com/v2") ?: ""),
+            "UPSTOX_BEARER_TOKEN" to (prefs.getString("upstox_bearer_token", "") ?: ""),
+            "LLM_PROVIDER" to provider,
+            "OLLAMA_HOST" to (prefs.getString("ollama_host", "http://127.0.0.1:11434") ?: ""),
+            "TELE_TOKEN" to (prefs.getString("tele_token", "") ?: ""),
+            "CHAT_ID" to (prefs.getString("tele_chat_id", "") ?: "")
         )
-        val nvKey = prefs.getString("nvidia_api_key", "") ?: ""
-        if (nvKey.isNotBlank()) config["NVIDIA_API_KEY"] = nvKey
+        
+        val llmKey = prefs.getString("llm_api_key", "") ?: ""
+        if (llmKey.isNotBlank()) {
+            config["NVIDIA_API_KEY"] = llmKey
+            config["ANTHROPIC_API_KEY"] = llmKey
+        }
 
+        // Active broker (either/or). Only inject if the user explicitly set it
+        // in prefs; otherwise leave it unset so the dashboard's persisted
+        // choice (.cache/active_broker.txt) wins and survives restarts.
+        val broker = prefs.getString("broker", "") ?: ""
+        if (broker.isNotBlank()) config["BROKER"] = broker
+        val growwToken = prefs.getString("groww_access_token", "") ?: ""
+        if (growwToken.isNotBlank()) config["GROWW_ACCESS_TOKEN"] = growwToken
+        val growwKey = prefs.getString("groww_api_key", "") ?: ""
+        if (growwKey.isNotBlank()) config["GROWW_API_KEY"] = growwKey
+        val growwSecret = prefs.getString("groww_api_secret", "") ?: ""
+        if (growwSecret.isNotBlank()) config["GROWW_API_SECRET"] = growwSecret
+
+        appendLog("[Service] Injecting ${config.size} environment variables into Python...")
         val pythonSuccess = pythonManager.start(config)
         if (!pythonSuccess) {
             pythonState = ServerState.ERROR

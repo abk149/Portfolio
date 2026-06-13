@@ -8,11 +8,12 @@ import numpy as np
 import pandas as pd
 
 from src.upstox.client import UpstoxClient
+from src.brokers import get_broker
 
 
 class IntradayAnalyzer:
     def __init__(self, upstox: Optional[UpstoxClient] = None):
-        self.upstox = upstox or UpstoxClient()
+        self.upstox = upstox or get_broker()
 
     def _fetch(self, days: int) -> pd.DataFrame:
         end = date.today()

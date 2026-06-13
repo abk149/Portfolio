@@ -3,16 +3,29 @@
     <!-- Base application theme. -->
     <style name="Theme.PortfolioQuant" parent="Theme.MaterialComponents.DayNight.NoActionBar">
         <!-- Primary brand color. -->
-        <item name="colorPrimary">#58A6FF</item>
-        <item name="colorPrimaryVariant">#1f6feb</item>
+        <item name="colorPrimary">#0B0E14</item>
+        <item name="colorPrimaryVariant">#161B22</item>
         <item name="colorOnPrimary">#FFFFFF</item>
         <!-- Secondary brand color. -->
-        <item name="colorSecondary">#3FB950</item>
-        <item name="colorSecondaryVariant">#238636</item>
+        <item name="colorSecondary">#58A6FF</item>
+        <item name="colorSecondaryVariant">#2f81f7</item>
         <item name="colorOnSecondary">#FFFFFF</item>
         <!-- Status bar color. -->
         <item name="android:statusBarColor">#0B0E14</item>
         <!-- Background colors -->
         <item name="android:windowBackground">#0B0E14</item>
+
+        <!-- Bottom Nav Theme -->
+        <item name="bottomNavigationStyle">@style/Widget.App.BottomNavigationView</item>
+    </style>
+
+    <style name="Widget.App.BottomNavigationView" parent="Widget.MaterialComponents.BottomNavigationView">
+        <item name="materialThemeOverlay">@style/ThemeOverlay.App.BottomNavigationView</item>
+        <item name="labelVisibilityMode">labeled</item>
+    </style>
+
+    <style name="ThemeOverlay.App.BottomNavigationView" parent="">
+        <item name="colorPrimary">#58A6FF</item>
+        <item name="colorOnPrimary">#E6EDF3</item>
     </style>
 </resources>

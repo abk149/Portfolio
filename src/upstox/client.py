@@ -93,10 +93,11 @@ class UpstoxClient:
 
     def _get(self, path: str, params: Optional[dict] = None) -> Any:
         _UPSTOX_LIMITER.wait()      # process-wide adaptive throttle
-        r = requests.get(f"{self.base}{path}", headers=self._headers,
+        url = f"{self.base.rstrip('/')}{path}"
+        r = requests.get(url, headers=self._headers,
                          params=params, timeout=30)
         if r.status_code == 401:
-            raise UpstoxAuthError("Upstox token expired. Re-run python -m src.upstox.auth")
+            raise UpstoxAuthError(f"Upstox token expired or invalid (401). Server responded: {r.text}")
 
         if r.status_code == 429:
             # Quota hit. Slow the steady rate down, take ONE short nap

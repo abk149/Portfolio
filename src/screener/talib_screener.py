@@ -22,6 +22,7 @@ from rich.progress import BarColumn, Progress, TextColumn, TimeRemainingColumn
 from src.data import MarketData
 from src.data.instruments import resolve_universe
 from src.upstox.client import UpstoxClient
+from src.brokers import get_broker
 from src.utils.indicators import ema, rsi
 from src.utils.logger import get_logger
 
@@ -76,7 +77,7 @@ def _setups(df: pd.DataFrame) -> dict:
 class TALibScreener:
     def __init__(self, upstox: Optional[UpstoxClient] = None, workers: int = 8):
         try:
-            self.up = upstox or UpstoxClient()
+            self.up = upstox or get_broker()
         except Exception:
             self.up = None
         self.md = MarketData(self.up)
@@ -103,13 +104,19 @@ class TALibScreener:
 
     def scan(self, universe: str = "nifty50", top_n: int = 20) -> pd.DataFrame:
         items = resolve_universe(universe)
-        log.info(f"TA-Lib scan: {len(items)} instruments (talib={HAS_TALIB})")
+
+        # Stability fix for Android: avoid heavy threading
+        import os
+        is_android = os.getenv("APP_FILES_DIR") is not None
+        actual_workers = 1 if is_android else self.workers
+
+        log.info(f"TA-Lib scan: {len(items)} instruments (talib={HAS_TALIB}, workers={actual_workers})")
         rows = []
         with Progress(TextColumn("[cyan]talib"), BarColumn(),
                       TextColumn("{task.completed}/{task.total}"),
                       TimeRemainingColumn()) as prog:
             t = prog.add_task("scan", total=len(items))
-            with ThreadPoolExecutor(max_workers=self.workers) as ex:
+            with ThreadPoolExecutor(max_workers=actual_workers) as ex:
                 for fut in as_completed(ex.submit(self._row, *it) for it in items):
                     r = fut.result()
                     if r:

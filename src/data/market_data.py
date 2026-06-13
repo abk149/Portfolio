@@ -30,6 +30,7 @@ import pandas as pd
 from src.data.cache import get_or_set
 from src.data.instrument_blacklist import is_blacklisted, mark_bad
 from src.upstox.client import UpstoxClient
+from src.brokers import get_broker
 from src.utils.logger import get_logger
 
 log = get_logger("data")
@@ -41,7 +42,7 @@ class MarketData:
             self.upstox = upstox
         else:
             try:
-                self.upstox = UpstoxClient()
+                self.upstox = get_broker()
             except Exception as e:
                 log.warning(f"Upstox client unavailable: {e}")
                 self.upstox = None

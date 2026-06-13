@@ -7,6 +7,7 @@ from typing import Optional
 import pandas as pd
 
 from src.upstox.client import UpstoxClient
+from src.brokers import get_broker
 
 
 @dataclass
@@ -19,7 +20,7 @@ class PortfolioSnapshot:
 
 class PortfolioManager:
     def __init__(self, upstox: Optional[UpstoxClient] = None):
-        self.upstox = upstox or UpstoxClient()
+        self.upstox = upstox or get_broker()
 
     def snapshot(self) -> PortfolioSnapshot:
         h = pd.DataFrame(self.upstox.holdings())

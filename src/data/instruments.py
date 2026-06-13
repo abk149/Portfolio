@@ -37,16 +37,23 @@ def _download(url: str) -> pd.DataFrame:
 
 def load_instruments(exchange: str = "NSE", refresh: bool = False) -> pd.DataFrame:
     """Return the full instrument dump (cached on disk for 24h)."""
-    cache_file = settings.cache_dir / f"instruments_{exchange}.parquet"
+    # Use CSV instead of Parquet on Android/Chaquopy due to missing native engines (pyarrow/fastparquet)
+    cache_file = settings.cache_dir / f"instruments_{exchange}.csv"
     if not refresh and cache_file.exists():
         age_h = (datetime.now().timestamp() - cache_file.stat().st_mtime) / 3600
         if age_h < 24:
-            return pd.read_parquet(cache_file)
+            try:
+                return pd.read_csv(cache_file)
+            except Exception as e:
+                log.warning(f"Failed to read cache {cache_file}: {e}")
 
     log.info(f"Fetching Upstox instruments for {exchange} ...")
     df = _download(URLS[exchange])
-    df.to_parquet(cache_file, index=False)
-    log.info(f"Cached {len(df):,} instruments → {cache_file.name}")
+    try:
+        df.to_csv(cache_file, index=False)
+        log.info(f"Cached {len(df):,} instruments → {cache_file.name}")
+    except Exception as e:
+        log.warning(f"Failed to save cache {cache_file}: {e}")
     return df
 
 

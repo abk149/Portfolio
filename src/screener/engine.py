@@ -23,6 +23,7 @@ from src.data.instruments import resolve_universe
 from src.screener.fundamental import fundamental_score
 from src.screener.technical import technical_score
 from src.upstox.client import UpstoxClient
+from src.brokers import get_broker
 from src.utils.logger import get_logger
 
 log = get_logger("screener")
@@ -56,7 +57,7 @@ class ScreenerEngine:
     # (incremental) run rather than blocking.
     def __init__(self, upstox: Optional[UpstoxClient] = None, workers: int = 2):
         try:
-            self.upstox = upstox or UpstoxClient()
+            self.upstox = upstox or get_broker()
         except Exception:
             log.warning("No Upstox session — screener using yfinance only.")
             self.upstox = None

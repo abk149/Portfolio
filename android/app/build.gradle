@@ -76,6 +76,8 @@ dependencies {
 
 // Gradle task to synchronize the latest Python files from the parent directory
 tasks.register('syncPythonSource') {
+    group = 'quant'
+    description = 'Syncs latest Python source from workspace to Android project'
     doLast {
         def pythonSrcDir = file("${projectDir}/src/main/python")
         if (pythonSrcDir.exists()) {

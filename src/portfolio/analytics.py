@@ -16,6 +16,7 @@ import pandas as pd
 from src.utils.compat import brentq, newton
 
 from src.upstox.client import UpstoxClient
+from src.brokers import get_broker
 from src.data.cache import get_or_set
 from src.utils.logger import get_logger
 
@@ -74,7 +75,7 @@ class PerformanceAnalyzer:
     _FY_START_MONTH = 4
 
     def __init__(self, upstox: Optional[UpstoxClient] = None):
-        self.upstox = upstox or UpstoxClient()
+        self.upstox = upstox or get_broker()
 
     # ------------------------------------------------------------------
     # Trade history (multi-FY fetch with pagination)

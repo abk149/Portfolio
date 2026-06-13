@@ -32,20 +32,52 @@ def _save(token: dict) -> None:
 
 
 def load_token() -> Optional[dict]:
+    # Priority 1: Direct bearer token from environment (injected via Android settings)
+    import os
+    env_token = os.getenv("UPSTOX_BEARER_TOKEN")
+    if env_token and env_token.strip():
+        token = env_token.strip()
+        # Clean "Bearer " prefix if user accidentally included it
+        if token.lower().startswith("bearer "):
+            token = token[7:].strip()
+
+        print(f"[Upstox Auth] Using DIRECT BEARER TOKEN (len={len(token)})")
+        return {"access_token": token}
+
+    # Priority 2: Cached token file
     if not settings.upstox_token_file.exists():
         return None
-    return json.loads(settings.upstox_token_file.read_text())
+    try:
+        return json.loads(settings.upstox_token_file.read_text())
+    except Exception as e:
+        print(f"[Upstox Auth] Failed to read token file: {e}")
+        return None
 
 
 def build_auth_url() -> str:
     """Return the Upstox login URL the user should open in a browser."""
     import urllib.parse
+
+    key = settings.upstox_api_key
+    uri = settings.upstox_redirect_uri
+    base = settings.upstox_base_url.rstrip("/")
+
+    # ── DEBUG LOGGING ──────────────────────────────────────────────────────
+    print(f"[Upstox Auth] Building URL.")
+    print(f"  > base_url:     {repr(base)}")
+    print(f"  > client_id:    {repr(key)}")
+    print(f"  > redirect_uri: {repr(uri)}")
+
     params = {
-        "client_id": settings.upstox_api_key,
-        "redirect_uri": settings.upstox_redirect_uri,
+        "client_id": key,
+        "redirect_uri": uri,
         "response_type": "code",
     }
-    return f"{AUTH_URL}?{urllib.parse.urlencode(params)}"
+
+    url = f"{base}/login/authorization/dialog?{urllib.parse.urlencode(params)}"
+
+    print(f"[Upstox Auth] Final generated URL: {url}")
+    return url
 
 
 def exchange_and_save(code: str) -> dict:
@@ -56,8 +88,13 @@ def exchange_and_save(code: str) -> dict:
 
 
 def _exchange_code(code: str) -> dict:
+    base = settings.upstox_base_url.rstrip("/")
+    token_url = f"{base}/login/authorization/token"
+
+    print(f"[Upstox Auth] Exchanging code at: {token_url}")
+
     resp = requests.post(
-        TOKEN_URL,
+        token_url,
         data={
             "code": code,
             "client_id": settings.upstox_api_key,
@@ -68,6 +105,8 @@ def _exchange_code(code: str) -> dict:
         headers={"accept": "application/json", "Api-Version": "2.0"},
         timeout=30,
     )
+    if resp.status_code != 200:
+        print(f"[Upstox Auth] Exchange FAILED: {resp.status_code} {resp.text}")
     resp.raise_for_status()
     return resp.json()
 

@@ -77,8 +77,11 @@ def index():
 
 # ---------------- portfolio ----------------
 def _need_upstox():
+    # Tuple so `except _need_upstox()` catches BOTH the Upstox auth error and
+    # the generic broker auth error (Groww), regardless of active broker.
     from src.upstox.client import UpstoxAuthError
-    return UpstoxAuthError
+    from src.brokers.base import BrokerAuthError
+    return (UpstoxAuthError, BrokerAuthError)
 
 
 @app.get("/api/portfolio")
@@ -523,21 +526,44 @@ def api_kb_search_decisions(body: dict):
 def api_upstox_auth_url():
     """Return the Upstox OAuth login URL to open in a new tab."""
     from src.upstox.auth import build_auth_url
-    if not (settings.upstox_api_key and settings.upstox_api_secret):
+
+    # Reload settings before generating URL to catch any new changes
+    settings.refresh()
+
+    key = settings.upstox_api_key
+    uri = settings.upstox_redirect_uri
+
+    print(f"[API] Auth Request. Key={repr(key)} URI={repr(uri)}")
+
+    if not (key and settings.upstox_api_secret):
         return JSONResponse(
-            {"ok": False, "error": "UPSTOX_API_KEY / UPSTOX_API_SECRET missing in .env"},
+            {"ok": False, "error": f"Credentials missing. Key={bool(key)} Secret={bool(settings.upstox_api_secret)}"},
             status_code=200,
         )
-    return {"ok": True, "url": build_auth_url(),
-            "redirect_uri": settings.upstox_redirect_uri}
+    return {"ok": True, "url": build_auth_url(), "redirect_uri": uri}
 
 
 class _UpstoxCodeBody(BaseModel):
     code_or_url: str
 
 
-@app.post("/api/upstox/exchange-code")
-def api_upstox_exchange(body: _UpstoxCodeBody):
+@app.post("/api/upstox/test-token")
+def api_upstox_test_token():
+    """Immediately test the current Upstox token (Bearer or OAuth)."""
+    from src.upstox.client import UpstoxClient, UpstoxAuthError
+
+    # Force reload settings from environment
+    settings.refresh()
+
+    try:
+        client = UpstoxClient()
+        prof = client.profile()
+        name = prof.get("user_name") or prof.get("email") or "(Success)"
+        return {"ok": True, "message": f"Authenticated successfully as: {name}"}
+    except UpstoxAuthError as e:
+        return {"ok": False, "message": str(e)}
+    except Exception as e:
+        return {"ok": False, "message": f"Connection Error: {str(e)}"}
     """Accept either the raw `code` value or the full redirected URL."""
     import re
     import urllib.parse
@@ -576,6 +602,53 @@ def api_upstox_exchange(body: _UpstoxCodeBody):
         return {"ok": False, "error": str(e)}
 
 
+# ---------------- broker selection (either/or) ----------------
+@app.get("/api/broker")
+def api_broker_get():
+    from src.brokers import broker_status
+    return broker_status()
+
+
+@app.post("/api/broker")
+def api_broker_set(body: dict):
+    """Switch the active broker (either/or). Persists for this process; also
+    write it to .cache so it survives a restart on this host."""
+    import os
+    b = (body.get("broker") or "").lower()
+    if b not in ("upstox", "groww"):
+        return {"ok": False, "error": "broker must be 'upstox' or 'groww'"}
+    os.environ["BROKER"] = b
+    try:
+        settings.refresh()
+    except Exception:
+        pass
+    try:
+        (settings.cache_dir / "active_broker.txt").write_text(b)
+    except Exception:
+        pass
+    from src.brokers import broker_status
+    return {"ok": True, **broker_status()}
+
+
+@app.post("/api/groww/save-token")
+def api_groww_save_token(body: dict):
+    """Save a Groww daily access token (the 'direct bearer' equivalent)."""
+    from src.brokers.groww_auth import save_token
+    tok = body.get("token") or body.get("access_token") or ""
+    if not tok.strip():
+        return {"ok": False, "error": "empty token"}
+    import os
+    save_token(tok)
+    os.environ["BROKER"] = "groww"
+    try:
+        settings.refresh()
+        (settings.cache_dir / "active_broker.txt").write_text("groww")
+    except Exception:
+        pass
+    from src.brokers import broker_status
+    return {"ok": True, **broker_status()}
+
+
 # ---------------- settings / status ----------------
 _SCHED = {"obj": None}
 
@@ -585,7 +658,14 @@ def api_status():
     """Health-check every subsystem. The UI uses this to render the dashboard."""
     out = {}
 
-    # Upstox
+    # Active broker (either/or)
+    try:
+        from src.brokers import broker_status
+        out["broker"] = broker_status()
+    except Exception as e:
+        out["broker"] = {"active": settings.broker, "ok": False, "error": str(e)[:200]}
+
+    # Upstox (kept for the Upstox-specific login card)
     try:
         from src.upstox.client import UpstoxClient
         prof = UpstoxClient().profile()
@@ -630,9 +710,13 @@ def api_status():
 
     out["config"] = {
         "llm_provider": settings.llm_provider,
-        "ollama_model": settings.ollama_model,
+        "ollama_host": settings.ollama_host,
+        "upstox_api_key": f"{settings.upstox_api_key[:4]}***" if settings.upstox_api_key else "MISSING",
+        "upstox_api_secret": "SET" if settings.upstox_api_secret else "MISSING",
+        "upstox_bearer_token": "PROVIDED" if os.getenv("UPSTOX_BEARER_TOKEN") else "OAUTH_FLOW",
+        "upstox_redirect_uri": settings.upstox_redirect_uri,
+        "telegram_token": f"{settings.telegram_bot_token[:4]}***" if settings.telegram_bot_token else "MISSING",
         "cache_dir": str(settings.cache_dir),
-        "trace_dir": str(settings.trace_dir),
         "risk_free_rate": settings.risk_free_rate,
     }
     return out
@@ -856,8 +940,10 @@ def api_umap_reset():
     import shutil
     cleared = []
     paths_to_clear = [
-        settings.cache_dir / "instruments_NSE.parquet",
-        settings.cache_dir / "instruments_BSE.parquet",
+        settings.cache_dir / "instruments_NSE.csv",
+        settings.cache_dir / "instruments_BSE.csv",
+        settings.cache_dir / "instruments_NSE.parquet",  # legacy
+        settings.cache_dir / "instruments_BSE.parquet",  # legacy
         settings.cache_dir / "instrument_blacklist.json",
         settings.cache_dir / "daily",
         settings.cache_dir / "screener_in",
@@ -906,12 +992,26 @@ def api_umap_data(universe: str = "all_nse"):
 
 @app.post("/api/universe-map/build")
 def api_umap_build(body: dict):
-    import subprocess
-    import sys as _sys
     universe = body.get("universe", "all_nse")
     max_age_days = float(body.get("max_age_days", 7.0))
     job_id = uuid.uuid4().hex[:8]
 
+    # Android cannot easily use subprocess.Popen with sys.executable.
+    # We switch to a ThreadPool job for Android.
+    import os
+    if os.getenv("APP_FILES_DIR"):
+        def _build_in_process():
+            from src.universe_map.builder import build_universe_map
+            # Note: workers reduced to 1 for stability in-process on mobile
+            return build_universe_map(universe=universe, max_age_days=max_age_days, workers=1)
+
+        _run_job(job_id, _build_in_process)
+        # Mock a status so the UI thinks it's a subproc job if it polls specific subproc endpoints
+        # though pollJob uses /api/jobs/ which handles both.
+        return {"ok": True, "job_id": job_id, "in_process": True}
+
+    import subprocess
+    import sys as _sys
     log_path = (settings.cache_dir / "universe_map" / f"{job_id}.log")
     log_path.parent.mkdir(parents=True, exist_ok=True)
     log_fh = log_path.open("w")
@@ -935,11 +1035,18 @@ def api_umap_build(body: dict):
 def api_umap_job(job_id: str):
     info = _UMAP_JOBS.get(job_id)
     if not info:
+        # Check in-process jobs (Android fallback)
+        if job_id in JOBS:
+            job = JOBS[job_id]
+            # Map in-process fields to what the UI expects for a "job"
+            return {
+                "status": job["status"],
+                "exit_code": 0 if job["status"] == "done" else (1 if job["status"] == "error" else None),
+                "pid": os.getpid(),
+                "error": job.get("error"),
+                "in_process": True
+            }
         # IMPORTANT: return a TERMINAL status (HTTP 200), not 404.
-        # The dashboard's in-memory _UMAP_JOBS is wiped on every restart, so
-        # any browser tab still polling an old job id would otherwise loop
-        # forever (404 ≠ done ≠ error). A terminal "error" makes every
-        # streamer — old buggy code or new — exit on its next poll.
         return {"status": "error", "exit_code": None, "pid": None,
                 "error": "job not found (dashboard restarted or job expired)"}
     rc = info["proc"].poll()
@@ -951,7 +1058,14 @@ def api_umap_job(job_id: str):
 @app.get("/api/universe-map/log/{job_id}")
 def api_umap_log(job_id: str, since: int = 0):
     info = _UMAP_JOBS.get(job_id)
-    if not info or not info["log"].exists():
+    if not info:
+        if job_id in JOBS:
+            msg = "[Android] Build running in-process. See System Terminal for live logs."
+            if JOBS[job_id]["status"] == "error":
+                msg = f"[Android] ERROR: {JOBS[job_id].get('error')}. See Terminal for details."
+            return {"lines": [{"msg": msg}], "next": since + 1}
+        return {"lines": [], "next": since}
+    if not info["log"].exists():
         return {"lines": [], "next": since}
     size = info["log"].stat().st_size
     if since >= size:
@@ -992,12 +1106,29 @@ def _quant_dir():
 
 @app.post("/api/quant/run")
 def api_quant_run(body: dict):
-    import subprocess
-    import sys
-
     job_id = uuid.uuid4().hex[:8]
     universe = body.get("universe", "nifty50")
     _tprint(f"POST /api/quant/run → job={job_id} universe={universe}")
+
+    # Android cannot easily use subprocess.Popen with sys.executable.
+    # We switch to a ThreadPool job for Android.
+    import os
+    if os.getenv("APP_FILES_DIR"):
+        def _quant_in_process():
+            # Import and run the quant engine directly
+            from src.scheduler.jobs import job_full_funnel_sync
+            try:
+                return job_full_funnel_sync(universe=universe)
+            except ImportError:
+                # If specialized sync job doesn't exist, use common one
+                from src.scheduler.jobs import job_full_funnel
+                return job_full_funnel()
+
+        _run_job(job_id, _quant_in_process)
+        return {"job_id": job_id, "in_process": True}
+
+    import subprocess
+    import sys
 
     log_path = _quant_dir() / f"{job_id}.log"
     result_path = _quant_dir() / f"{job_id}.json"
@@ -1036,6 +1167,12 @@ def api_quant_log(job_id: str, since: int = 0):
     """Tail the subprocess log file. `since` is a byte offset."""
     info = _QUANT_JOBS.get(job_id)
     if not info:
+        # For Android in-process jobs, we don't have a file.
+        if job_id in JOBS:
+            msg = "[Android] Quant run in-process. See System Terminal for live logs."
+            if JOBS[job_id]["status"] == "error":
+                msg = f"[Android] ERROR: {JOBS[job_id].get('error')}. See Terminal for details."
+            return {"lines": [{"ts": "", "level": "INFO", "logger": "android", "msg": msg}], "next": since + 1}
         return {"lines": [], "next": since}
     p = info["log"]
     if not p.exists():

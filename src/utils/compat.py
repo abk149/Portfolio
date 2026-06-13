@@ -121,8 +121,10 @@ def project_simplex_box(v: np.ndarray, lower: float = 0.0, upper: float = 1.0) -
             r = mid
     return np.clip(v - l, lower, upper)
 
-def minimize_fallback(fun, x0, args=(), bounds=None, constraints=None, tol=1e-7, maxiter=500):
-    """Simple Optimizer using Gradient Descent + Penalty Method for constraints."""
+def minimize_fallback(fun, x0, args=(), bounds=None, constraints=None, tol=1e-7, maxiter=500, **kwargs):
+    """Simple Optimizer using Gradient Descent + Penalty Method for constraints.
+    Accepts and ignores extra kwargs for compatibility with scipy.optimize.minimize.
+    """
     x = np.array(x0, dtype=float)
     n = len(x)
 

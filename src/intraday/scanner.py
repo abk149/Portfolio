@@ -18,6 +18,7 @@ import pandas as pd
 from src.data import MarketData
 from src.data.instruments import resolve_universe
 from src.upstox.client import UpstoxClient
+from src.brokers import get_broker
 from src.utils.indicators import atr, vwap, rsi
 from src.utils.logger import get_logger
 
@@ -27,7 +28,7 @@ log = get_logger("intraday.scanner")
 class IntradayScanner:
     def __init__(self, upstox: Optional[UpstoxClient] = None):
         try:
-            self.upstox = upstox or UpstoxClient()
+            self.upstox = upstox or get_broker()
         except Exception:
             self.upstox = None
         self.md = MarketData(self.upstox)

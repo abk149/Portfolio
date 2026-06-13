@@ -48,6 +48,11 @@ button, .btn {
   text-decoration: none; display: inline-block;
 }
 button:hover, .btn:hover { border-color: var(--accent); }
+
+/* Native Integration Mode */
+body.native-mode header { display: none !important; }
+body.native-mode main { padding: 12px 12px 80px !important; }
+body.native-mode .row button { font-size: 11px; padding: 6px 10px; }
 button.primary { background: var(--accent); border-color: var(--accent); color: white; font-weight: 500; }
 button.primary:hover { filter: brightness(1.1); }
 .card {

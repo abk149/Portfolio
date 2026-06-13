@@ -31,6 +31,34 @@ def _model() -> str:
     return getattr(settings, "ollama_embed_model", None) or "nomic-embed-text"
 
 
+def _nvidia_embed(text: str) -> Optional[np.ndarray]:
+    """Embed via NVIDIA NIM's OpenAI-compatible /embeddings endpoint.
+    Returns vector or None. Used when LLM_PROVIDER=nvidia."""
+    url = settings.nvidia_base_url.rstrip("/") + "/embeddings"
+    headers = {"Authorization": f"Bearer {settings.nvidia_api_key}",
+               "Accept": "application/json", "Content-Type": "application/json"}
+    model = getattr(settings, "nvidia_embed_model", "nvidia/nv-embedqa-e5-v5")
+    # nv-embedqa models require input_type; some models reject it → retry plain.
+    for body in (
+        {"model": model, "input": [text[:8000]], "input_type": "passage"},
+        {"model": model, "input": [text[:8000]]},
+    ):
+        try:
+            r = requests.post(url, headers=headers, json=body, timeout=30)
+        except Exception as e:
+            log.debug(f"nvidia embed error: {e}")
+            return None
+        if r.status_code == 200:
+            try:
+                return np.asarray(r.json()["data"][0]["embedding"], dtype=np.float32)
+            except Exception:
+                return None
+        if r.status_code in (400, 422):
+            continue
+        return None
+    return None
+
+
 def is_available() -> bool:
     """Check (once) whether the LLM server can serve embeddings."""
     global _AVAILABLE
@@ -39,6 +67,33 @@ def is_available() -> bool:
     with _LOCK:
         if _AVAILABLE is not None:
             return _AVAILABLE
+
+        # NVIDIA NIM cloud embeddings (works on Mac AND phone, over the internet).
+        # Checked FIRST so we never wait on a dead local Ollama (which used to
+        # hang ~20s on the first KB call when LLM_PROVIDER=nvidia).
+        if settings.llm_provider == "nvidia":
+            if not settings.nvidia_api_key:
+                log.info("embeddings: nvidia provider but no key — KB uses keyword search")
+                _AVAILABLE = False
+                return False
+            ok = _nvidia_embed("ping") is not None
+            log.info(f"embeddings: NVIDIA NIM "
+                     + ("ready (semantic search on)" if ok
+                        else "unavailable — KB uses keyword search"))
+            _AVAILABLE = ok
+            return ok
+
+        # If running on Android and using a non-NVIDIA cloud LLM, default to
+        # False immediately rather than hitting a loopback that isn't there.
+        import os
+        is_android = os.getenv("APP_FILES_DIR") is not None
+        host = settings.ollama_host
+
+        if is_android and settings.llm_provider != "llamacpp" and "127.0.0.1" in host:
+            log.info("embeddings: Android Cloud mode detected, disabling local embeddings.")
+            _AVAILABLE = False
+            return False
+
         try:
             if settings.llm_provider == "llamacpp":
                 r = requests.post(
@@ -79,6 +134,8 @@ def embed(text: str) -> Optional[np.ndarray]:
     """Embed one piece of text → float32 vector, or None on failure."""
     if not text or not text.strip() or not is_available():
         return None
+    if settings.llm_provider == "nvidia":
+        return _nvidia_embed(text)
     try:
         if settings.llm_provider == "llamacpp":
             r = requests.post(

@@ -1,0 +1,106 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:padding="16dp">
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Native Configuration"
+        android:textColor="#E6EDF3"
+        android:textSize="20sp"
+        android:fontFamily="sans-serif-medium"
+        android:layout_marginBottom="16dp" />
+
+    <!-- 1. GGUF Model Selector -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="#161B22"
+        android:orientation="vertical"
+        android:padding="16dp"
+        android:layout_marginBottom="16dp">
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="1. Select Active LLM Model"
+            android:textColor="#58A6FF"
+            android:layout_marginBottom="8dp" />
+        <TextView
+            android:id="@+id/tvActiveModel"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="None selected"
+            android:textColor="#E6EDF3"
+            android:layout_marginBottom="12dp" />
+        <Button
+            android:id="@+id/btnSelectLocalModel"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Choose Custom GGUF"
+            android:backgroundTint="#21262D" />
+        <Button
+            android:id="@+id/btnDownloadModel"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Download 1.5B (1.1GB)"
+            android:layout_marginTop="8dp"
+            android:backgroundTint="#238636" />
+
+        <LinearLayout
+            android:id="@+id/downloadProgressLayout"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:layout_marginTop="12dp"
+            android:visibility="gone">
+            <ProgressBar android:id="@+id/downloadProgressBar" style="?android:attr/progressBarStyleHorizontal" android:layout_width="match_parent" android:layout_height="wrap_content" />
+            <TextView android:id="@+id/tvDownloadProgressPct" android:layout_width="wrap_content" android:layout_height="wrap_content" android:textColor="#E6EDF3" />
+        </LinearLayout>
+    </LinearLayout>
+
+    <!-- 2. Cloud LLM Credentials -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="#161B22"
+        android:orientation="vertical"
+        android:padding="16dp"
+        android:layout_marginBottom="16dp">
+        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="2. Cloud LLM &amp; Ollama" android:textColor="#58A6FF" android:layout_marginBottom="12dp" />
+        <Spinner android:id="@+id/spnLlmProvider" android:layout_width="match_parent" android:layout_height="48dp" />
+        <EditText android:id="@+id/etLlmApiKey" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="API Key" android:textColor="#E6EDF3" android:inputType="textPassword" />
+        <EditText android:id="@+id/etOllamaHost" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="Ollama Host URL" android:textColor="#E6EDF3" />
+    </LinearLayout>
+
+    <!-- 3. Upstox API Credentials -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="#161B22"
+        android:orientation="vertical"
+        android:padding="16dp"
+        android:layout_marginBottom="24dp">
+        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="3. Upstox API" android:textColor="#58A6FF" android:layout_marginBottom="12dp" />
+        <EditText android:id="@+id/etUpstoxApiKey" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="Client ID" android:textColor="#E6EDF3" />
+        <EditText android:id="@+id/etUpstoxSecret" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="Client Secret" android:textColor="#E6EDF3" android:inputType="textPassword" />
+        <EditText android:id="@+id/etRedirectUri" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="Redirect URI" android:textColor="#E6EDF3" />
+        <EditText android:id="@+id/etUpstoxBaseUrl" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="Base URL" android:textColor="#E6EDF3" />
+
+        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Optional: Direct Bearer Token" android:textColor="#8B949E" android:textSize="12sp" android:layout_marginTop="12dp" />
+        <EditText android:id="@+id/etUpstoxBearerToken" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="Paste Bearer Token here" android:textColor="#3FB950" android:textSize="13sp" />
+    </LinearLayout>
+
+    <Button
+        android:id="@+id/btnSaveAll"
+        android:layout_width="match_parent"
+        android:layout_height="60dp"
+        android:text="SAVE ALL SETTINGS"
+        android:backgroundTint="#58A6FF"
+        android:textColor="#FFFFFF"
+        android:fontFamily="sans-serif-black"
+        android:layout_marginBottom="40dp" />
+
+</LinearLayout>

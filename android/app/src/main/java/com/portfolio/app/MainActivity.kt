@@ -1,7 +1,6 @@
 package com.portfolio.app
 
 import android.annotation.SuppressLint
-import android.app.Activity
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
@@ -9,58 +8,58 @@ import android.content.ServiceConnection
 import android.net.Uri
 import android.os.Bundle
 import android.os.IBinder
-import android.provider.OpenableColumns
+import android.view.LayoutInflater
 import android.view.View
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.*
 import androidx.appcompat.app.AppCompatActivity
+import com.google.android.material.bottomnavigation.BottomNavigationView
+import org.json.JSONObject
 import java.io.File
-import java.io.FileOutputStream
+import java.net.HttpURLConnection
+import java.net.URL
 
 class MainActivity : AppCompatActivity() {
 
-    private val tag = "MainActivity"
     private var service: PortfolioService? = null
     private var isBound = false
 
-    // UI elements
+    // Core UI elements
     private lateinit var webView: WebView
-    private lateinit var webProgressBar: ProgressBar
-    private lateinit var loadingLayout: LinearLayout
+    private lateinit var loadingLayout: View
     private lateinit var tvLoadingStatus: TextView
-
-    private lateinit var tvPythonStatus: TextView
-    private lateinit var tvLlamaStatus: TextView
-    private lateinit var btnStartServers: Button
-    private lateinit var btnStopServers: Button
+    private lateinit var consoleOverlay: View
     private lateinit var consoleText: TextView
     private lateinit var consoleScroll: ScrollView
-    private lateinit var btnClearConsole: ImageButton
+    private lateinit var bottomNav: BottomNavigationView
+    private lateinit var nativeOverlayContainer: View
+    private lateinit var nativeContentLayout: LinearLayout
+    private lateinit var toolbar: androidx.appcompat.widget.Toolbar
 
+    // Global Settings elements
     private lateinit var tvActiveModel: TextView
     private lateinit var btnSelectLocalModel: Button
     private lateinit var btnDownloadModel: Button
-    private lateinit var downloadProgressLayout: LinearLayout
-    private lateinit var downloadProgressBar: ProgressBar
-    private lateinit var tvDownloadProgressPct: TextView
-    private lateinit var tvDownloadSpeed: TextView
+    private lateinit var spnLlmProvider: Spinner
+    private lateinit var etLlmApiKey: EditText
+    private lateinit var etOllamaHost: EditText
+    private lateinit var btnSaveGlobal: Button
 
+    // App Settings elements
     private lateinit var etUpstoxApiKey: EditText
     private lateinit var etUpstoxSecret: EditText
     private lateinit var etRedirectUri: EditText
-    private lateinit var btnSaveConfig: Button
-
-    private lateinit var btnTabDashboard: TextView
-    private lateinit var btnTabConsole: TextView
-    private lateinit var btnTabSettings: TextView
-    private lateinit var tabDashboardLayout: View
-    private lateinit var tabConsoleLayout: View
-    private lateinit var tabSettingsLayout: View
+    private var oauthRedirectUri: String? = null   // set during in-app Upstox OAuth
+    private lateinit var etUpstoxBaseUrl: EditText
+    private lateinit var etUpstoxBearerToken: EditText
+    private lateinit var btnTestToken: Button
+    private lateinit var etTeleToken: EditText
+    private lateinit var etTeleChatId: EditText
+    private lateinit var btnSaveApp: Button
 
     private lateinit var modelDownloader: ModelDownloader
-    private var selectedModelPath: String? = null
     private val modelPickRequestCode = 42
 
     private val serviceConnection = object : ServiceConnection {
@@ -68,16 +67,9 @@ class MainActivity : AppCompatActivity() {
             val localBinder = binder as PortfolioService.LocalBinder
             service = localBinder.getService()
             isBound = true
-
-            // Set up state listener
             service?.setStateListener(stateListener)
-
-            // Populate existing logs
-            service?.logs?.toList()?.forEach { line ->
-                appendConsoleLog(line)
-            }
+            service?.logs?.toList()?.forEach { appendConsoleLog(it) }
         }
-
         override fun onServiceDisconnected(name: ComponentName?) {
             service = null
             isBound = false
@@ -86,11 +78,19 @@ class MainActivity : AppCompatActivity() {
 
     private val stateListener = object : PortfolioService.ServiceStateListener {
         override fun onStateChanged(llamaState: PortfolioService.ServerState, pythonState: PortfolioService.ServerState) {
-            updateStatusUI(llamaState, pythonState)
+            runOnUiThread {
+                if (pythonState == PortfolioService.ServerState.RUNNING) {
+                    loadingLayout.visibility = View.GONE
+                    webView.reload()
+                } else if (pythonState == PortfolioService.ServerState.STOPPED || pythonState == PortfolioService.ServerState.ERROR) {
+                    loadingLayout.visibility = View.VISIBLE
+                    tvLoadingStatus.text = if (pythonState == PortfolioService.ServerState.ERROR) 
+                        "Backend Error. Check Console." else "Python Server Offline\nStart via Console (top middle)"
+                }
+            }
         }
-
         override fun onLogReceived(line: String) {
-            appendConsoleLog(line)
+            runOnUiThread { appendConsoleLog(line) }
         }
     }
 
@@ -98,327 +98,345 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
-        modelDownloader = ModelDownloader(this)
         initViews()
         setupWebView()
-        loadSavedConfig()
-        setupListeners()
-        configureCloudLlmUi()   // hide on-device model UI; analysis is cloud
-        selectTab(0) // Start with Dashboard tab
+        setupNavigation()
+        
+        modelDownloader = ModelDownloader(this)
 
-        // Start background service so it runs even if Activity is destroyed
         val intent = Intent(this, PortfolioService::class.java)
         startService(intent)
-        bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
-    }
-
-    override fun onDestroy() {
-        super.onDestroy()
-        if (isBound) {
-            service?.setStateListener(null)
-            unbindService(serviceConnection)
-            isBound = false
-        }
+        bindService(intent, serviceConnection, BIND_AUTO_CREATE)
     }
 
     private fun initViews() {
-        // Content Containers
-        tabDashboardLayout = findViewById(R.id.tabDashboard)
-        tabConsoleLayout = findViewById(R.id.tabConsole)
-        tabSettingsLayout = findViewById(R.id.tabSettings)
-
-        // Bottom Navigation Buttons
-        btnTabDashboard = findViewById(R.id.btnTabDashboard)
-        btnTabConsole = findViewById(R.id.btnTabConsole)
-        btnTabSettings = findViewById(R.id.btnTabSettings)
-
-        // Web views
+        toolbar = findViewById(R.id.toolbar)
         webView = findViewById(R.id.webView)
-        webProgressBar = findViewById(R.id.webProgressBar)
         loadingLayout = findViewById(R.id.loadingLayout)
         tvLoadingStatus = findViewById(R.id.tvLoadingStatus)
-
-        // Console views
-        tvPythonStatus = findViewById(R.id.tvPythonStatus)
-        tvLlamaStatus = findViewById(R.id.tvLlamaStatus)
-        btnStartServers = findViewById(R.id.btnStartServers)
-        btnStopServers = findViewById(R.id.btnStopServers)
+        consoleOverlay = findViewById(R.id.consoleOverlay)
         consoleText = findViewById(R.id.consoleText)
         consoleScroll = findViewById(R.id.consoleScroll)
-        btnClearConsole = findViewById(R.id.btnClearConsole)
+        bottomNav = findViewById(R.id.bottom_navigation)
+        nativeOverlayContainer = findViewById(R.id.nativeOverlayContainer)
+        nativeContentLayout = findViewById(R.id.nativeContentLayout)
 
-        // Settings views
-        tvActiveModel = findViewById(R.id.tvActiveModel)
-        btnSelectLocalModel = findViewById(R.id.btnSelectLocalModel)
-        btnDownloadModel = findViewById(R.id.btnDownloadModel)
-        downloadProgressLayout = findViewById(R.id.downloadProgressLayout)
-        downloadProgressBar = findViewById(R.id.downloadProgressBar)
-        tvDownloadProgressPct = findViewById(R.id.tvDownloadProgressPct)
-        tvDownloadSpeed = findViewById(R.id.tvDownloadSpeed)
+        // Top Action Buttons
+        findViewById<ImageButton>(R.id.btnTopGlobalSettings).setOnClickListener { showNativePage("global") }
+        findViewById<ImageButton>(R.id.btnTopConsole).setOnClickListener { consoleOverlay.visibility = View.VISIBLE }
+        findViewById<ImageButton>(R.id.btnTopKB).setOnClickListener { 
+            nativeOverlayContainer.visibility = View.GONE
+            webView.visibility = View.VISIBLE
+            toolbar.title = "Knowledge Base"
+            webView.evaluateJavascript("document.querySelector('[data-tab=\"kb\"]').click();", null)
+        }
+        findViewById<ImageButton>(R.id.btnTopAppSettings).setOnClickListener { showNativePage("app") }
+        
+        // Console Actions
+        findViewById<ImageButton>(R.id.btnCopyLogs).setOnClickListener {
+            val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+            val clip = android.content.ClipData.newPlainText("Logs", consoleText.text.toString())
+            clipboard.setPrimaryClip(clip)
+            Toast.makeText(this, "Logs copied to clipboard", Toast.LENGTH_SHORT).show()
+        }
+        
+        findViewById<ImageButton>(R.id.btnDownloadLogs).setOnClickListener {
+            try {
+                val file = File(getExternalFilesDir(null), "portfolio_logs.txt")
+                file.writeText(consoleText.text.toString())
+                Toast.makeText(this, "Logs saved to: ${file.absolutePath}", Toast.LENGTH_LONG).show()
+            } catch (e: Exception) {
+                Toast.makeText(this, "Failed to save logs", Toast.LENGTH_SHORT).show()
+            }
+        }
+        
+        consoleText.setTextIsSelectable(true)
 
-        etUpstoxApiKey = findViewById(R.id.etUpstoxApiKey)
-        etUpstoxSecret = findViewById(R.id.etUpstoxSecret)
-        etRedirectUri = findViewById(R.id.etRedirectUri)
-        btnSaveConfig = findViewById(R.id.btnSaveConfig)
+        findViewById<ImageButton>(R.id.btnCloseConsole).setOnClickListener { consoleOverlay.visibility = View.GONE }
+        findViewById<Button>(R.id.btnStartServers).setOnClickListener {
+            saveAllToPrefs()
+            service?.startServers()
+            consoleOverlay.visibility = View.GONE
+        }
+        findViewById<Button>(R.id.btnStopServers).setOnClickListener { service?.stopServers() }
+    }
+
+    private fun showNativePage(type: String) {
+        nativeOverlayContainer.visibility = View.VISIBLE
+        nativeContentLayout.removeAllViews()
+        val inflater = LayoutInflater.from(this)
+        
+        if (type == "global") {
+            val v = inflater.inflate(R.layout.layout_global_settings, nativeContentLayout, true)
+            tvActiveModel = v.findViewById(R.id.tvActiveModel)
+            btnSelectLocalModel = v.findViewById(R.id.btnSelectLocalModel)
+            btnDownloadModel = v.findViewById(R.id.btnDownloadModel)
+            spnLlmProvider = v.findViewById(R.id.spnLlmProvider)
+            etLlmApiKey = v.findViewById(R.id.etLlmApiKey)
+            etOllamaHost = v.findViewById(R.id.etOllamaHost)
+            btnSaveGlobal = v.findViewById(R.id.btnSaveGlobal)
+            
+            btnSaveGlobal.setOnClickListener { saveAllToPrefs(); nativeOverlayContainer.visibility = View.GONE }
+            btnSelectLocalModel.setOnClickListener {
+                val intent = Intent(Intent.ACTION_GET_CONTENT)
+                intent.type = "*/*"
+                startActivityForResult(Intent.createChooser(intent, "Select GGUF"), modelPickRequestCode)
+            }
+            loadGlobalUI()
+        } else {
+            val v = inflater.inflate(R.layout.layout_app_settings, nativeContentLayout, true)
+            etUpstoxApiKey = v.findViewById(R.id.etUpstoxApiKey)
+            etUpstoxSecret = v.findViewById(R.id.etUpstoxSecret)
+            etRedirectUri = v.findViewById(R.id.etRedirectUri)
+            etUpstoxBaseUrl = v.findViewById(R.id.etUpstoxBaseUrl)
+            etUpstoxBearerToken = v.findViewById(R.id.etUpstoxBearerToken)
+            btnTestToken = v.findViewById(R.id.btnTestToken)
+            etTeleToken = v.findViewById(R.id.etTeleToken)
+            etTeleChatId = v.findViewById(R.id.etTeleChatId)
+            btnSaveApp = v.findViewById(R.id.btnSaveApp)
+            
+            btnSaveApp.setOnClickListener { saveAllToPrefs(); nativeOverlayContainer.visibility = View.GONE }
+            btnTestToken.setOnClickListener { testUpstoxToken() }
+            loadAppUI()
+        }
+    }
+
+    private fun testUpstoxToken() {
+        if (service?.pythonState != PortfolioService.ServerState.RUNNING) {
+            Toast.makeText(this, "Start Servers first via Terminal", Toast.LENGTH_LONG).show()
+            return
+        }
+        
+        saveAllToPrefs() // Save to disk
+        
+        val token = etUpstoxBearerToken.text.toString().trim()
+        
+        // Push the new token directly into the running Python environment for immediate test
+        try {
+            val py = com.chaquo.python.Python.getInstance()
+            val os = py.getModule("os")
+            val environ = os["environ"]
+            environ?.callAttr("__setitem__", "UPSTOX_BEARER_TOKEN", token)
+        } catch (e: Exception) {
+            // fallback to disk if JNI fails
+        }
+        
+        btnTestToken.text = "Testing..."
+        btnTestToken.isEnabled = false
+        
+        // Execute JS in background to call our new API endpoint
+        val js = """
+            fetch('/api/upstox/test-token', {method: 'POST'})
+                .then(r => r.json())
+                .then(d => {
+                    if (d.ok) { 
+                        alert('SUCCESS: ' + d.message);
+                        // Force dashboard to reload portfolio data immediately
+                        if (typeof loadPortfolio === 'function') { loadPortfolio(); }
+                    }
+                    else { alert('FAILED: ' + d.message); }
+                })
+                .catch(e => alert('Error: ' + e));
+        """.trimIndent()
+        
+        webView.evaluateJavascript(js) {
+            btnTestToken.text = "Test Authentication"
+            btnTestToken.isEnabled = true
+        }
+    }
+
+    private fun loadGlobalUI() {
+        val prefs = getSharedPreferences("PortfolioQuantPrefs", Context.MODE_PRIVATE)
+        val providers = arrayOf("nvidia", "anthropic", "llamacpp")
+        spnLlmProvider.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_item, providers).apply {
+            setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
+        }
+        spnLlmProvider.setSelection(providers.indexOf(prefs.getString("llm_provider", "nvidia")))
+        etLlmApiKey.setText(prefs.getString("llm_api_key", ""))
+        etOllamaHost.setText(prefs.getString("ollama_host", "http://127.0.0.1:11434"))
+        
+        val savedModel = prefs.getString("active_model_path", null)
+        tvActiveModel.text = if (savedModel != null) File(savedModel).name else "None selected"
+    }
+
+    private fun loadAppUI() {
+        val prefs = getSharedPreferences("PortfolioQuantPrefs", Context.MODE_PRIVATE)
+        etUpstoxApiKey.setText(prefs.getString("upstox_api_key", ""))
+        etUpstoxSecret.setText(prefs.getString("upstox_secret", ""))
+        etRedirectUri.setText(prefs.getString("redirect_uri", "http://127.0.0.1:8765/callback"))
+        etUpstoxBaseUrl.setText(prefs.getString("upstox_base_url", "https://api.upstox.com/v2"))
+        etUpstoxBearerToken.setText(prefs.getString("upstox_bearer_token", ""))
+        etTeleToken.setText(prefs.getString("tele_token", ""))
+        etTeleChatId.setText(prefs.getString("tele_chat_id", ""))
+    }
+
+    private fun saveAllToPrefs() {
+        val prefs = getSharedPreferences("PortfolioQuantPrefs", Context.MODE_PRIVATE).edit()
+        
+        // We only save if the views are currently inflated/accessible
+        if (::etLlmApiKey.isInitialized) {
+            prefs.putString("llm_api_key", etLlmApiKey.text.toString().trim())
+            prefs.putString("llm_provider", spnLlmProvider.selectedItem.toString())
+            prefs.putString("ollama_host", etOllamaHost.text.toString().trim())
+        }
+        if (::etUpstoxApiKey.isInitialized) {
+            prefs.putString("upstox_api_key", etUpstoxApiKey.text.toString().trim())
+            prefs.putString("upstox_secret", etUpstoxSecret.text.toString().trim())
+            prefs.putString("redirect_uri", etRedirectUri.text.toString().trim())
+            prefs.putString("upstox_base_url", etUpstoxBaseUrl.text.toString().trim())
+            prefs.putString("upstox_bearer_token", etUpstoxBearerToken.text.toString().trim())
+            prefs.putString("tele_token", etTeleToken.text.toString().trim())
+            prefs.putString("tele_chat_id", etTeleChatId.text.toString().trim())
+        }
+        prefs.apply()
+        Toast.makeText(this, "Settings Saved Locally", Toast.LENGTH_SHORT).show()
     }
 
     @SuppressLint("SetJavaScriptEnabled")
     private fun setupWebView() {
-        val settings = webView.settings
-        settings.javaScriptEnabled = true
-        settings.domStorageEnabled = true
-        settings.databaseEnabled = true
-        settings.cacheMode = WebSettings.LOAD_DEFAULT
-        settings.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+        webView.settings.apply {
+            javaScriptEnabled = true
+            domStorageEnabled = true
+            databaseEnabled = true
+            cacheMode = WebSettings.LOAD_DEFAULT
+            mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+        }
+        webView.addJavascriptInterface(object {
+            @android.webkit.JavascriptInterface
+            fun openBrowser(url: String) { runOnUiThread { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) } }
+
+            // In-app Upstox OAuth: load the auth URL in THIS webview and
+            // auto-capture the ?code= when Upstox redirects to the callback.
+            @android.webkit.JavascriptInterface
+            fun startUpstoxLogin(authUrl: String, redirectUri: String) {
+                oauthRedirectUri = redirectUri
+                runOnUiThread { webView.loadUrl(authUrl) }
+            }
+        }, "AndroidApp")
 
         webView.webViewClient = object : WebViewClient() {
+            override fun shouldOverrideUrlLoading(view: WebView?, request: android.webkit.WebResourceRequest?): Boolean {
+                val url = request?.url?.toString() ?: return false
+                val redir = oauthRedirectUri
+                val looksLikeCallback = (redir != null && url.startsWith(redir)) ||
+                    (url.contains("/callback") && url.contains("code="))
+                if (looksLikeCallback) {
+                    val code = request?.url?.getQueryParameter("code")
+                    if (!code.isNullOrBlank()) {
+                        oauthRedirectUri = null
+                        exchangeUpstoxCode(url)
+                        return true   // don't load the dead localhost page
+                    }
+                }
+                return false
+            }
             override fun onPageFinished(view: WebView?, url: String?) {
-                super.onPageFinished(view, url)
-                webProgressBar.visibility = View.GONE
+                // Only restyle OUR dashboard — never Upstox's login page.
+                if (url != null && url.contains("127.0.0.1:8000")) injectMobileMode()
             }
         }
+        
+        webView.webChromeClient = object : android.webkit.WebChromeClient() {
+            override fun onJsAlert(view: WebView?, url: String?, message: String?, result: android.webkit.JsResult?): Boolean {
+                Toast.makeText(this@MainActivity, message, Toast.LENGTH_LONG).show()
+                result?.confirm()
+                return true
+            }
+        }
+
+        webView.loadUrl("http://127.0.0.1:8000")
     }
 
-    private fun loadSavedConfig() {
-        val prefs = getSharedPreferences("PortfolioQuantPrefs", Context.MODE_PRIVATE)
-        etUpstoxApiKey.setText(prefs.getString("upstox_api_key", ""))
-        etUpstoxSecret.setText(prefs.getString("upstox_secret", ""))
-        etRedirectUri.setText(prefs.getString("redirect_uri", "http://localhost:8765/callback"))
-
-        // Restore active model path if saved
-        val savedModel = prefs.getString("active_model_path", null)
-        if (savedModel != null && File(savedModel).exists()) {
-            selectedModelPath = savedModel
-            tvActiveModel.text = "Active Model: ${File(savedModel).name}"
-        } else {
-            // Check default download dir
-            val modelsDir = File(getExternalFilesDir(null), "models")
-            val defaultModel = File(modelsDir, "deepseek-r1-1.5b-q4_k_m.gguf")
-            if (defaultModel.exists()) {
-                selectedModelPath = defaultModel.absolutePath
-                tvActiveModel.text = "Active Model: ${defaultModel.name}"
+    /** POST the captured OAuth redirect URL to the local backend, which
+     *  exchanges it for an access token. Runs off the UI thread. */
+    private fun exchangeUpstoxCode(fullUrl: String) {
+        runOnUiThread { Toast.makeText(this, "Completing Upstox login…", Toast.LENGTH_SHORT).show() }
+        Thread {
+            var ok = false
+            var msg = "exchange failed"
+            try {
+                val conn = (URL("http://127.0.0.1:8000/api/upstox/exchange-code")
+                    .openConnection() as HttpURLConnection).apply {
+                    requestMethod = "POST"
+                    connectTimeout = 15000; readTimeout = 30000
+                    doOutput = true
+                    setRequestProperty("Content-Type", "application/json")
+                    setRequestProperty("x-client", "portfolio-mobile")
+                }
+                conn.outputStream.use {
+                    it.write(JSONObject().put("code_or_url", fullUrl).toString().toByteArray())
+                }
+                val body = (if (conn.responseCode in 200..299) conn.inputStream else conn.errorStream)
+                    ?.bufferedReader()?.readText() ?: ""
+                val j = JSONObject(body)
+                ok = j.optBoolean("ok", false)
+                msg = if (ok) "Logged in as ${j.optString("user", "you")}" else j.optString("error", msg)
+            } catch (e: Exception) {
+                msg = e.message ?: "network error"
             }
-        }
+            runOnUiThread {
+                Toast.makeText(this, if (ok) "✅ $msg" else "❌ $msg", Toast.LENGTH_LONG).show()
+                // Back to the dashboard either way
+                webView.loadUrl("http://127.0.0.1:8000")
+            }
+        }.start()
     }
 
-    private fun setupListeners() {
-        // Tab switching
-        btnTabDashboard.setOnClickListener { selectTab(0) }
-        btnTabConsole.setOnClickListener { selectTab(1) }
-        btnTabSettings.setOnClickListener { selectTab(2) }
-
-        // Start/Stop servers — no local model needed; analysis runs on NVIDIA NIM.
-        btnStartServers.setOnClickListener {
-            saveConfigToPreferences()
-            service?.startServers()
-        }
-
-        btnStopServers.setOnClickListener {
-            service?.stopServers()
-        }
-
-        btnClearConsole.setOnClickListener {
-            consoleText.text = ""
-        }
-
-        // Save credentials
-        btnSaveConfig.setOnClickListener {
-            saveConfigToPreferences()
-            Toast.makeText(this, "Credentials saved!", Toast.LENGTH_SHORT).show()
-        }
-
-        // Select custom model file picker
-        btnSelectLocalModel.setOnClickListener {
-            val intent = Intent(Intent.ACTION_GET_CONTENT).apply {
-                type = "*/*"
-                addCategory(Intent.CATEGORY_OPENABLE)
-            }
-            startActivityForResult(Intent.createChooser(intent, "Select GGUF Model File"), modelPickRequestCode)
-        }
-
-        // Download model button
-        btnDownloadModel.setOnClickListener {
-            if (modelDownloader.isDownloading()) {
-                modelDownloader.cancelDownload()
-                btnDownloadModel.text = "Download Distill-Qwen-1.5B (1.1GB)"
-                downloadProgressLayout.visibility = View.GONE
-                Toast.makeText(this, "Download cancelled", Toast.LENGTH_SHORT).show()
-            } else {
-                val url = "https://huggingface.co/lmstudio-community/DeepSeek-R1-Distill-Qwen-1.5B-GGUF/resolve/main/DeepSeek-R1-Distill-Qwen-1.5B-q4_k_m.gguf"
-                val name = "deepseek-r1-1.5b-q4_k_m.gguf"
-                btnDownloadModel.text = "Cancel Download"
-                downloadProgressLayout.visibility = View.VISIBLE
-
-                modelDownloader.startDownload(url, name, object : ModelDownloader.DownloadCallback {
-                    override fun onProgress(progress: Int, speed: String) {
-                        if (progress >= 0) {
-                            downloadProgressBar.isIndeterminate = false
-                            downloadProgressBar.progress = progress
-                            tvDownloadProgressPct.text = "$progress%"
-                        } else {
-                            downloadProgressBar.isIndeterminate = true
-                            tvDownloadProgressPct.text = "Downloading..."
-                        }
-                        tvDownloadSpeed.text = speed
-                    }
-
-                    override fun onSuccess(file: File) {
-                        btnDownloadModel.text = "Download Distill-Qwen-1.5B (1.1GB)"
-                        downloadProgressLayout.visibility = View.GONE
-                        selectedModelPath = file.absolutePath
-                        tvActiveModel.text = "Active Model: ${file.name}"
-                        
-                        // Save model path
-                        getSharedPreferences("PortfolioQuantPrefs", Context.MODE_PRIVATE)
-                            .edit()
-                            .putString("active_model_path", file.absolutePath)
-                            .apply()
-
-                        Toast.makeText(this@MainActivity, "Model downloaded and active!", Toast.LENGTH_LONG).show()
-                    }
-
-                    override fun onFailure(error: String) {
-                        btnDownloadModel.text = "Download Distill-Qwen-1.5B (1.1GB)"
-                        downloadProgressLayout.visibility = View.GONE
-                        Toast.makeText(this@MainActivity, "Download failed: $error", Toast.LENGTH_LONG).show()
-                    }
-                })
-            }
-        }
+    private fun injectMobileMode() {
+        // Aggressively hide all web headers, navs, and titles to reclaim screen space
+        val css = """
+            header, nav, footer, .tab-nav, h1, .tab-header { display: none !important; }
+            main { padding-top: 0 !important; margin-top: 0 !important; margin-bottom: 20px !important; }
+            body { background-color: #0B0E14 !important; }
+            .card { border-radius: 12px !important; background: #161B22 !important; border: 1px solid #30363D !important; }
+        """.trimIndent().replace("\n", "")
+        webView.evaluateJavascript("const style = document.createElement('style'); style.innerHTML = '$css'; document.head.appendChild(style);", null)
+        webView.evaluateJavascript("document.body.classList.add('native-mode');", null)
     }
 
-    /** On-device model is gone — analysis runs on NVIDIA NIM (internet).
-     *  Hide the download/select-model controls and relabel the row. */
-    private fun configureCloudLlmUi() {
-        tvActiveModel.text = "🧠 Analysis: NVIDIA NIM (cloud) — no local model needed"
-        btnSelectLocalModel.visibility = View.GONE
-        btnDownloadModel.visibility = View.GONE
-        downloadProgressLayout.visibility = View.GONE
-    }
-
-    private fun selectTab(index: Int) {
-        // Toggle tab layouts
-        tabDashboardLayout.visibility = if (index == 0) View.VISIBLE else View.GONE
-        tabConsoleLayout.visibility = if (index == 1) View.VISIBLE else View.GONE
-        tabSettingsLayout.visibility = if (index == 2) View.VISIBLE else View.GONE
-
-        // Update active tab buttons color
-        btnTabDashboard.setTextColor(if (index == 0) 0xFF58A6FF.toInt() else 0xFF8B949E.toInt())
-        btnTabConsole.setTextColor(if (index == 1) 0xFF58A6FF.toInt() else 0xFF8B949E.toInt())
-        btnTabSettings.setTextColor(if (index == 2) 0xFF58A6FF.toInt() else 0xFF8B949E.toInt())
-    }
-
-    private fun saveConfigToPreferences() {
-        val apiKey = etUpstoxApiKey.text.toString().trim()
-        val secret = etUpstoxSecret.text.toString().trim()
-        val redirectUri = etRedirectUri.text.toString().trim()
-
-        getSharedPreferences("PortfolioQuantPrefs", Context.MODE_PRIVATE)
-            .edit()
-            .putString("upstox_api_key", apiKey)
-            .putString("upstox_secret", secret)
-            .putString("redirect_uri", redirectUri)
-            .apply()
-    }
-
-    private fun updateStatusUI(llamaState: PortfolioService.ServerState, pythonState: PortfolioService.ServerState) {
-        // "Llama" row now reflects the cloud LLM (NVIDIA NIM).
-        tvLlamaStatus.text = if (llamaState == PortfolioService.ServerState.RUNNING)
-            "NVIDIA NIM (cloud)" else llamaState.name
-        when (llamaState) {
-            PortfolioService.ServerState.RUNNING -> tvLlamaStatus.setTextColor(0xFF3FB950.toInt()) // Green
-            PortfolioService.ServerState.STARTING -> tvLlamaStatus.setTextColor(0xFFD29922.toInt()) // Yellow
-            PortfolioService.ServerState.ERROR -> tvLlamaStatus.setTextColor(0xFFF85149.toInt()) // Red
-            PortfolioService.ServerState.STOPPED -> tvLlamaStatus.setTextColor(0xFF8B949E.toInt()) // Gray
-        }
-
-        tvPythonStatus.text = pythonState.name
-        when (pythonState) {
-            PortfolioService.ServerState.RUNNING -> {
-                tvPythonStatus.setTextColor(0xFF3FB950.toInt()) // Green
-                tvLoadingStatus.text = "Loading dashboard..."
-                
-                // load WebView with custom mobile header
-                val headers = HashMap<String, String>()
-                headers["x-client"] = "portfolio-mobile"
-                webView.loadUrl("http://127.0.0.1:8000", headers)
-                loadingLayout.visibility = View.GONE
+    private fun setupNavigation() {
+        bottomNav.setOnItemSelectedListener { item ->
+            nativeOverlayContainer.visibility = View.GONE
+            webView.visibility = View.VISIBLE
+            
+            val (tabId, title) = when (item.itemId) {
+                R.id.nav_portfolio -> "portfolio" to "Portfolio"
+                R.id.nav_performance -> "performance" to "Performance"
+                R.id.nav_optimize -> "optimize" to "MPT Optimization"
+                R.id.nav_quant -> "quant" to "D-R1-Quant"
+                R.id.nav_umap -> "umap" to "Universe Map"
+                else -> "portfolio" to "Portfolio"
             }
-            PortfolioService.ServerState.STARTING -> {
-                tvPythonStatus.setTextColor(0xFFD29922.toInt())
-                loadingLayout.visibility = View.VISIBLE
-                tvLoadingStatus.text = "FastAPI Backend Booting..."
+            toolbar.title = title
+            // Click the hidden web tab button to switch data source
+            webView.evaluateJavascript("document.querySelector('[data-tab=\"$tabId\"]').click();", null)
+            
+            // If switching to portfolio/performance, force a data fetch
+            if (tabId == "portfolio" || tabId == "performance") {
+                webView.evaluateJavascript("if(typeof loadPortfolio === 'function') loadPortfolio();", null)
+                webView.evaluateJavascript("if(typeof loadPerformance === 'function') loadPerformance();", null)
             }
-            PortfolioService.ServerState.ERROR -> {
-                tvPythonStatus.setTextColor(0xFFF85149.toInt())
-                loadingLayout.visibility = View.VISIBLE
-                tvLoadingStatus.text = "Python Server failed to boot."
-            }
-            PortfolioService.ServerState.STOPPED -> {
-                tvPythonStatus.setTextColor(0xFF8B949E.toInt())
-                loadingLayout.visibility = View.VISIBLE
-                tvLoadingStatus.text = "Servers are offline."
-            }
+            true
         }
     }
 
     private fun appendConsoleLog(line: String) {
         consoleText.append("$line\n")
-        consoleScroll.post {
-            consoleScroll.fullScroll(View.FOCUS_DOWN)
+        consoleScroll.post { consoleScroll.fullScroll(View.FOCUS_DOWN) }
+    }
+
+    override fun onBackPressed() {
+        if (consoleOverlay.visibility == View.VISIBLE) {
+            consoleOverlay.visibility = View.GONE
+        } else if (nativeOverlayContainer.visibility == View.VISIBLE) {
+            nativeOverlayContainer.visibility = View.GONE
+        } else {
+            super.onBackPressed()
         }
     }
 
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode == modelPickRequestCode && resultCode == Activity.RESULT_OK) {
-            data?.data?.let { uri ->
-                val modelFile = copyUriToInternalStorage(uri)
-                if (modelFile != null) {
-                    selectedModelPath = modelFile.absolutePath
-                    tvActiveModel.text = "Active Model: ${modelFile.name}"
-                    
-                    // Save model path
-                    getSharedPreferences("PortfolioQuantPrefs", Context.MODE_PRIVATE)
-                        .edit()
-                        .putString("active_model_path", modelFile.absolutePath)
-                        .apply()
-                } else {
-                    Toast.makeText(this, "Failed to load model file", Toast.LENGTH_SHORT).show()
-                }
-            }
-        }
-    }
-
-    private fun copyUriToInternalStorage(uri: Uri): File? {
-        var fileName = "custom_model.gguf"
-        contentResolver.query(uri, null, null, null, null)?.use { cursor ->
-            val nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
-            if (nameIndex != -1 && cursor.moveToFirst()) {
-                fileName = cursor.getString(nameIndex)
-            }
-        }
-
-        val modelsDir = File(getExternalFilesDir(null), "models")
-        if (!modelsDir.exists()) modelsDir.mkdirs()
-
-        val outFile = File(modelsDir, fileName)
-        try {
-            contentResolver.openInputStream(uri).use { input ->
-                FileOutputStream(outFile).use { output ->
-                    if (input == null) return null
-                    val buffer = ByteArray(16 * 1024)
-                    var read: Int
-                    while (input.read(buffer).also { read = it } != -1) {
-                        output.write(buffer, 0, read)
-                    }
-                    output.flush()
-                }
-            }
-            return outFile
-        } catch (e: Exception) {
-            e.printStackTrace()
-            return null
-        }
+    override fun onDestroy() {
+        super.onDestroy()
+        unbindService(serviceConnection)
     }
 }

@@ -2,82 +2,179 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
 from pathlib import Path
-
 from dotenv import load_dotenv
-
-load_dotenv()
 
 APP_FILES_DIR = os.getenv("APP_FILES_DIR")
 if APP_FILES_DIR:
     ROOT = Path(APP_FILES_DIR)
+    load_dotenv(override=False)
 else:
     ROOT = Path(__file__).resolve().parent.parent
+    load_dotenv()
 
-
-
-@dataclass(frozen=True)
 class Settings:
-    upstox_api_key: str = os.getenv("UPSTOX_API_KEY", "")
-    upstox_api_secret: str = os.getenv("UPSTOX_API_SECRET", "")
-    upstox_redirect_uri: str = os.getenv(
-        "UPSTOX_REDIRECT_URI", "http://localhost:8765/callback"
-    )
-    upstox_token_file: Path = ROOT / os.getenv(
-        "UPSTOX_TOKEN_FILE", ".cache/upstox_token.json"
-    )
+    """Live Settings. Fetches from os.environ on every access to ensure
+    Android-injected keys are always fresh.
+    """
 
-    # Which LLM brain to use for the agent layer: "anthropic" or "ollama"
-    llm_provider: str = os.getenv("LLM_PROVIDER", "anthropic")
+    def refresh(self):
+        """No-op for property-based settings, kept for backward compatibility."""
+        pass
 
-    anthropic_api_key: str = os.getenv("ANTHROPIC_API_KEY", "")
-    anthropic_model: str = os.getenv("ANTHROPIC_MODEL", "claude-opus-4-7")
+    def _get(self, key: str, default: str = "") -> str:
+        val = os.getenv(key)
+        return val.strip() if val is not None else default
 
-    # NVIDIA NIM (hosted, OpenAI-compatible). The analysis LLM runs in the
-    # cloud over the internet — no local model needed. NEVER hardcode the key;
-    # keep it in .env only and never ship it inside an APK.
-    nvidia_api_key: str = os.getenv("NVIDIA_API_KEY", "")
-    nvidia_base_url: str = os.getenv("NVIDIA_BASE_URL", "https://integrate.api.nvidia.com/v1")
-    nvidia_model: str = os.getenv("NVIDIA_MODEL", "nvidia/nemotron-3-super-120b-a12b")
-    nvidia_temperature: float = float(os.getenv("NVIDIA_TEMPERATURE", "0.6"))
-    nvidia_max_tokens: int = int(os.getenv("NVIDIA_MAX_TOKENS", "16384"))
+    # ── Active broker (either/or) ──
+    @property
+    def broker(self) -> str:
+        # env BROKER wins; else a persisted .cache/active_broker.txt; else upstox
+        b = os.getenv("BROKER")
+        if not b:
+            try:
+                f = ROOT / ".cache" / "active_broker.txt"
+                if f.exists():
+                    b = f.read_text().strip()
+            except Exception:
+                b = None
+        b = (b or "upstox").lower()
+        return b if b in ("upstox", "groww") else "upstox"
 
-    # Local Ollama (e.g. DeepSeek-R1-Distill-Llama-8B) — runs on your M4
-    ollama_host: str = os.getenv("OLLAMA_HOST", "http://127.0.0.1:11434")
-    ollama_model: str = os.getenv("OLLAMA_MODEL", "deepseek-r1:8b")
-    ollama_temperature: float = float(os.getenv("OLLAMA_TEMPERATURE", "0.2"))
-    ollama_num_ctx: int = int(os.getenv("OLLAMA_NUM_CTX", "8192"))
-    # Embedding model for the Knowledge Base's semantic search.
-    # `ollama pull nomic-embed-text` to enable it; otherwise KB uses FTS5.
-    ollama_embed_model: str = os.getenv("OLLAMA_EMBED_MODEL", "nomic-embed-text")
-    # Retrieved chunks below this cosine similarity are dropped — keeps
-    # irrelevant context out of the LLM prompt.
-    kb_min_similarity: float = float(os.getenv("KB_MIN_SIMILARITY", "0.35"))
+    # ── Groww ──
+    @property
+    def groww_api_key(self) -> str: return self._get("GROWW_API_KEY")
 
-    cache_dir: Path = ROOT / os.getenv("CACHE_DIR", ".cache")
-    log_level: str = os.getenv("LOG_LEVEL", "INFO")
+    @property
+    def groww_api_secret(self) -> str: return self._get("GROWW_API_SECRET")
 
-    upstox_base_url: str = "https://api.upstox.com/v2"
+    @property
+    def groww_access_token(self) -> str: return self._get("GROWW_ACCESS_TOKEN")
 
-    # Match the user's existing Upstox_Agent env var names (TELE_TOKEN / CHAT_ID),
-    # with fallback to the longer original names so old configs keep working.
-    telegram_bot_token: str = os.getenv("TELE_TOKEN") or os.getenv("TELEGRAM_BOT_TOKEN", "")
-    telegram_allowed_chat_ids: tuple = tuple(
-        int(x) for x in (
-            os.getenv("CHAT_ID") or os.getenv("TELEGRAM_ALLOWED_CHAT_IDS", "")
-        ).replace(" ", "").split(",") if x
-    )
-    telegram_auth_secret: str = os.getenv("TELEGRAM_AUTH_SECRET", "")
-    telegram_auth_file: Path = ROOT / ".cache" / "telegram_auth.json"
+    @property
+    def groww_token_file(self) -> Path:
+        p = os.getenv("GROWW_TOKEN_FILE")
+        return ROOT / p if p else ROOT / ".cache/groww_token.json"
 
-    # D-R1-Quant
-    timescale_dsn: str = os.getenv("TIMESCALE_DSN", "")
-    chroma_dir: Path = ROOT / os.getenv("CHROMA_DIR", ".cache/chroma")
-    trace_dir: Path = ROOT / os.getenv("TRACE_DIR", ".cache/traces")
-    risk_free_rate: float = float(os.getenv("RISK_FREE_RATE", "0.07"))
+    @property
+    def upstox_api_key(self) -> str: return self._get("UPSTOX_API_KEY")
 
+    @property
+    def upstox_api_secret(self) -> str: return self._get("UPSTOX_API_SECRET")
+
+    @property
+    def upstox_redirect_uri(self) -> str:
+        return self._get("UPSTOX_REDIRECT_URI", "http://127.0.0.1:8765/callback")
+
+    @property
+    def upstox_token_file(self) -> Path:
+        p = os.getenv("UPSTOX_TOKEN_FILE")
+        return ROOT / p if p else ROOT / ".cache/upstox_token.json"
+
+    @property
+    def llm_provider(self) -> str: return self._get("LLM_PROVIDER", "anthropic")
+
+    @property
+    def anthropic_api_key(self) -> str: return self._get("ANTHROPIC_API_KEY")
+
+    @property
+    def anthropic_model(self) -> str: return self._get("ANTHROPIC_MODEL", "claude-opus-4-7")
+
+    @property
+    def nvidia_api_key(self) -> str: return self._get("NVIDIA_API_KEY")
+
+    @property
+    def nvidia_base_url(self) -> str:
+        return self._get("NVIDIA_BASE_URL", "https://integrate.api.nvidia.com/v1")
+
+    @property
+    def nvidia_model(self) -> str:
+        return self._get("NVIDIA_MODEL", "nvidia/nemotron-3-super-120b-a12b")
+
+    @property
+    def nvidia_temperature(self) -> float:
+        return float(self._get("NVIDIA_TEMPERATURE", "0.6"))
+
+    @property
+    def nvidia_max_tokens(self) -> int:
+        return int(self._get("NVIDIA_MAX_TOKENS", "16384"))
+
+    @property
+    def nvidia_embed_model(self) -> str:
+        return self._get("NVIDIA_EMBED_MODEL", "nvidia/nv-embedqa-e5-v5")
+
+    @property
+    def ollama_host(self) -> str:
+        return self._get("OLLAMA_HOST", "http://127.0.0.1:11434")
+
+    @property
+    def ollama_model(self) -> str:
+        return self._get("OLLAMA_MODEL", "deepseek-r1:8b")
+
+    @property
+    def ollama_temperature(self) -> float:
+        return float(self._get("OLLAMA_TEMPERATURE", "0.2"))
+
+    @property
+    def ollama_num_ctx(self) -> int:
+        return int(self._get("OLLAMA_NUM_CTX", "8192"))
+
+    @property
+    def ollama_embed_model(self) -> str:
+        return self._get("OLLAMA_EMBED_MODEL", "nomic-embed-text")
+
+    @property
+    def kb_min_similarity(self) -> float:
+        return float(self._get("KB_MIN_SIMILARITY", "0.35"))
+
+    @property
+    def cache_dir(self) -> Path:
+        p = os.getenv("CACHE_DIR")
+        return ROOT / p if p else ROOT / ".cache"
+
+    @property
+    def log_level(self) -> str: return self._get("LOG_LEVEL", "INFO")
+
+    @property
+    def upstox_base_url(self) -> str:
+        return self._get("UPSTOX_BASE_URL", "https://api.upstox.com/v2")
+
+    @property
+    def telegram_bot_token(self) -> str:
+        return os.getenv("TELE_TOKEN") or self._get("TELEGRAM_BOT_TOKEN")
+
+    @property
+    def telegram_allowed_chat_ids(self) -> tuple:
+        s = os.getenv("CHAT_ID") or self._get("TELEGRAM_ALLOWED_CHAT_IDS")
+        if not s: return ()
+        return tuple(int(x) for x in s.replace(" ", "").split(",") if x)
+
+    @property
+    def telegram_auth_secret(self) -> str: return self._get("TELEGRAM_AUTH_SECRET")
+
+    @property
+    def telegram_auth_file(self) -> Path:
+        return self.cache_dir / "telegram_auth.json"
+
+    @property
+    def timescale_dsn(self) -> str: return self._get("TIMESCALE_DSN")
+
+    @property
+    def chroma_dir(self) -> Path:
+        p = os.getenv("CHROMA_DIR")
+        return ROOT / p if p else self.cache_dir / "chroma"
+
+    @property
+    def trace_dir(self) -> Path:
+        p = os.getenv("TRACE_DIR")
+        return ROOT / p if p else self.cache_dir / "traces"
+
+    @property
+    def risk_free_rate(self) -> float:
+        return float(self._get("RISK_FREE_RATE", "0.07"))
 
 settings = Settings()
-settings.cache_dir.mkdir(parents=True, exist_ok=True)
-settings.upstox_token_file.parent.mkdir(parents=True, exist_ok=True)
+# Ensure directories exist
+os.makedirs(settings.cache_dir, exist_ok=True)
+os.makedirs(settings.chroma_dir, exist_ok=True)
+os.makedirs(settings.upstox_token_file.parent, exist_ok=True)
