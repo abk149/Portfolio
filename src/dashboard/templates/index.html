@@ -67,10 +67,29 @@
 
 <!-- ===== Performance ===== -->
 <section id="tab-performance" class="tab">
-  <div class="row">
+  <div class="row" style="align-items: center;">
     <button class="primary" onclick="loadPerformance()">📈 Analyze performance</button>
+    
+    <span style="margin: 0 10px; color: var(--muted)">|</span>
+    
+    <label for="trades-upload" class="btn" style="cursor: pointer; display: inline-flex; align-items: center; gap: 6px;">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
+      Upload Pre-2024 Trades (CSV/Excel)
+    </label>
+    <input type="file" id="trades-upload" accept=".csv, .xlsx, .xls" style="display: none;" onchange="uploadTrades(this)">
+    
     <span id="perf-status" class="status"></span>
   </div>
+  
+  <div id="upload-overlay" style="display:none; position:absolute; top:0; left:0; right:0; bottom:0; background:rgba(18,20,24,0.8); z-index:999; justify-content:center; align-items:center; flex-direction:column; border-radius:12px; backdrop-filter:blur(4px);">
+    <div class="spinner" style="width:40px; height:40px; border:3px solid var(--border); border-top-color:var(--accent); border-radius:50%; animation:spin 1s linear infinite;"></div>
+    <div style="margin-top:16px; color:var(--text); font-weight:500;">Uploading & Parsing History...</div>
+  </div>
+  
+  <style>
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+
   <div style="color:var(--muted); font-size:12px; margin:-6px 0 14px; line-height:1.5">
     Fetches your full trade history, reconstructs daily portfolio value,
     calculates XIRR (money-weighted annual return), period returns, and identifies
@@ -80,13 +99,43 @@
   <div id="perf-kpis" class="kpis"></div>
 
   <div class="card perf-chart-wrapper">
-    <h3>💰 Portfolio equity curve
-      <span style="float:right; font-weight:400; font-size:11px; color:var(--muted)">
-        portfolio value vs invested capital over time
-      </span>
-    </h3>
-    <div style="position:relative; height:340px">
+    <div style="display: flex; justify-content: space-between; align-items: center;">
+      <h3>💰 Portfolio equity curve
+        <span style="font-weight:400; font-size:11px; color:var(--muted); margin-left:10px;">
+          portfolio value vs invested capital over time
+        </span>
+      </h3>
+      <div class="chart-filters" id="chart-filters">
+        <button class="filter-btn" data-days="30">1M</button>
+        <button class="filter-btn" data-days="180">6M</button>
+        <button class="filter-btn" data-days="365">1Y</button>
+        <button class="filter-btn" data-days="ytd">YTD</button>
+        <button class="filter-btn active" data-days="all">All</button>
+      </div>
+    </div>
+    <div style="position:relative; height:340px; margin-top: 10px;">
       <canvas id="perf-equity-chart"></canvas>
+    </div>
+  </div>
+
+  <div class="card perf-all-stocks" style="margin-top: 24px;">
+    <h3>📜 ALL STOCKS TRADED</h3>
+    <div style="overflow-x: auto; margin-top: 16px;">
+      <table class="data-table" id="all-stocks-table">
+        <thead>
+          <tr>
+            <th>Symbol</th>
+            <th class="right">Bought Qty</th>
+            <th class="right">Sold Qty</th>
+            <th class="right">Current Held</th>
+            <th class="right">Current Value</th>
+            <th class="right">Realized P&L</th>
+            <th class="right">Unrealized P&L</th>
+            <th class="right">Total P&L</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
     </div>
   </div>
 

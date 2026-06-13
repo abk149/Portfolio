@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Base application theme. -->
+    <style name="Theme.PortfolioQuant" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+        <!-- Primary brand color. -->
+        <item name="colorPrimary">#58A6FF</item>
+        <item name="colorPrimaryVariant">#1f6feb</item>
+        <item name="colorOnPrimary">#FFFFFF</item>
+        <!-- Secondary brand color. -->
+        <item name="colorSecondary">#3FB950</item>
+        <item name="colorSecondaryVariant">#238636</item>
+        <item name="colorOnSecondary">#FFFFFF</item>
+        <!-- Status bar color. -->
+        <item name="android:statusBarColor">#0B0E14</item>
+        <!-- Background colors -->
+        <item name="android:windowBackground">#0B0E14</item>
+    </style>
+</resources>

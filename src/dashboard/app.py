@@ -173,6 +173,35 @@ def api_portfolio_deploy_cash(body: dict):
     return res
 
 
+@app.post("/api/portfolio/upload_trades")
+async def api_portfolio_upload_trades(file: UploadFile = File(...)):
+    if not file.filename.endswith((".csv", ".xlsx", ".xls")):
+        raise HTTPException(400, "File must be CSV or Excel.")
+    
+    # Save file
+    cache_dir = Path(".cache/user_trades")
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    file_path = cache_dir / file.filename
+    
+    content = await file.read()
+    with open(file_path, "wb") as f:
+        f.write(content)
+        
+    # Attempt parsing to validate
+    from src.portfolio.analytics import PerformanceAnalyzer
+    try:
+        pa = PerformanceAnalyzer()
+        df = pa._load_user_uploaded_trades(str(file_path))
+        return {
+            "message": "File uploaded and parsed successfully.",
+            "trades_found": len(df)
+        }
+    except Exception as e:
+        # if it fails, delete the file so it doesn't break future runs
+        if file_path.exists():
+            file_path.unlink()
+        raise HTTPException(400, f"Error parsing file: {str(e)}")
+
 @app.post("/api/portfolio/optimize")
 def api_portfolio_optimize(body: dict):
     job_id = uuid.uuid4().hex[:8]

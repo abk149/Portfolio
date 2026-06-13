@@ -1,0 +1,22 @@
+# PortfolioQuant Android Conversion Task List
+
+- [x] Create `task.md` checklist
+- [x] Implement `LlamaCppProvider` in `src/llm/llamacpp_provider.py`
+- [x] Register `llamacpp` in `src/llm/factory.py`
+- [x] Add local embedding support in `src/kb/embeddings.py`
+- [x] Update `config/settings.py` for `APP_FILES_DIR`
+- [x] Create `build_llama_server.sh` cross-compilation script
+- [x] Configure Android project structure (`settings.gradle`, `build.gradle`, `gradle.properties`)
+- [x] Implement `AndroidManifest.xml` and network security config
+- [x] Create `android_runner.py` FastAPI bootloader
+- [x] Implement `LlamaServerManager.kt`
+- [x] Implement `PythonServerManager.kt` with credential injection
+- [x] Implement `ModelDownloader.kt`
+- [x] Implement `PortfolioService.kt` (Foreground Service)
+- [x] Design and implement `activity_main.xml` (UI)
+- [x] Implement `MainActivity.kt`
+- [x] Create `walkthrough.md` documentation
+- [x] Implement pure-Python `scipy` fallback for Android in `src/utils/compat.py`
+- [x] Install Android NDK (User action required)
+- [x] Cross-compile `llama-server` using `./build_llama_server.sh`
+- [x] Verify Android project sync and build

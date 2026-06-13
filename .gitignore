@@ -1,5 +1,33 @@
+# ── Python ──
 .venv/
 __pycache__/
 *.pyc
-.env
+
+# ── Secrets & runtime cache (NEVER commit) ──
+.env            # matches .env in any directory, incl. the android python bundle
+*.env
 .cache/
+
+# ── Android build artifacts / generated ──
+android/build/
+android/.gradle/
+android/.kotlin/
+android/app/build/
+android/local.properties
+android/captures/
+*.apk
+*.aab
+# The phone Python bundle is regenerated from src/ + config/ at build time
+# (Gradle syncPythonSource) — it is NOT source, and it contains a copied .env.
+android/app/src/main/python/
+
+# ── llama.cpp build tree + model blobs (huge, not source) ──
+llama.cpp_build/
+*.gguf
+llama-server
+
+# ── Stray nested repo (root-anchored; must NOT match com/portfolio/ package) ──
+/Portfolio/
+
+# ── OS / editor ──
+.DS_Store

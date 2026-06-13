@@ -13,7 +13,7 @@ from datetime import date, timedelta
 from typing import Optional
 
 import pandas as pd
-from scipy.optimize import brentq
+from src.utils.compat import brentq, newton
 
 from src.upstox.client import UpstoxClient
 from src.data.cache import get_or_set
@@ -55,10 +55,9 @@ def xirr(cashflows: list[tuple[date, float]], guess: float = 0.1) -> Optional[fl
 
     try:
         return brentq(_npv, -0.999, 100.0, maxiter=500)
-    except (ValueError, RuntimeError):
+    except (ValueError, RuntimeError, Exception):
         # brentq needs a sign change in the interval; if not, try Newton-ish
         try:
-            from scipy.optimize import newton
             return newton(_npv, guess, maxiter=500)
         except Exception:
             return None
@@ -155,10 +154,40 @@ class PerformanceAnalyzer:
                     continue
 
             if not all_trades:
+                api_df = pd.DataFrame()
+            else:
+                api_df = pd.DataFrame(all_trades)
+                if "trade_id" in api_df.columns:
+                    api_df = api_df.drop_duplicates(subset=["trade_id"], keep="first")
+                api_df = api_df.dropna(subset=["date"]).sort_values("date").reset_index(drop=True)
+
+            # Load uploaded trades if present
+            from pathlib import Path
+            uploaded_df = pd.DataFrame()
+            cache_dir = Path(".cache/user_trades")
+            if cache_dir.exists():
+                files = list(cache_dir.glob("*"))
+                if files:
+                    latest_file = max(files, key=lambda f: f.stat().st_mtime)
+                    try:
+                        uploaded_df = self._load_user_uploaded_trades(str(latest_file))
+                    except Exception as e:
+                        log.error(f"Failed parsing uploaded trades: {e}")
+
+            if api_df.empty and uploaded_df.empty:
                 return pd.DataFrame()
 
-            df = pd.DataFrame(all_trades)
-            df = df.dropna(subset=["date"]).sort_values("date").reset_index(drop=True)
+            # Merge
+            df = pd.concat([uploaded_df, api_df], ignore_index=True)
+            # Deduplicate across both sets.
+            # We match on date, symbol, side, quantity, price(rounded)
+            # This prevents overlap if the uploaded file includes recent trades that the API also fetched.
+            if not df.empty:
+                df["_p_round"] = df["price"].round(1)
+                df = df.drop_duplicates(subset=["date", "symbol", "side", "quantity", "_p_round"], keep="last")
+                df = df.drop(columns=["_p_round"])
+                df = df.sort_values("date").reset_index(drop=True)
+
 
             # Ensure amount is filled
             if "amount" in df.columns:
@@ -168,6 +197,305 @@ class PerformanceAnalyzer:
             return df
 
         return get_or_set("performance", "all_trades", 3600, _fetch)
+
+    def _load_user_uploaded_trades(self, filepath: str) -> pd.DataFrame:
+        """Parse a user-uploaded Excel or CSV file of Upstox trades."""
+        import pandas as pd
+        import uuid
+        
+        if filepath.endswith(".csv"):
+            df = pd.read_csv(filepath)
+        else:
+            df = pd.read_excel(filepath)
+
+        if df.empty:
+            return pd.DataFrame()
+
+        # fuzzy matching for columns
+        cols = {c.lower().strip(): c for c in df.columns if isinstance(c, str)}
+        
+        date_col = next((cols[c] for c in ["trade date", "date", "order timestamp"] if c in cols), None)
+        sym_col = next((cols[c] for c in ["scrip name", "tradingsymbol", "trading_symbol", "symbol", "instrument"] if c in cols), None)
+        side_col = next((cols[c] for c in ["transaction type", "trade type", "buy/sell", "side", "type"] if c in cols), None)
+        qty_col = next((cols[c] for c in ["quantity", "trade qty", "qty"] if c in cols), None)
+        price_col = next((cols[c] for c in ["price", "trade price", "rate", "avg price"] if c in cols), None)
+        amount_col = next((cols[c] for c in ["trade value", "amount", "net amount", "total", "net value"] if c in cols), None)
+
+        if not all([date_col, sym_col, side_col, qty_col, price_col]):
+            missing = [k for k, v in {"date": date_col, "symbol": sym_col, "side": side_col, "quantity": qty_col, "price": price_col}.items() if v is None]
+            raise ValueError(f"Missing required columns. Found: {list(df.columns)}. Missing logical equivalents for: {missing}")
+
+        parsed = []
+        for _, row in df.iterrows():
+            d_val = row[date_col]
+            if pd.isna(d_val): continue
+            
+            try:
+                dt = pd.to_datetime(d_val).date()
+            except:
+                continue
+                
+            qty = 0
+            try: qty = int(row[qty_col])
+            except: pass
+            
+            price = 0.0
+            try: price = float(row[price_col])
+            except: pass
+            
+            amt = 0.0
+            if amount_col and not pd.isna(row[amount_col]):
+                try: amt = float(row[amount_col])
+                except: amt = float(qty) * price
+            else:
+                amt = float(qty) * price
+                
+            # Parse side (could be 'B' or 'BUY' or 'Sell')
+            side_str = str(row[side_col]).strip().upper()
+            if side_str.startswith('B'): side_str = "BUY"
+            elif side_str.startswith('S'): side_str = "SELL"
+            
+            parsed.append({
+                "date": dt,
+                "symbol": str(row[sym_col]).strip() if not pd.isna(row[sym_col]) else "",
+                "instrument_key": "", # missing in most exports, will resolve via matching later
+                "side": side_str,
+                "quantity": qty,
+                "price": price,
+                "amount": amt,
+                "trade_id": "ul_" + str(uuid.uuid4().hex[:8])
+            })
+            
+        res_df = pd.DataFrame(parsed)
+        
+        # Resolve instrument keys using KB
+        if not res_df.empty:
+            try:
+                from src.kb import KnowledgeBase
+                kb = KnowledgeBase.get()
+                sym_to_ikey = {s.get("symbol", "").upper(): s.get("instrument_key", "") for s in kb.all_stocks()}
+                
+                def _map_ikey(row):
+                    sym = row["symbol"].upper()
+                    # clean up names if needed, e.g. "ZOMATO"
+                    if sym in sym_to_ikey: return sym_to_ikey[sym]
+                    return ""
+                
+                res_df["instrument_key"] = res_df.apply(_map_ikey, axis=1)
+            except:
+                pass
+                
+        return res_df
+
+    @staticmethod
+    def _filter_intraday_trades(trades_df: pd.DataFrame) -> pd.DataFrame:
+        """Cancel out matching BUY and SELL quantities on the same day for the same symbol
+        to completely remove intraday trading volume from the equity curve.
+        """
+        if trades_df.empty:
+            return trades_df
+
+        kept_trades = []
+        # Process day by day, instrument_key by instrument_key
+        for (date_val, ikey), group in trades_df.groupby(["date", "instrument_key"]):
+            buys = group[group["side"] == "BUY"].to_dict("records")
+            sells = group[group["side"] == "SELL"].to_dict("records")
+
+            # Match and reduce quantities
+            while buys and sells:
+                b = buys[0]
+                s = sells[0]
+                match_qty = min(b["quantity"], s["quantity"])
+                b["quantity"] -= match_qty
+                s["quantity"] -= match_qty
+
+                if b["quantity"] == 0:
+                    buys.pop(0)
+                if s["quantity"] == 0:
+                    sells.pop(0)
+
+            # Add remaining non-zero trades
+            kept_trades.extend([t for t in buys if t["quantity"] > 0])
+            kept_trades.extend([t for t in sells if t["quantity"] > 0])
+
+        if not kept_trades:
+            return pd.DataFrame(columns=trades_df.columns)
+
+        return pd.DataFrame(kept_trades).sort_values("date").reset_index(drop=True)
+
+    @staticmethod
+    def _filter_short_term_trades(trades_df: pd.DataFrame, min_days: int = 2) -> pd.DataFrame:
+        """Cancel out BUY and SELL matching quantities where the holding period
+        is <= min_days. This removes BTST and short-term trades.
+        """
+        if trades_df.empty:
+            return trades_df
+
+        trades_df = trades_df.copy()
+        trades_df['date_dt'] = pd.to_datetime(trades_df['date'])
+        qty_to_keep = {t['trade_id']: t['quantity'] for _, t in trades_df.iterrows()}
+        
+        for ikey, group in trades_df.sort_values('date_dt').groupby('instrument_key'):
+            buy_q = []
+            for _, t in group.iterrows():
+                tid = t['trade_id']
+                if t['side'] == 'BUY':
+                    buy_q.append([tid, t['date_dt'], t['quantity']])
+                elif t['side'] == 'SELL':
+                    sell_rem = t['quantity']
+                    while sell_rem > 0 and buy_q:
+                        b = buy_q[0]
+                        match = min(sell_rem, b[2])
+                        hold_days = (t['date_dt'] - b[1]).days
+                        
+                        if hold_days <= min_days:
+                            qty_to_keep[b[0]] -= match
+                            qty_to_keep[tid] -= match
+                            
+                        b[2] -= match
+                        sell_rem -= match
+                        if b[2] == 0:
+                            buy_q.pop(0)
+                            
+        kept = []
+        for _, t in trades_df.iterrows():
+            keep_q = qty_to_keep[t['trade_id']]
+            if keep_q > 0:
+                new_t = t.to_dict()
+                new_t['quantity'] = keep_q
+                if new_t.get('amount') and t['quantity'] > 0:
+                    new_t['amount'] = new_t['amount'] * (keep_q / t['quantity'])
+                kept.append(new_t)
+                
+        res = pd.DataFrame(kept)
+        if 'date_dt' in res.columns:
+            res = res.drop(columns=['date_dt'])
+        return res
+
+    def _inject_initial_positions(self, trades_df: pd.DataFrame, holdings: list[dict]) -> pd.DataFrame:
+        """Inject synthetic trades at the start of the fetched history
+        to account for stocks bought before the API limit (3 financial years).
+        Uses historical candle data to accurately estimate cost basis for exited stocks.
+        Also completely removes corrupted MTF trades where the Upstox API lost the SELL legs.
+        """
+        if trades_df.empty and not holdings:
+            return trades_df
+
+        h_map = {h.get("instrument_token"): h for h in holdings if h.get("instrument_token")}
+        
+        # Calculate final qty from trades
+        calc_final = {}
+        for _, t in trades_df.iterrows():
+            ikey = t.get("instrument_key")
+            if not ikey: continue
+            q = int(t.get("quantity", 0))
+            if t.get("side") == "BUY":
+                calc_final[ikey] = calc_final.get(ikey, 0) + q
+            elif t.get("side") == "SELL":
+                calc_final[ikey] = calc_final.get(ikey, 0) - q
+
+        corrupted_ikeys = set()
+        excess_buys = {}
+        
+        # First pass: Find corrupted positions
+        for ikey in set(calc_final.keys()) | set(h_map.keys()):
+            actual = int(h_map[ikey]["quantity"]) if ikey in h_map else 0
+            calc = calc_final.get(ikey, 0)
+            missing = actual - calc
+            
+            if missing < 0:
+                if actual == 0:
+                    # Fully exited, but trades show we hold it -> API missing sells entirely!
+                    corrupted_ikeys.add(ikey)
+                else:
+                    # Partially missing sells
+                    excess_buys[ikey] = abs(missing)
+                    
+        # Filter out entirely corrupted stocks (e.g. Zomato, GAIL where MTF sells are missing)
+        if corrupted_ikeys:
+            trades_df = trades_df[~trades_df["instrument_key"].isin(corrupted_ikeys)]
+            
+        # Drop excess buys for partially corrupted stocks
+        if excess_buys:
+            kept_trades = []
+            for _, t in trades_df.iloc[::-1].iterrows():
+                ikey = t.get("instrument_key")
+                q = int(t.get("quantity", 0))
+                if t.get("side") == "BUY" and excess_buys.get(ikey, 0) > 0:
+                    drop_q = min(q, excess_buys[ikey])
+                    excess_buys[ikey] -= drop_q
+                    q -= drop_q
+                if q > 0:
+                    new_t = t.to_dict()
+                    if new_t.get("amount") and t.get("quantity", 0) > 0:
+                        new_t["amount"] = float(new_t["amount"]) * (q / int(t["quantity"]))
+                    new_t["quantity"] = q
+                    kept_trades.append(new_t)
+            kept_trades.reverse()
+            trades_df = pd.DataFrame(kept_trades)
+
+        if trades_df.empty:
+            first_date = date.today()
+        else:
+            first_date = trades_df["date"].min()
+            
+        synth_date = first_date - timedelta(days=1)
+        hist_start = synth_date - timedelta(days=365 * 3)
+        
+        synthetic_trades = []
+        all_ikeys = set(calc_final.keys()) | set(h_map.keys())
+        
+        for ikey in all_ikeys:
+            if ikey in corrupted_ikeys:
+                continue
+                
+            actual_final = int(h_map[ikey]["quantity"]) if ikey in h_map else 0
+            calc = calc_final.get(ikey, 0)
+            
+            # Since we dropped excess buys, calc_final needs recalculating logically,
+            # but missing_qty > 0 is unaffected by the drops.
+            missing_qty = actual_final - calc
+            
+            if missing_qty > 0:
+                sym = trades_df[trades_df["instrument_key"] == ikey].iloc[0]["symbol"] if not trades_df[trades_df["instrument_key"] == ikey].empty else h_map[ikey].get("tradingsymbol", "")
+                avg_price = float(h_map[ikey]["average_price"]) if ikey in h_map else 0.0
+                
+                # If fully exited, fetch a realistic historical price to avoid inflating invested capital
+                if avg_price == 0.0:
+                    sym_trades = trades_df[trades_df["instrument_key"] == ikey]
+                    if not sym_trades.empty:
+                        try:
+                            df_hist = self.upstox.candles(ikey, interval="month", from_date=hist_start, to_date=synth_date)
+                            if not df_hist.empty:
+                                avg_price = float(df_hist["close"].mean())
+                            else:
+                                sells = sym_trades[sym_trades["side"] == "SELL"]
+                                avg_price = float(sells.iloc[0]["price"]) if not sells.empty else float(sym_trades.iloc[0]["price"])
+                        except Exception:
+                            sells = sym_trades[sym_trades["side"] == "SELL"]
+                            avg_price = float(sells.iloc[0]["price"]) if not sells.empty else float(sym_trades.iloc[0]["price"])
+
+                synthetic_trades.append({
+                    "date": synth_date,
+                    "symbol": sym,
+                    "instrument_key": ikey,
+                    "side": "BUY",
+                    "quantity": missing_qty,
+                    "price": avg_price,
+                    "amount": missing_qty * avg_price,
+                    "trade_id": f"synthetic_init_{ikey}"
+                })
+
+        if not synthetic_trades:
+            return trades_df
+
+        synth_df = pd.DataFrame(synthetic_trades)
+        for col in trades_df.columns:
+            if col not in synth_df.columns:
+                synth_df[col] = None
+                
+        combined = pd.concat([synth_df, trades_df], ignore_index=True)
+        return combined.sort_values("date").reset_index(drop=True)
 
     # ------------------------------------------------------------------
     # Equity curve reconstruction
@@ -300,7 +628,7 @@ class PerformanceAnalyzer:
                     continue
                 port_value += qty * float(valid.iloc[-1])
 
-            invested_net = total_invested - total_withdrawn
+            invested_net = sum(cost_basis.values())
             curve_rows.append({
                 "date": d.isoformat() if isinstance(d, date) else str(d),
                 "portfolio_value": round(port_value, 2),
@@ -544,6 +872,60 @@ class PerformanceAnalyzer:
         misses.sort(key=lambda m: m["missed_gain_pct"], reverse=True)
         return misses[:20]
 
+    @staticmethod
+    def all_stocks_summary(trades: pd.DataFrame, holdings: list[dict]) -> list[dict]:
+        """Generate a complete summary of all traded stocks including total bought,
+        total sold, current holding, and net realized P&L.
+        """
+        if trades.empty:
+            return []
+
+        h_map = {h.get("instrument_token"): h for h in holdings if h.get("instrument_token")}
+        summary = {}
+
+        for _, t in trades.iterrows():
+            ikey = t.get("instrument_key")
+            if not ikey: continue
+            
+            sym = t.get("symbol")
+            if ikey not in summary:
+                summary[ikey] = {
+                    "symbol": h_map[ikey].get("tradingsymbol", sym) if ikey in h_map else sym,
+                    "total_bought_qty": 0,
+                    "total_sold_qty": 0,
+                    "realized_pnl": 0.0,
+                    "current_qty": int(h_map.get(ikey, {}).get("quantity", 0)),
+                    "current_value": 0.0
+                }
+                
+                if ikey in h_map:
+                    summary[ikey]["current_value"] = summary[ikey]["current_qty"] * float(h_map[ikey].get("last_price", 0))
+            
+            q = int(t.get("quantity", 0))
+            amt = float(t.get("amount", 0))
+            
+            if t.get("side") == "BUY":
+                summary[ikey]["total_bought_qty"] += q
+                summary[ikey]["realized_pnl"] -= amt
+            elif t.get("side") == "SELL":
+                summary[ikey]["total_sold_qty"] += q
+                summary[ikey]["realized_pnl"] += amt
+
+        for ikey, data in summary.items():
+            if data["current_qty"] > 0 and ikey in h_map:
+                avg_price = float(h_map[ikey].get("average_price", 0))
+                last_price = float(h_map[ikey].get("last_price", 0))
+                unrealized_pnl = data["current_qty"] * (last_price - avg_price)
+                data["unrealized_pnl"] = unrealized_pnl
+                data["total_pnl"] = data["realized_pnl"] + unrealized_pnl
+            else:
+                data["unrealized_pnl"] = 0.0
+                data["total_pnl"] = data["realized_pnl"]
+
+        result = list(summary.values())
+        result.sort(key=lambda x: x["total_pnl"], reverse=True)
+        return result
+
     # ------------------------------------------------------------------
     # Full report
     # ------------------------------------------------------------------
@@ -568,8 +950,18 @@ class PerformanceAnalyzer:
 
         # Trade history
         log.info("Fetching trade history …")
-        trades = self.fetch_all_trades()
-        log.info(f"Found {len(trades)} trades")
+        raw_trades = self.fetch_all_trades()
+        
+        # Filter intraday trades FIRST
+        filtered_trades = self._filter_intraday_trades(raw_trades)
+        
+        # Filter BTST / Short term trades (<= 2 days)
+        filtered_trades = self._filter_short_term_trades(filtered_trades, min_days=2)
+        
+        # Inject synthetic initial positions for historical holdings
+        trades = self._inject_initial_positions(filtered_trades, holdings_raw)
+        
+        log.info(f"Raw trades: {len(raw_trades)} -> Filtered intraday: {len(filtered_trades)} -> Total with synthetic: {len(trades)}")
 
         # Equity curve
         log.info("Building equity curve …")
@@ -603,6 +995,7 @@ class PerformanceAnalyzer:
             "winners": wl["winners"],
             "losers": wl["losers"],
             "opportunity_misses": misses,
+            "all_stocks": self.all_stocks_summary(trades, holdings_raw),
             "summary": {
                 "total_invested": round(invested_total, 2),
                 "current_value": round(current_value, 2),

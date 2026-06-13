@@ -9,7 +9,12 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-ROOT = Path(__file__).resolve().parent.parent
+APP_FILES_DIR = os.getenv("APP_FILES_DIR")
+if APP_FILES_DIR:
+    ROOT = Path(APP_FILES_DIR)
+else:
+    ROOT = Path(__file__).resolve().parent.parent
+
 
 
 @dataclass(frozen=True)
@@ -28,6 +33,15 @@ class Settings:
 
     anthropic_api_key: str = os.getenv("ANTHROPIC_API_KEY", "")
     anthropic_model: str = os.getenv("ANTHROPIC_MODEL", "claude-opus-4-7")
+
+    # NVIDIA NIM (hosted, OpenAI-compatible). The analysis LLM runs in the
+    # cloud over the internet — no local model needed. NEVER hardcode the key;
+    # keep it in .env only and never ship it inside an APK.
+    nvidia_api_key: str = os.getenv("NVIDIA_API_KEY", "")
+    nvidia_base_url: str = os.getenv("NVIDIA_BASE_URL", "https://integrate.api.nvidia.com/v1")
+    nvidia_model: str = os.getenv("NVIDIA_MODEL", "nvidia/nemotron-3-super-120b-a12b")
+    nvidia_temperature: float = float(os.getenv("NVIDIA_TEMPERATURE", "0.6"))
+    nvidia_max_tokens: int = int(os.getenv("NVIDIA_MAX_TOKENS", "16384"))
 
     # Local Ollama (e.g. DeepSeek-R1-Distill-Llama-8B) — runs on your M4
     ollama_host: str = os.getenv("OLLAMA_HOST", "http://127.0.0.1:11434")

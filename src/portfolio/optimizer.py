@@ -22,7 +22,7 @@ from typing import Iterable, Optional
 
 import numpy as np
 import pandas as pd
-from scipy.optimize import minimize
+from src.utils.compat import minimize
 
 from src.data import MarketData
 from src.upstox.client import UpstoxClient
@@ -246,7 +246,6 @@ class PortfolioOptimizer:
                   for i in range(n)]
         x0 = np.repeat(cash_to_deploy / n, n)
 
-        from scipy.optimize import minimize
         best = None
         for seed in range(5):
             x = x0 if seed == 0 else np.random.default_rng(seed).dirichlet(

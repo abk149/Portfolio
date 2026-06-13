@@ -32,7 +32,7 @@ def _model() -> str:
 
 
 def is_available() -> bool:
-    """Check (once) whether Ollama can serve embeddings with our model."""
+    """Check (once) whether the LLM server can serve embeddings."""
     global _AVAILABLE
     if _AVAILABLE is not None:
         return _AVAILABLE
@@ -40,24 +40,36 @@ def is_available() -> bool:
         if _AVAILABLE is not None:
             return _AVAILABLE
         try:
-            r = requests.post(
-                f"{settings.ollama_host}/api/embeddings",
-                json={"model": _model(), "prompt": "ping"},
-                timeout=20,
-            )
-            ok = r.status_code == 200 and isinstance(
-                r.json().get("embedding"), list)
-            if ok:
-                log.info(f"embeddings: Ollama model '{_model()}' ready "
-                         f"({len(r.json()['embedding'])}-dim)")
+            if settings.llm_provider == "llamacpp":
+                r = requests.post(
+                    f"{settings.ollama_host}/embedding",
+                    json={"content": "ping"},
+                    timeout=20,
+                )
+                ok = r.status_code == 200 and isinstance(
+                    r.json().get("embedding"), list)
+                if ok:
+                    log.info(f"embeddings: LlamaCpp server ready ({len(r.json()['embedding'])}-dim)")
+                _AVAILABLE = ok
             else:
-                log.warning(
-                    f"embeddings: Ollama returned {r.status_code} for "
-                    f"'{_model()}'. KB will use keyword search only. "
-                    f"Enable semantic search with:  ollama pull {_model()}")
-            _AVAILABLE = ok
+                r = requests.post(
+                    f"{settings.ollama_host}/api/embeddings",
+                    json={"model": _model(), "prompt": "ping"},
+                    timeout=20,
+                )
+                ok = r.status_code == 200 and isinstance(
+                    r.json().get("embedding"), list)
+                if ok:
+                    log.info(f"embeddings: Ollama model '{_model()}' ready "
+                             f"({len(r.json()['embedding'])}-dim)")
+                else:
+                    log.warning(
+                        f"embeddings: Ollama returned {r.status_code} for "
+                        f"'{_model()}'. KB will use keyword search only. "
+                        f"Enable semantic search with:  ollama pull {_model()}")
+                _AVAILABLE = ok
         except Exception as e:
-            log.warning(f"embeddings: Ollama unreachable ({e}) — "
+            log.warning(f"embeddings: LLM server unreachable ({e}) — "
                         f"KB falls back to keyword search")
             _AVAILABLE = False
     return _AVAILABLE
@@ -68,11 +80,18 @@ def embed(text: str) -> Optional[np.ndarray]:
     if not text or not text.strip() or not is_available():
         return None
     try:
-        r = requests.post(
-            f"{settings.ollama_host}/api/embeddings",
-            json={"model": _model(), "prompt": text[:8000]},
-            timeout=60,
-        )
+        if settings.llm_provider == "llamacpp":
+            r = requests.post(
+                f"{settings.ollama_host}/embedding",
+                json={"content": text[:8000]},
+                timeout=60,
+            )
+        else:
+            r = requests.post(
+                f"{settings.ollama_host}/api/embeddings",
+                json={"model": _model(), "prompt": text[:8000]},
+                timeout=60,
+            )
         vec = r.json().get("embedding")
         if vec:
             return np.asarray(vec, dtype=np.float32)

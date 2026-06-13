@@ -973,6 +973,43 @@ async function testTelegram() {
 
 // ---------- Performance ----------
 let perfChart;
+window.fullEquityCurve = [];
+
+async function uploadTrades(input) {
+  if (!input.files || input.files.length === 0) return;
+  const file = input.files[0];
+  const formData = new FormData();
+  formData.append("file", file);
+
+  const overlay = document.getElementById("upload-overlay");
+  const status = document.getElementById("perf-status");
+  overlay.style.display = "flex";
+  
+  try {
+    const res = await fetch("/api/portfolio/upload_trades", {
+      method: "POST",
+      body: formData
+    });
+    
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || "Upload failed");
+    }
+    
+    const data = await res.json();
+    alert(`Success: ${data.message}\nFound ${data.trades_found} trades.`);
+    
+    // Automatically trigger analysis
+    loadPerformance();
+  } catch (e) {
+    console.error(e);
+    alert(`Error uploading trades: ${e.message}`);
+    status.innerText = "Upload failed";
+  } finally {
+    overlay.style.display = "none";
+    input.value = ""; // reset input so same file can be uploaded again if needed
+  }
+}
 
 async function loadPerformance() {
   $("perf-status").innerHTML = "<span class='spin'></span> Analyzing — fetching trade history & building equity curve …";
@@ -1016,7 +1053,29 @@ function renderPerformance(data) {
   ].join("");
 
   // ---- Equity Curve ----
-  renderEquityCurve(data.equity_curve || []);
+  window.fullEquityCurve = data.equity_curve || [];
+  renderFilteredCurve("all");
+
+  // ---- All Stocks Traded ----
+  const allStocksBody = document.querySelector("#all-stocks-table tbody");
+  if (allStocksBody) {
+    if (!data.all_stocks || !data.all_stocks.length) {
+      allStocksBody.innerHTML = "<tr><td colspan='8' class='muted center'>No trades found.</td></tr>";
+    } else {
+      allStocksBody.innerHTML = data.all_stocks.map(s => `
+        <tr>
+          <td><strong>${s.symbol}</strong></td>
+          <td class="right">${s.total_bought_qty}</td>
+          <td class="right">${s.total_sold_qty}</td>
+          <td class="right">${s.current_qty}</td>
+          <td class="right">${inr(s.current_value)}</td>
+          <td class="right ${cls(s.realized_pnl)}">${inr(s.realized_pnl)}</td>
+          <td class="right ${cls(s.unrealized_pnl)}">${inr(s.unrealized_pnl)}</td>
+          <td class="right ${cls(s.total_pnl)}"><strong>${inr(s.total_pnl)}</strong></td>
+        </tr>
+      `).join("");
+    }
+  }
 
   // ---- Winners ----
   $("perf-winners").innerHTML = table(data.winners || [], [
@@ -1053,6 +1112,36 @@ function renderPerformance(data) {
     {key:"last_sell_date", title:"Sold On"},
   ]);
 }
+
+function renderFilteredCurve(days) {
+  let curve = window.fullEquityCurve;
+  if (!curve || !curve.length) {
+    renderEquityCurve([]);
+    return;
+  }
+  
+  if (days !== "all") {
+    let cutoff = new Date();
+    if (days === "ytd") {
+      cutoff = new Date(cutoff.getFullYear(), 0, 1);
+    } else {
+      cutoff.setDate(cutoff.getDate() - parseInt(days));
+    }
+    const cutoffStr = cutoff.toISOString().split("T")[0];
+    curve = curve.filter(p => p.date >= cutoffStr);
+  }
+  
+  renderEquityCurve(curve);
+}
+
+// Attach filter listeners
+document.addEventListener("click", e => {
+  if (e.target.matches("#chart-filters .filter-btn")) {
+    document.querySelectorAll("#chart-filters .filter-btn").forEach(b => b.classList.remove("active"));
+    e.target.classList.add("active");
+    renderFilteredCurve(e.target.dataset.days);
+  }
+});
 
 function renderEquityCurve(curve) {
   if (!curve || !curve.length) {
