@@ -35,6 +35,7 @@ intra_app = typer.Typer(no_args_is_help=True)
 agent_app = typer.Typer(no_args_is_help=True)
 tg_app = typer.Typer(no_args_is_help=True)
 quant_app = typer.Typer(no_args_is_help=True)
+broker_app = typer.Typer(no_args_is_help=True)
 
 app.add_typer(auth_app, name="auth")
 app.add_typer(port_app, name="portfolio")
@@ -43,6 +44,74 @@ app.add_typer(intra_app, name="intraday")
 app.add_typer(agent_app, name="agent")
 app.add_typer(tg_app, name="telegram")
 app.add_typer(quant_app, name="quant")
+app.add_typer(broker_app, name="broker")
+
+
+# ---------- broker (either/or: upstox | groww) ----------
+@broker_app.command("status")
+def broker_status_cmd():
+    """Show the active broker and whether it authenticates."""
+    from src.brokers import broker_status
+    import json as _json
+    print(_json.dumps(broker_status(), indent=2, default=str))
+
+
+@broker_app.command("use")
+def broker_use(name: str = typer.Argument(..., help="upstox | groww")):
+    """Persist the active broker to .cache/active_broker.txt (either/or)."""
+    name = name.lower()
+    if name not in ("upstox", "groww"):
+        print("broker must be 'upstox' or 'groww'"); raise typer.Exit(1)
+    from config import settings
+    (settings.cache_dir / "active_broker.txt").write_text(name)
+    print(f"Active broker → {name}")
+
+
+@broker_app.command("test")
+def broker_test(verbose: bool = False):
+    """Hit every endpoint of the ACTIVE broker and report what comes back.
+    Use this to validate Groww's endpoint paths against your real account."""
+    import json as _json
+    from datetime import date, timedelta
+    from src.brokers import get_broker
+    from config import settings
+
+    print(f"Active broker: {settings.broker}")
+    try:
+        c = get_broker()
+    except Exception as e:
+        print(f"✗ auth: {type(e).__name__}: {e}")
+        raise typer.Exit(1)
+
+    def _probe(label, fn):
+        try:
+            out = fn()
+            if isinstance(out, list):
+                print(f"  ✓ {label:18s} → {len(out)} rows" +
+                      (f"  e.g. {out[0]}" if (verbose and out) else ""))
+            elif hasattr(out, "empty"):   # DataFrame
+                print(f"  ✓ {label:18s} → {0 if out.empty else len(out)} candles")
+            elif isinstance(out, dict):
+                keys = list(out.keys())
+                print(f"  ✓ {label:18s} → dict keys={keys[:8]}" +
+                      (f"\n      {_json.dumps(out, default=str)[:400]}" if verbose else ""))
+            else:
+                print(f"  ✓ {label:18s} → {str(out)[:120]}")
+        except Exception as e:
+            print(f"  ✗ {label:18s} → {type(e).__name__}: {e}")
+
+    _probe("profile", c.profile)
+    _probe("funds", c.funds)
+    _probe("holdings", c.holdings)
+    _probe("positions", c.positions)
+    _probe("trades_today", c.trades_today)
+    _probe("ltp(RELIANCE)", lambda: c.ltp(["RELIANCE.NS"]))
+    _probe("quote(RELIANCE)", lambda: c.quote(["RELIANCE.NS"]))
+    _probe("candles(RELIANCE)",
+           lambda: c.candles("RELIANCE.NS", "day",
+                             from_date=date.today() - timedelta(days=30)))
+    print("\nLegend: ✓ endpoint reachable+parsed · ✗ failed (fix the path/field "
+          "in src/brokers/groww_client.py if Groww).")
 
 
 def _df_to_table(df, title=""):

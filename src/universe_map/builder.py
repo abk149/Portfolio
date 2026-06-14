@@ -177,6 +177,7 @@ def build_universe_map(
     def _process(row: dict) -> dict:
         nonlocal n_reused, n_fetched
         sym = row["symbol"]
+        fund_data_for_docs = None
 
         # Incremental: reuse fresh KB data
         try:
@@ -189,27 +190,26 @@ def build_universe_map(
                     if stored.get(k) not in (None, ""):
                         merged[k] = stored[k]
                 n_reused += 1
-                return merged
-        except Exception as e:
-            log.debug(f"KB check failed for {sym}: {e}")
-
-        # Fresh fetch
-        try:
-            from src.tools.screener_in import fetch_fundamentals
-            raw = fetch_fundamentals(sym) or {}
-            fund = _adapt_fundamentals(sym, raw)
-            srcs = raw.get("_sources", [])
-            log.info(
-                f"  {sym}: sources={srcs or 'NONE'} "
-                f"PE={fund.get('PE')} ROE={fund.get('ROE')} "
-                f"D/E={fund.get('DE')} fund_score={fund.get('fund_score')}"
-            )
+                # The full raw dict is often stored in 'data' column
+                fund_data_for_docs = stored.get("_data")
+            else:
+                # Fresh fetch
+                from src.tools.screener_in import fetch_fundamentals
+                raw = fetch_fundamentals(sym) or {}
+                fund = _adapt_fundamentals(sym, raw)
+                srcs = raw.get("_sources", [])
+                log.info(
+                    f"  {sym}: sources={srcs or 'NONE'} "
+                    f"PE={fund.get('PE')} ROE={fund.get('ROE')} "
+                    f"D/E={fund.get('DE')} fund_score={fund.get('fund_score')}"
+                )
+                n_fetched += 1
+                merged = {**row, **fund}
+                fund_data_for_docs = raw
         except Exception as e:
             log.info(f"  {sym}: fund fetch FAILED — {type(e).__name__}: {e}")
-            fund = {"fund_score": None}
-
-        n_fetched += 1
-        merged = {**row, **fund}
+            merged = {**row, "fund_score": None}
+            fund_data_for_docs = None
 
         # Combined score + recommendation
         t, f = merged.get("tech_score"), merged.get("fund_score")
@@ -228,6 +228,21 @@ def build_universe_map(
         # Persist into the KB
         try:
             kb.upsert_stock(sym, merged)
+
+            # ── Stage D: Gather Documents for Knowledge Base ──
+            # Only for promising candidates (Score >= 55) to avoid slow build
+            # Cap to 1 document per stock during full-universe scan
+            score = merged.get("combined") or merged.get("tech_score") or 0
+            if score >= 55:
+                try:
+                    from src.tools.document_fetcher import fetch_documents_multisource
+                    # Check if we already have documents for this symbol in KB to avoid re-ingesting
+                    has_docs = any(sym in (d.get("title") or "") for d in kb.documents())
+                    if not has_docs:
+                        log.info(f"  [KB] Gathering documents for {sym} (score={score})...")
+                        fetch_documents_multisource(sym, fundamentals=fund_data_for_docs, max_docs=1, ingest_kb=True)
+                except Exception as de:
+                    log.debug(f"  [KB] Document gather failed for {sym}: {de}")
         except Exception as e:
             log.warning(f"KB upsert failed for {sym}: {e}")
 
