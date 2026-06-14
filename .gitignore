@@ -31,3 +31,7 @@ llama-server
 
 # ── OS / editor ──
 .DS_Store
+
+# JetBrains/Android Studio IDE files
+android/.idea/
+*.iml

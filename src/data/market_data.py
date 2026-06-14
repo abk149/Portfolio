@@ -44,12 +44,24 @@ class MarketData:
             try:
                 self.upstox = get_broker()
             except Exception as e:
-                log.warning(f"Upstox client unavailable: {e}")
+                log.warning(f"broker client unavailable: {e}")
                 self.upstox = None
+        # Groww uses bare trading symbols, not Upstox 'NSE_EQ|INE…' keys.
+        self._is_groww = type(self.upstox).__name__ == "GrowwClient"
 
     # ---------- helpers ----------
     def _resolve_key(self, instrument_key: Optional[str],
                      yf_ticker: Optional[str]) -> Optional[str]:
+        # Groww path: identify by the bare trading symbol (RELIANCE), derived
+        # from yf_ticker ('RELIANCE.NS'). An Upstox 'NSE_EQ|INE…' key is useless
+        # to Groww, so we never feed it one.
+        if self._is_groww:
+            base = (yf_ticker or instrument_key or "")
+            base = base.replace(".NS", "").replace(".BO", "").strip().upper()
+            if not base or "|" in base:
+                return None
+            return base
+        # Upstox path (unchanged)
         if instrument_key:
             return instrument_key
         if not yf_ticker:

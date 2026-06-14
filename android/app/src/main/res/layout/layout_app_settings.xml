@@ -13,6 +13,22 @@
         android:fontFamily="sans-serif-medium"
         android:layout_marginBottom="16dp" />
 
+    <!-- 0. Active broker (either / or) -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="#161B22"
+        android:orientation="vertical"
+        android:padding="16dp"
+        android:layout_marginBottom="16dp">
+        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Active Broker (either / or)" android:textColor="#58A6FF" android:layout_marginBottom="8dp" />
+        <Spinner android:id="@+id/spnBroker" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginBottom="12dp" />
+        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Groww (used when broker = groww)" android:textColor="#3FB950" android:layout_marginBottom="6dp" android:textSize="12sp" />
+        <EditText android:id="@+id/etGrowwToken" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="Groww daily access token" android:textColor="#3FB950" android:textSize="13sp" />
+        <EditText android:id="@+id/etGrowwApiKey" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="Groww API key (optional, for TOTP)" android:textColor="#E6EDF3" android:textSize="13sp" />
+        <EditText android:id="@+id/etGrowwApiSecret" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="Groww API secret (optional, TOTP)" android:textColor="#E6EDF3" android:textSize="13sp" android:inputType="textPassword" />
+    </LinearLayout>
+
     <!-- 1. Upstox API Credentials -->
     <LinearLayout
         android:layout_width="match_parent"

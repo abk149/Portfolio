@@ -29,17 +29,23 @@ log = get_logger("llm.nvidia")
 class NvidiaProvider(LLMProvider):
     name = "nvidia"
 
-    def __init__(self):
-        if not settings.nvidia_api_key:
+    def __init__(self, model: str | None = None, api_key: str | None = None,
+                 base_url: str | None = None):
+        """`model`/`api_key`/`base_url` override the defaults so multiple NVIDIA
+        models (and keys) can be registered as separate rungs of a fallback
+        chain. When omitted, the .env NVIDIA_* defaults are used."""
+        key = api_key or settings.nvidia_api_key
+        if not key:
             raise RuntimeError(
                 "NVIDIA_API_KEY not set. Add it to .env (LLM_PROVIDER=nvidia)."
             )
-        self.url = settings.nvidia_base_url.rstrip("/") + "/chat/completions"
-        self.model = settings.nvidia_model
+        self.model = model or settings.nvidia_model
+        self.name = f"nvidia:{self.model}"
+        self.url = (base_url or settings.nvidia_base_url).rstrip("/") + "/chat/completions"
         self.temperature = settings.nvidia_temperature
         self.max_tokens = settings.nvidia_max_tokens
         self.headers = {
-            "Authorization": f"Bearer {settings.nvidia_api_key}",
+            "Authorization": f"Bearer {key}",
             "Accept": "application/json",
             "Content-Type": "application/json",
         }

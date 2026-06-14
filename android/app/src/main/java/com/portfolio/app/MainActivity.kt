@@ -58,6 +58,10 @@ class MainActivity : AppCompatActivity() {
     private lateinit var etTeleToken: EditText
     private lateinit var etTeleChatId: EditText
     private lateinit var btnSaveApp: Button
+    private lateinit var spnBroker: Spinner
+    private lateinit var etGrowwToken: EditText
+    private lateinit var etGrowwApiKey: EditText
+    private lateinit var etGrowwApiSecret: EditText
 
     private lateinit var modelDownloader: ModelDownloader
     private val modelPickRequestCode = 42
@@ -194,7 +198,15 @@ class MainActivity : AppCompatActivity() {
             etTeleToken = v.findViewById(R.id.etTeleToken)
             etTeleChatId = v.findViewById(R.id.etTeleChatId)
             btnSaveApp = v.findViewById(R.id.btnSaveApp)
-            
+            spnBroker = v.findViewById(R.id.spnBroker)
+            etGrowwToken = v.findViewById(R.id.etGrowwToken)
+            etGrowwApiKey = v.findViewById(R.id.etGrowwApiKey)
+            etGrowwApiSecret = v.findViewById(R.id.etGrowwApiSecret)
+            val brokers = arrayOf("upstox", "groww")
+            spnBroker.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_item, brokers).apply {
+                setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
+            }
+
             btnSaveApp.setOnClickListener { saveAllToPrefs(); nativeOverlayContainer.visibility = View.GONE }
             btnTestToken.setOnClickListener { testUpstoxToken() }
             loadAppUI()
@@ -268,6 +280,13 @@ class MainActivity : AppCompatActivity() {
         etUpstoxBearerToken.setText(prefs.getString("upstox_bearer_token", ""))
         etTeleToken.setText(prefs.getString("tele_token", ""))
         etTeleChatId.setText(prefs.getString("tele_chat_id", ""))
+        if (::spnBroker.isInitialized) {
+            val b = prefs.getString("broker", "upstox") ?: "upstox"
+            spnBroker.setSelection(if (b == "groww") 1 else 0)
+            etGrowwToken.setText(prefs.getString("groww_access_token", ""))
+            etGrowwApiKey.setText(prefs.getString("groww_api_key", ""))
+            etGrowwApiSecret.setText(prefs.getString("groww_api_secret", ""))
+        }
     }
 
     private fun saveAllToPrefs() {
@@ -287,6 +306,12 @@ class MainActivity : AppCompatActivity() {
             prefs.putString("upstox_bearer_token", etUpstoxBearerToken.text.toString().trim())
             prefs.putString("tele_token", etTeleToken.text.toString().trim())
             prefs.putString("tele_chat_id", etTeleChatId.text.toString().trim())
+        }
+        if (::spnBroker.isInitialized) {
+            prefs.putString("broker", spnBroker.selectedItem.toString())
+            prefs.putString("groww_access_token", etGrowwToken.text.toString().trim())
+            prefs.putString("groww_api_key", etGrowwApiKey.text.toString().trim())
+            prefs.putString("groww_api_secret", etGrowwApiSecret.text.toString().trim())
         }
         prefs.apply()
         Toast.makeText(this, "Settings Saved Locally", Toast.LENGTH_SHORT).show()

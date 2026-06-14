@@ -103,6 +103,55 @@ class Settings:
     def nvidia_embed_model(self) -> str:
         return self._get("NVIDIA_EMBED_MODEL", "nvidia/nv-embedqa-e5-v5")
 
+    def nvidia_chain(self) -> list:
+        """Ordered list of NVIDIA rungs: [{"model","api_key","base_url"}, …].
+
+        Two ways to register more NVIDIA models (try the first that answers):
+          • NVIDIA_MODELS_JSON  — JSON list, e.g.
+              [{"model":"meta/llama-3.1-405b-instruct","api_key":"nvapi-..."},
+               {"model":"qwen/qwen2.5-72b-instruct"}]
+            (api_key/base_url optional per entry → fall back to the defaults)
+          • NVIDIA_MODELS  — simple comma-separated extra model names that all
+            use NVIDIA_API_KEY, appended after NVIDIA_MODEL.
+        The primary NVIDIA_MODEL is always rung 0.
+        """
+        import json
+        default_key = self.nvidia_api_key
+        default_url = self.nvidia_base_url
+        rungs: list = []
+        seen: set = set()
+
+        def _add(model, key=None, url=None):
+            model = (model or "").strip()
+            if not model or model in seen:
+                return
+            seen.add(model)
+            rungs.append({"model": model,
+                          "api_key": (key or default_key),
+                          "base_url": (url or default_url)})
+
+        _add(self.nvidia_model)                       # primary
+        raw_json = self._get("NVIDIA_MODELS_JSON")
+        if raw_json:
+            try:
+                for e in json.loads(raw_json):
+                    if isinstance(e, dict):
+                        _add(e.get("model"), e.get("api_key"), e.get("base_url"))
+                    elif isinstance(e, str):
+                        _add(e)
+            except Exception:
+                pass
+        for m in self._get("NVIDIA_MODELS").split(","):
+            _add(m)
+        # keep only rungs that actually have a key
+        return [r for r in rungs if r["api_key"]]
+
+    @property
+    def llm_fallback(self) -> str:
+        """Local fallback brain when NVIDIA rungs all fail. "ollama" (DeepSeek-R1)
+        by default; "none" to disable."""
+        return self._get("LLM_FALLBACK", "ollama").lower()
+
     @property
     def ollama_host(self) -> str:
         return self._get("OLLAMA_HOST", "http://127.0.0.1:11434")

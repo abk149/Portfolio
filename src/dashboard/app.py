@@ -11,6 +11,7 @@ launched as background jobs so the UI never blocks — the frontend polls
 from __future__ import annotations
 
 import asyncio
+import os
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
@@ -564,14 +565,18 @@ def api_upstox_test_token():
         return {"ok": False, "message": str(e)}
     except Exception as e:
         return {"ok": False, "message": f"Connection Error: {str(e)}"}
-    """Accept either the raw `code` value or the full redirected URL."""
+
+
+@app.post("/api/upstox/exchange-code")
+def api_upstox_exchange(body: _UpstoxCodeBody):
+    """Exchange an Upstox OAuth code (or the full redirected URL) for a token.
+    Called by the in-WebView Android login and the Mac paste flow."""
     import re
     import urllib.parse
     from src.upstox.auth import exchange_and_save
 
-    text = body.code_or_url.strip().strip("`'\"")
+    text = (body.code_or_url or "").strip().strip("`'\"")
     code = None
-    # Try parsing as URL
     try:
         q = urllib.parse.urlparse(text).query
         if q:
@@ -580,15 +585,12 @@ def api_upstox_test_token():
                 code = params["code"][0]
     except Exception:
         pass
-    # Loose regex
     if not code:
         m = re.search(r"code[=:\s]+([A-Za-z0-9_\-\.]+)", text)
         if m:
             code = m.group(1)
-    # Bare token
     if not code and re.fullmatch(r"[A-Za-z0-9_\-\.]{8,}", text):
         code = text
-
     if not code:
         return {"ok": False, "error": "Could not find a `code` value. Paste the full redirected URL."}
 
@@ -776,6 +778,23 @@ def api_tg_bot_start():
     """
     import subprocess
     import sys
+
+    # Android (Chaquopy) has no runnable Python binary to spawn — run the bot
+    # IN-PROCESS on a background thread instead of a subprocess.
+    if os.getenv("APP_FILES_DIR"):
+        try:
+            from src.telegram.bot import CommandBot
+            from src.telegram.handlers import HANDLERS
+            import threading
+            if _TG_BOT_PROC.get("thread") and _TG_BOT_PROC["thread"].is_alive():
+                return {"ok": True, "already_running": True, "in_process": True}
+            t = threading.Thread(
+                target=lambda: CommandBot(HANDLERS).run(), daemon=True)
+            t.start()
+            _TG_BOT_PROC["thread"] = t
+            return {"ok": True, "in_process": True}
+        except Exception as e:
+            return {"ok": False, "error": f"telegram bot failed: {e}"}
 
     proc = _TG_BOT_PROC["obj"]
     if proc and proc.poll() is None:
