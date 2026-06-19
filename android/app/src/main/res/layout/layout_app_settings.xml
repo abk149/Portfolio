@@ -42,6 +42,23 @@
         <EditText android:id="@+id/etUpstoxSecret" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="Client Secret" android:textColor="#E6EDF3" android:inputType="textPassword" />
         <EditText android:id="@+id/etRedirectUri" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="Redirect URI" android:textColor="#E6EDF3" />
         <EditText android:id="@+id/etUpstoxBaseUrl" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="Base URL" android:textColor="#E6EDF3" />
+
+        <Button
+            android:id="@+id/btnUpstoxLogin"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:text="🔗 Login with Upstox (auto)"
+            android:backgroundTint="#2F81F7"
+            android:textColor="#FFFFFF" />
+        <TextView
+            android:id="@+id/tvUpstoxLoginHint"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:text="Opens Upstox login in-app and captures the token automatically. The Redirect URI above must be registered verbatim in your Upstox app."
+            android:textColor="#8B949E"
+            android:textSize="11sp" />
     </LinearLayout>
 
     <!-- 2. Direct Bearer Token -->

@@ -523,6 +523,27 @@ def api_kb_search_decisions(body: dict):
 
 
 # ---------------- Upstox auth (in-browser) ----------------
+@app.post("/api/upstox/config")
+def api_upstox_config(body: dict):
+    """Push Upstox OAuth credentials into the running process (no restart).
+    Lets the Android native login set Client ID / Secret / Redirect URI live
+    before generating the auth URL."""
+    for env_key, body_key in (("UPSTOX_API_KEY", "api_key"),
+                              ("UPSTOX_API_SECRET", "api_secret"),
+                              ("UPSTOX_REDIRECT_URI", "redirect_uri")):
+        v = (body.get(body_key) or "").strip()
+        if v:
+            os.environ[env_key] = v
+    try:
+        settings.refresh()
+    except Exception:
+        pass
+    return {"ok": True,
+            "have_key": bool(settings.upstox_api_key),
+            "have_secret": bool(settings.upstox_api_secret),
+            "redirect_uri": settings.upstox_redirect_uri}
+
+
 @app.get("/api/upstox/auth-url")
 def api_upstox_auth_url():
     """Return the Upstox OAuth login URL to open in a new tab."""

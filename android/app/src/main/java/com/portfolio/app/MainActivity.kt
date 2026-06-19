@@ -209,6 +209,7 @@ class MainActivity : AppCompatActivity() {
 
             btnSaveApp.setOnClickListener { saveAllToPrefs(); nativeOverlayContainer.visibility = View.GONE }
             btnTestToken.setOnClickListener { testUpstoxToken() }
+            v.findViewById<Button>(R.id.btnUpstoxLogin)?.setOnClickListener { startUpstoxOAuth() }
             loadAppUI()
         }
     }
@@ -374,6 +375,74 @@ class MainActivity : AppCompatActivity() {
 
     /** POST the captured OAuth redirect URL to the local backend, which
      *  exchanges it for an access token. Runs off the UI thread. */
+    /** Native Upstox OAuth: push the creds you typed into the backend, fetch
+     *  the auth URL, then load it in the WebView. shouldOverrideUrlLoading
+     *  captures the redirected ?code= and exchanges it automatically. */
+    private fun startUpstoxOAuth() {
+        if (service?.pythonState != PortfolioService.ServerState.RUNNING) {
+            Toast.makeText(this, "Start the backend first (Terminal ▶), then log in.",
+                Toast.LENGTH_LONG).show()
+            return
+        }
+        saveAllToPrefs()
+        val apiKey = etUpstoxApiKey.text.toString().trim()
+        val secret = etUpstoxSecret.text.toString().trim()
+        val redirect = etRedirectUri.text.toString().trim()
+        if (apiKey.isBlank() || secret.isBlank()) {
+            Toast.makeText(this, "Enter Client ID + Secret first.", Toast.LENGTH_LONG).show()
+            return
+        }
+        Toast.makeText(this, "Opening Upstox login…", Toast.LENGTH_SHORT).show()
+        Thread {
+            try {
+                // 1. push creds into the running backend (no restart needed)
+                httpPostJson("http://127.0.0.1:8000/api/upstox/config",
+                    JSONObject().put("api_key", apiKey)
+                        .put("api_secret", secret)
+                        .put("redirect_uri", redirect))
+                // 2. get the auth URL
+                val r = httpGetJson("http://127.0.0.1:8000/api/upstox/auth-url")
+                if (!r.optBoolean("ok", false)) {
+                    val err = r.optString("error", "could not build auth URL")
+                    runOnUiThread { Toast.makeText(this, "✗ $err", Toast.LENGTH_LONG).show() }
+                    return@Thread
+                }
+                val url = r.getString("url")
+                oauthRedirectUri = r.optString("redirect_uri", redirect)
+                runOnUiThread {
+                    nativeOverlayContainer.visibility = View.GONE
+                    webView.visibility = View.VISIBLE
+                    webView.loadUrl(url)
+                }
+            } catch (e: Exception) {
+                runOnUiThread { Toast.makeText(this, "✗ ${e.message}", Toast.LENGTH_LONG).show() }
+            }
+        }.start()
+    }
+
+    private fun httpGetJson(url: String): JSONObject {
+        val c = (URL(url).openConnection() as HttpURLConnection).apply {
+            requestMethod = "GET"; connectTimeout = 15000; readTimeout = 30000
+            setRequestProperty("x-client", "portfolio-mobile")
+        }
+        val body = (if (c.responseCode in 200..299) c.inputStream else c.errorStream)
+            ?.bufferedReader()?.readText() ?: "{}"
+        return JSONObject(body)
+    }
+
+    private fun httpPostJson(url: String, payload: JSONObject): JSONObject {
+        val c = (URL(url).openConnection() as HttpURLConnection).apply {
+            requestMethod = "POST"; connectTimeout = 15000; readTimeout = 30000
+            doOutput = true
+            setRequestProperty("Content-Type", "application/json")
+            setRequestProperty("x-client", "portfolio-mobile")
+        }
+        c.outputStream.use { it.write(payload.toString().toByteArray()) }
+        val body = (if (c.responseCode in 200..299) c.inputStream else c.errorStream)
+            ?.bufferedReader()?.readText() ?: "{}"
+        return JSONObject(body)
+    }
+
     private fun exchangeUpstoxCode(fullUrl: String) {
         runOnUiThread { Toast.makeText(this, "Completing Upstox login…", Toast.LENGTH_SHORT).show() }
         Thread {
