@@ -1318,5 +1318,65 @@ document.querySelector('[data-tab="performance"]')?.addEventListener("click", ()
   }
 });
 
+// ---------- Tap-to-expand: every info module (charts + tables) ----------
+function _expandCard(card) {
+  const modal = $("detail-modal");
+  const body = $("detail-modal-body");
+  const titleEl = card.querySelector("h3");
+  $("detail-modal-title").textContent = titleEl ? titleEl.textContent : "Detail";
+
+  // Deep-clone the card so the live dashboard is untouched.
+  const clone = card.cloneNode(true);
+  clone.querySelectorAll(".card-expand").forEach(b => b.remove());
+  const h = clone.querySelector("h3"); if (h) h.remove();
+
+  // Canvases don't survive cloning (blank) — snapshot the live pixels to an <img>.
+  const liveCanvases = card.querySelectorAll("canvas");
+  const cloneCanvases = clone.querySelectorAll("canvas");
+  cloneCanvases.forEach((cc, i) => {
+    const live = liveCanvases[i];
+    let img = null;
+    try { if (live && live.width) { img = document.createElement("img"); img.src = live.toDataURL("image/png"); } }
+    catch (e) { /* tainted canvas — skip */ }
+    if (img) cc.replaceWith(img); else cc.remove();
+  });
+
+  body.innerHTML = "";
+  body.appendChild(clone);
+  modal.classList.add("show");
+}
+
+function _closeDetailModal() {
+  $("detail-modal").classList.remove("show");
+  $("detail-modal-body").innerHTML = "";
+}
+
+function _initExpandable() {
+  // Add an expand affordance to every card that holds a chart or a data region.
+  document.querySelectorAll("main .card").forEach(card => {
+    if (card.querySelector(".card-expand")) return;
+    const btn = document.createElement("button");
+    btn.className = "card-expand";
+    btn.title = "Expand";
+    btn.textContent = "⤢";
+    btn.onclick = (e) => { e.stopPropagation(); _expandCard(card); };
+    card.appendChild(btn);
+  });
+  // Close handlers (wired once).
+  if (!window._detailModalWired) {
+    window._detailModalWired = true;
+    $("detail-modal-close").onclick = _closeDetailModal;
+    $("detail-modal").addEventListener("click", (e) => {
+      if (e.target.id === "detail-modal") _closeDetailModal();
+    });
+    document.addEventListener("keydown", (e) => { if (e.key === "Escape") _closeDetailModal(); });
+  }
+}
+
 // initial load
 loadPortfolio().catch(e => $("port-kpis").innerHTML = `<span class='neg'>Error: ${e.message}. Make sure you've run <code>python -m src.upstox.auth</code>.</span>`);
+
+// Attach expand buttons after first paint, and re-scan when tabs are switched
+// (new cards become visible / measurable).
+_initExpandable();
+document.querySelectorAll("nav button").forEach(b => b.addEventListener("click", () => setTimeout(_initExpandable, 0)));

@@ -126,6 +126,7 @@ class MainActivity : AppCompatActivity() {
         nativeContentLayout = findViewById(R.id.nativeContentLayout)
 
         // Top Action Buttons
+        findViewById<ImageButton>(R.id.btnTopLogin).setOnClickListener { showLoginMenu() }
         findViewById<ImageButton>(R.id.btnTopGlobalSettings).setOnClickListener { showNativePage("global") }
         findViewById<ImageButton>(R.id.btnTopConsole).setOnClickListener { consoleOverlay.visibility = View.VISIBLE }
         findViewById<ImageButton>(R.id.btnTopKB).setOnClickListener { 
@@ -378,18 +379,117 @@ class MainActivity : AppCompatActivity() {
     /** Native Upstox OAuth: push the creds you typed into the backend, fetch
      *  the auth URL, then load it in the WebView. shouldOverrideUrlLoading
      *  captures the redirected ?code= and exchanges it automatically. */
+    /** Top-bar login entry point: choose link-login or direct-token login. */
+    private fun showLoginMenu() {
+        val prefs = getSharedPreferences("PortfolioQuantPrefs", Context.MODE_PRIVATE)
+        val broker = prefs.getString("broker", "upstox") ?: "upstox"
+        // Upstox supports the redirect OAuth link; Groww authenticates by access
+        // token (daily token / TOTP), so it only offers the direct-token path.
+        val options = if (broker == "groww")
+            arrayOf("🔑  Paste Groww access token", "⚙  Open broker settings")
+        else
+            arrayOf("🔗  Login with Upstox link (OAuth)",
+                    "🔑  Paste access token directly",
+                    "⚙  Open broker settings")
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("Broker login — $broker")
+            .setItems(options) { _, which ->
+                if (broker == "groww") {
+                    when (which) { 0 -> showTokenLoginDialog(broker); 1 -> showNativePage("app") }
+                } else {
+                    when (which) {
+                        0 -> startUpstoxOAuth()
+                        1 -> showTokenLoginDialog(broker)
+                        2 -> showNativePage("app")
+                    }
+                }
+            }
+            .show()
+    }
+
+    /** Direct access-token login — same idea as the Upstox bot's paste-token path. */
+    private fun showTokenLoginDialog(broker: String) {
+        val prefs = getSharedPreferences("PortfolioQuantPrefs", Context.MODE_PRIVATE)
+        val input = EditText(this).apply {
+            hint = "Paste $broker access token"
+            setText(prefs.getString(
+                if (broker == "groww") "groww_access_token" else "upstox_bearer_token", ""))
+            setTextColor(0xFF3FB950.toInt())
+        }
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("Direct token login — $broker")
+            .setMessage("Bypasses the login link. Token is saved on-device and applied to the running backend.")
+            .setView(input)
+            .setPositiveButton("Apply & Test") { _, _ ->
+                val token = input.text.toString().trim()
+                if (token.isBlank()) {
+                    Toast.makeText(this, "No token entered.", Toast.LENGTH_SHORT).show()
+                    return@setPositiveButton
+                }
+                applyDirectToken(broker, token)
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    /** Persist a pasted token, push it into the running backend, and verify it. */
+    private fun applyDirectToken(broker: String, token: String) {
+        if (service?.pythonState != PortfolioService.ServerState.RUNNING) {
+            Toast.makeText(this, "Start the backend first (Terminal ▶).", Toast.LENGTH_LONG).show()
+            return
+        }
+        val prefKey = if (broker == "groww") "groww_access_token" else "upstox_bearer_token"
+        getSharedPreferences("PortfolioQuantPrefs", Context.MODE_PRIVATE)
+            .edit().putString(prefKey, token).apply()
+        // Push into the live Python process so no restart is needed.
+        try {
+            val py = com.chaquo.python.Python.getInstance()
+            val environ = py.getModule("os")["environ"]
+            val envKey = if (broker == "groww") "GROWW_ACCESS_TOKEN" else "UPSTOX_BEARER_TOKEN"
+            environ?.callAttr("__setitem__", envKey, token)
+        } catch (e: Exception) { /* fall back to prefs/disk */ }
+        Toast.makeText(this, "Token applied — verifying…", Toast.LENGTH_SHORT).show()
+        Thread {
+            val ok: Boolean
+            val msg: String
+            try {
+                // Groww: persist the token + switch the active broker server-side first.
+                if (broker == "groww") {
+                    httpPostJson("http://127.0.0.1:8000/api/groww/save-token",
+                        JSONObject().put("token", token))
+                }
+                // Broker-aware verification (works for whichever broker is active).
+                val r = httpPostJson("http://127.0.0.1:8000/api/broker/test", JSONObject())
+                ok = r.optBoolean("ok", false)
+                msg = r.optString("message", if (ok) "authenticated" else "token rejected")
+            } catch (e: Exception) {
+                runOnUiThread { Toast.makeText(this, "✗ ${e.message}", Toast.LENGTH_LONG).show() }
+                return@Thread
+            }
+            runOnUiThread {
+                Toast.makeText(this, if (ok) "✅ $msg" else "❌ $msg", Toast.LENGTH_LONG).show()
+                if (ok) { nativeOverlayContainer.visibility = View.GONE; webView.loadUrl("http://127.0.0.1:8000") }
+            }
+        }.start()
+    }
+
     private fun startUpstoxOAuth() {
         if (service?.pythonState != PortfolioService.ServerState.RUNNING) {
             Toast.makeText(this, "Start the backend first (Terminal ▶), then log in.",
                 Toast.LENGTH_LONG).show()
             return
         }
-        saveAllToPrefs()
-        val apiKey = etUpstoxApiKey.text.toString().trim()
-        val secret = etUpstoxSecret.text.toString().trim()
-        val redirect = etRedirectUri.text.toString().trim()
+        // If the App Settings page is open, persist its fields first. Either way
+        // we read the source of truth from prefs so this works from the toolbar.
+        if (::etUpstoxApiKey.isInitialized) saveAllToPrefs()
+        val prefs = getSharedPreferences("PortfolioQuantPrefs", Context.MODE_PRIVATE)
+        val apiKey = prefs.getString("upstox_api_key", "")!!.trim()
+        val secret = prefs.getString("upstox_secret", "")!!.trim()
+        val redirect = prefs.getString("redirect_uri", "http://127.0.0.1:8765/callback")!!.trim()
         if (apiKey.isBlank() || secret.isBlank()) {
-            Toast.makeText(this, "Enter Client ID + Secret first.", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, "Enter Client ID + Secret in ⚙ App Settings first.",
+                Toast.LENGTH_LONG).show()
+            showNativePage("app")
             return
         }
         Toast.makeText(this, "Opening Upstox login…", Toast.LENGTH_SHORT).show()

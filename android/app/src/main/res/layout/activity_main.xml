@@ -28,9 +28,19 @@
                 android:paddingEnd="8dp">
 
                 <ImageButton
+                    android:id="@+id/btnTopLogin"
+                    android:layout_width="40dp"
+                    android:layout_height="40dp"
+                    android:background="?attr/selectableItemBackgroundBorderless"
+                    android:src="@android:drawable/ic_lock_idle_lock"
+                    android:contentDescription="Broker Login"
+                    app:tint="#3FB950" />
+
+                <ImageButton
                     android:id="@+id/btnTopGlobalSettings"
                     android:layout_width="40dp"
                     android:layout_height="40dp"
+                    android:layout_marginStart="6dp"
                     android:background="?attr/selectableItemBackgroundBorderless"
                     android:src="@android:drawable/ic_menu_manage"
                     android:contentDescription="AI Settings"

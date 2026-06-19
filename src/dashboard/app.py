@@ -653,6 +653,18 @@ def api_broker_set(body: dict):
     return {"ok": True, **broker_status()}
 
 
+@app.post("/api/broker/test")
+def api_broker_test():
+    """Broker-aware auth check (works for whichever broker is active).
+    Returns {ok, message} so the Android direct-token flow can verify any broker."""
+    settings.refresh()
+    from src.brokers import broker_status
+    s = broker_status()
+    if s.get("ok"):
+        return {"ok": True, "message": f"Authenticated as {s.get('user')} ({s.get('active')})"}
+    return {"ok": False, "message": s.get("error") or "authentication failed"}
+
+
 @app.post("/api/groww/save-token")
 def api_groww_save_token(body: dict):
     """Save a Groww daily access token (the 'direct bearer' equivalent)."""

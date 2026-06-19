@@ -32,20 +32,38 @@ import inspect
 import json
 import threading
 from pathlib import Path
-from typing import Callable, Optional
+from typing import TYPE_CHECKING, Callable, Optional
 
-from telegram import Update
-from telegram.constants import ParseMode
-from telegram.error import BadRequest, TelegramError
-from telegram.ext import (
-    Application, ApplicationBuilder, CommandHandler, ContextTypes,
-    MessageHandler, filters,
-)
+# NOTE: `python-telegram-bot` (the `telegram` package) is NOT imported at module
+# level. It is only needed by the long-polling CommandBot, and it is not
+# available on Android/Chaquopy (it pulls async httpx which doesn't build there).
+# The send-only TelegramBot below uses plain `requests`, so broadcasts from the
+# DR-Quant funnel etc. work everywhere. PTB is imported lazily inside CommandBot.
+if TYPE_CHECKING:  # type hints only — never evaluated at runtime
+    from telegram import Update
+    from telegram.ext import Application, ContextTypes
 
 from config import settings
 from src.utils.logger import get_logger
 
 log = get_logger("telegram")
+
+
+def _import_ptb():
+    """Lazily import python-telegram-bot. Raises a clear error if unavailable."""
+    try:
+        from telegram import Update
+        from telegram.ext import (
+            ApplicationBuilder, CommandHandler, ContextTypes,
+            MessageHandler, filters,
+        )
+        return Update, ApplicationBuilder, CommandHandler, ContextTypes, MessageHandler, filters
+    except ImportError as e:
+        raise RuntimeError(
+            "python-telegram-bot is not installed. The interactive Telegram "
+            "command bot is unavailable on this platform (e.g. Android). "
+            "Send-only broadcasts still work."
+        ) from e
 
 
 # ────────────────────── auth helpers ──────────────────────
@@ -245,7 +263,8 @@ class CommandBot:
         log.warning(f"Telegram error: {context.error}")
 
     # ---- lifecycle ----
-    def _build(self) -> Application:
+    def _build(self) -> "Application":
+        _Update, ApplicationBuilder, CommandHandler, _Ctx, MessageHandler, filters = _import_ptb()
         # Generous timeouts — macOS + IPv6 + corporate DNS can be slow on first
         # contact with api.telegram.org. PTB's defaults (5s) are too tight here.
         app = (
@@ -275,6 +294,7 @@ class CommandBot:
         The dashboard launches this via `subprocess.Popen([..., "telegram", "bot"])`
         which is exactly how Upstox_Agent does it.
         """
+        Update = _import_ptb()[0]
         log.info(f"Telegram bot starting. Authorized: {sorted(_load_authed())}")
         self.app = self._build()
         self.app.run_polling(allowed_updates=Update.ALL_TYPES,
