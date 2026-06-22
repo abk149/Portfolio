@@ -216,15 +216,39 @@ fun LoginDialog(onDismiss: () -> Unit) {
                         Spacer(Modifier.height(6.dp))
                         Text(u, color = Muted, fontSize = 10.sp)
                         Spacer(Modifier.height(6.dp))
-                        OutlinedButton(onClick = {
+                        Button(onClick = {
                             runCatching { ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(u))) }
                         }, modifier = Modifier.fillMaxWidth()) { Text("2 · Open Upstox login in browser") }
-                        Spacer(Modifier.height(6.dp))
-                        OutlinedTextField(redirectPaste, { redirectPaste = it },
-                            label = { Text("3 · Paste redirect URL") }, singleLine = true,
-                            modifier = Modifier.fillMaxWidth())
+                        Spacer(Modifier.height(4.dp))
+                        Text("Log in; the browser auto-completes (shows ✅) since the redirect " +
+                            "lands back on this device. Then tap below.",
+                            color = Muted, fontSize = 11.sp)
                         Spacer(Modifier.height(6.dp))
                         Button(
+                            onClick = {
+                                scope.launch {
+                                    busy = true
+                                    val r = Api.brokerTest().objOrNull()
+                                    msg = if (r?.optBoolean("ok", false) == true)
+                                        "✅ ${r.optString("message", "logged in")}"
+                                    else "Not logged in yet: ${r?.optString("message", "—")}. " +
+                                        "Finish login in the browser, or use the paste fallback below."
+                                    busy = false
+                                }
+                            },
+                            enabled = !busy && BackendBus.running, modifier = Modifier.fillMaxWidth(),
+                            colors = ButtonDefaults.buttonColors(containerColor = Bull),
+                        ) { Text("3 · ✓ I've logged in — verify") }
+
+                        Spacer(Modifier.height(10.dp))
+                        Text("Fallback — if the browser didn't auto-complete, paste the full " +
+                            "redirect URL here:", color = Muted, fontSize = 11.sp)
+                        Spacer(Modifier.height(4.dp))
+                        OutlinedTextField(redirectPaste, { redirectPaste = it },
+                            label = { Text("Paste redirect URL") }, singleLine = true,
+                            modifier = Modifier.fillMaxWidth())
+                        Spacer(Modifier.height(6.dp))
+                        OutlinedButton(
                             onClick = {
                                 scope.launch {
                                     busy = true
@@ -236,7 +260,7 @@ fun LoginDialog(onDismiss: () -> Unit) {
                                 }
                             },
                             enabled = !busy && redirectPaste.isNotBlank(), modifier = Modifier.fillMaxWidth(),
-                        ) { Text("4 · Submit & log in") }
+                        ) { Text("Submit pasted URL") }
                     }
                     Spacer(Modifier.height(14.dp))
                     Divider(color = BorderCol)

@@ -627,6 +627,41 @@ def api_upstox_exchange(body: _UpstoxCodeBody):
         return {"ok": False, "error": str(e)}
 
 
+@app.get("/callback", response_class=HTMLResponse)
+def upstox_callback(code: str = "", error: str = "", error_description: str = ""):
+    """Upstox OAuth redirect target. Because the backend runs on the phone at
+    the SAME host as the registered redirect_uri (localhost:8000/callback), the
+    browser lands here directly after login and we exchange the code instantly —
+    no copy-paste, and the single-use code is consumed immediately while fresh."""
+    def _page(title: str, detail: str, ok: bool) -> HTMLResponse:
+        color = "#3FB950" if ok else "#F85149"
+        return HTMLResponse(
+            f"""<!doctype html><html><head><meta name="viewport"
+            content="width=device-width,initial-scale=1"><title>Upstox login</title></head>
+            <body style="margin:0;background:#0B0E14;color:#E6EDF3;font-family:-apple-system,sans-serif;
+            display:flex;min-height:100vh;align-items:center;justify-content:center;text-align:center">
+            <div style="padding:24px"><div style="font-size:48px">{'✅' if ok else '❌'}</div>
+            <h2 style="color:{color}">{title}</h2>
+            <p style="color:#8B949E;font-size:14px;max-width:320px">{detail}</p>
+            <p style="color:#8B949E;font-size:13px">You can close this tab and return to the app.</p>
+            </div></body></html>"""
+        )
+
+    if error or error_description:
+        return _page("Login failed", error_description or error, ok=False)
+    if not code:
+        return _page("No auth code", "Upstox didn't return a code in the redirect.", ok=False)
+    try:
+        from src.upstox.auth import exchange_and_save
+        exchange_and_save(code)
+        from src.upstox.client import UpstoxClient
+        prof = UpstoxClient().profile()
+        name = prof.get("user_name") or prof.get("email") or "you"
+        return _page(f"Logged in as {name}", "Your Upstox token is saved on this device.", ok=True)
+    except Exception as e:
+        return _page("Token exchange failed", str(e), ok=False)
+
+
 # ---------------- broker selection (either/or) ----------------
 @app.get("/api/broker")
 def api_broker_get():
