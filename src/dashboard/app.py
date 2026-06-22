@@ -531,7 +531,9 @@ def api_upstox_config(body: dict):
     for env_key, body_key in (("UPSTOX_API_KEY", "api_key"),
                               ("UPSTOX_API_SECRET", "api_secret"),
                               ("UPSTOX_REDIRECT_URI", "redirect_uri")):
-        v = (body.get(body_key) or "").strip()
+        # Strip surrounding quotes/whitespace — a common paste error (copying
+        # `"60f..."` straight from .env) is the usual cause of UDAPI100068.
+        v = (body.get(body_key) or "").strip().strip('"').strip("'").strip()
         if v:
             os.environ[env_key] = v
     try:

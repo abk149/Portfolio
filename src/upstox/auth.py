@@ -58,8 +58,10 @@ def build_auth_url() -> str:
     """Return the Upstox login URL the user should open in a browser."""
     import urllib.parse
 
-    key = settings.upstox_api_key
-    uri = settings.upstox_redirect_uri
+    # Strip stray surrounding quotes/whitespace (common when creds are pasted
+    # straight from a quoted .env line) — these cause Upstox UDAPI100068.
+    key = settings.upstox_api_key.strip().strip('"').strip("'").strip()
+    uri = settings.upstox_redirect_uri.strip().strip('"').strip("'").strip()
 
     # ── DEBUG LOGGING ──────────────────────────────────────────────────────
     print(f"[Upstox Auth] Building URL.")

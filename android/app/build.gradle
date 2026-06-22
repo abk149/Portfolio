@@ -2,6 +2,7 @@ plugins {
     id 'com.android.application'
     id 'org.jetbrains.kotlin.android'
     id 'com.chaquo.python'
+    id 'org.jetbrains.kotlin.plugin.compose'
 }
 
 android {
@@ -37,10 +38,6 @@ android {
     }
     buildFeatures {
         compose true
-    }
-    composeOptions {
-        // Compose compiler extension compatible with Kotlin 1.9.24
-        kotlinCompilerExtensionVersion '1.5.14'
     }
     packagingOptions {
         resources.excludes += '/META-INF/{AL2.0,LGPL2.1}'
