@@ -150,6 +150,57 @@ fun LineChart(
     }
 }
 
+/**
+ * Efficient-frontier scatter (x = volatility %, y = expected return %).
+ * Plots the frontier line, each holding as a dot, the current portfolio (◆),
+ * and the optimal portfolio (★). Mirrors the web dashboard's frontier chart.
+ */
+@Composable
+fun FrontierChart(
+    frontier: List<Pair<Float, Float>>,          // (vol%, ret%)
+    holdings: List<Pair<Float, Float>> = emptyList(),
+    current: Pair<Float, Float>? = null,
+    optimal: Pair<Float, Float>? = null,
+    modifier: Modifier = Modifier,
+) {
+    val all = frontier + holdings + listOfNotNull(current, optimal)
+    if (all.size < 2) { Text("Not enough data for the frontier.", color = Muted, fontSize = 12.sp); return }
+    val xs = all.map { it.first }; val ys = all.map { it.second }
+    val xlo = xs.min(); val xhi = xs.max(); val ylo = ys.min(); val yhi = ys.max()
+    val xr = (xhi - xlo).takeIf { it > 0 } ?: 1f
+    val yr = (yhi - ylo).takeIf { it > 0 } ?: 1f
+
+    Column(modifier.fillMaxWidth()) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+            LegendDot(AccentHi, "Frontier"); LegendDot(Muted, "Holdings")
+            LegendDot(Bear, "Current"); LegendDot(Bull, "Optimal")
+        }
+        Spacer(Modifier.height(6.dp))
+        Canvas(Modifier.fillMaxWidth().height(220.dp)) {
+            val w = size.width; val h = size.height; val pad = 8f
+            fun px(x: Float) = pad + (x - xlo) / xr * (w - 2 * pad)
+            fun py(y: Float) = h - pad - (y - ylo) / yr * (h - 2 * pad)
+            drawLine(BorderCol, Offset(0f, h - 1), Offset(w, h - 1), 1f)
+
+            val sorted = frontier.sortedBy { it.first }
+            if (sorted.size >= 2) {
+                val path = Path()
+                sorted.forEachIndexed { i, (x, y) ->
+                    if (i == 0) path.moveTo(px(x), py(y)) else path.lineTo(px(x), py(y))
+                }
+                drawPath(path, AccentHi, style = Stroke(width = 3f))
+            }
+            holdings.forEach { (x, y) -> drawCircle(Muted, 4f, Offset(px(x), py(y))) }
+            current?.let { drawCircle(Bear, 7f, Offset(px(it.first), py(it.second))) }
+            optimal?.let { drawCircle(Bull, 7f, Offset(px(it.first), py(it.second))) }
+        }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text("vol %", color = Muted, fontSize = 10.sp)
+            Text("return % (↑)", color = Muted, fontSize = 10.sp)
+        }
+    }
+}
+
 @Composable
 private fun LegendDot(color: Color, label: String) {
     Row(verticalAlignment = Alignment.CenterVertically) {

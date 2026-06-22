@@ -78,6 +78,29 @@ class PerformanceAnalyzer:
         self.upstox = upstox or get_broker()
 
     # ------------------------------------------------------------------
+    # Free public-source fallbacks (used when the broker can't serve prices,
+    # e.g. Groww live-data/historical not entitled). Keeps Performance working
+    # without Upstox.
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _yahoo_candles(symbol: str, lookback_days: int):
+        try:
+            from src.data import yahoo
+            return yahoo.daily(symbol, lookback_days)
+        except Exception as e:
+            log.debug(f"yahoo candles fallback failed for {symbol}: {e}")
+            import pandas as _pd
+            return _pd.DataFrame()
+
+    @staticmethod
+    def _yahoo_ltp(symbol: str):
+        try:
+            from src.data import yahoo
+            return yahoo.ltp(symbol)
+        except Exception:
+            return None
+
+    # ------------------------------------------------------------------
     # Trade history (multi-FY fetch with pagination)
     # ------------------------------------------------------------------
 
@@ -542,18 +565,23 @@ class PerformanceAnalyzer:
 
         price_cache: dict[str, pd.Series] = {}  # symbol → Series[date→close]
         for sym, ikey in instruments.items():
+            df = pd.DataFrame()
             try:
                 df = self.upstox.candles(
                     ikey, interval="day",
                     to_date=date.today(),
                     from_date=first_trade_date - timedelta(days=5),
                 )
-                if not df.empty:
-                    closes = df["close"].copy()
-                    closes.index = closes.index.date  # type: ignore
-                    price_cache[sym] = closes
             except Exception as e:
-                log.debug(f"candles failed for {sym}: {e}")
+                log.debug(f"broker candles failed for {sym}: {e}")
+            # Failproof: broker gave nothing (e.g. Groww historical not entitled)
+            # → free public source so the equity curve still builds.
+            if df is None or df.empty:
+                df = self._yahoo_candles(sym, lookback)
+            if df is not None and not df.empty:
+                closes = df["close"].copy()
+                closes.index = closes.index.date  # type: ignore
+                price_cache[sym] = closes
 
         if not price_cache:
             return pd.DataFrame()
@@ -844,6 +872,10 @@ class PerformanceAnalyzer:
                     if ikey in k or k in ikey:
                         current_price = v
                         break
+
+            if current_price <= 0:
+                # Failproof: broker LTP unavailable → free public source.
+                current_price = self._yahoo_ltp(sym) or 0
 
             if current_price <= 0:
                 continue

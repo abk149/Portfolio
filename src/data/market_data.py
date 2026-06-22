@@ -36,6 +36,42 @@ from src.utils.logger import get_logger
 log = get_logger("data")
 
 
+class _DataBreaker:
+    """Process-wide circuit breaker for broker market-data calls.
+
+    After `threshold` consecutive broker failures (e.g. Groww live-data/historical
+    403), the breaker OPENS and every subsequent price/candle request skips the
+    broker and goes straight to the Yahoo fallback — so a long run (DR-Quant,
+    Universe Map) doesn't keep hammering a broker that clearly can't serve data.
+    Any broker success closes it again.
+    """
+    def __init__(self, threshold: int = 3):
+        self.threshold = threshold
+        self.fails = 0
+
+    @property
+    def open(self) -> bool:
+        return self.fails >= self.threshold
+
+    def fail(self):
+        self.fails += 1
+        if self.fails == self.threshold:
+            log.warning(f"[breaker] broker market-data failed {self.fails}× — "
+                        f"switching to Yahoo fallback for the rest of this run")
+
+    def ok(self):
+        if self.fails:
+            self.fails = 0
+
+
+# Module-level so it persists across MarketData instances within a process/run.
+_DATA_BREAKER = _DataBreaker(threshold=3)
+
+
+def reset_data_breaker():
+    _DATA_BREAKER.fails = 0
+
+
 class MarketData:
     def __init__(self, upstox: Optional[UpstoxClient] = None):
         if upstox is not None:
@@ -88,23 +124,41 @@ class MarketData:
             # when rate-limited or under brief maintenance — blacklisting on
             # that would slowly empty the universe over a few runs.
             # The transient errors path also just returns empty, no blacklist.
-            if not (self.upstox and ikey):
-                return pd.DataFrame()
-            try:
-                df = self.upstox.candles(
-                    ikey, "day",
-                    from_date=date.today() - timedelta(days=lookback_days),
-                )
-                if df.empty:
-                    log.debug(f"⚠ upstox empty {ikey} (possibly rate-limit or delisted)")
-                    return pd.DataFrame()
-                log.debug(f"📈 upstox ✓ {yf_ticker} ({ikey}) — {len(df)} bars")
-                return df
-            except Exception as e:
-                log.debug(f"⚠ upstox candles {ikey} fail: {type(e).__name__}: {e}")
-                return pd.DataFrame()
+            # Skip the broker entirely once the breaker has tripped this run.
+            if self.upstox and ikey and not _DATA_BREAKER.open:
+                try:
+                    df = self.upstox.candles(
+                        ikey, "day",
+                        from_date=date.today() - timedelta(days=lookback_days),
+                    )
+                    if not df.empty:
+                        _DATA_BREAKER.ok()
+                        log.debug(f"📈 broker ✓ {yf_ticker} ({ikey}) — {len(df)} bars")
+                        return df
+                    _DATA_BREAKER.fail()
+                    log.debug(f"⚠ broker empty {ikey} — trying Yahoo fallback")
+                except Exception as e:
+                    _DATA_BREAKER.fail()
+                    log.debug(f"⚠ broker candles {ikey} fail ({type(e).__name__}: {e}) — Yahoo fallback")
+            # Failproof: broker couldn't serve candles (Groww historical 403 / not
+            # entitled, no Upstox auth, breaker open, etc.) → free public source.
+            return self._yahoo_daily(yf_ticker, lookback_days)
 
         return get_or_set("daily", cache_key, ttl_seconds=60 * 60 * 6, fn=_fetch)
+
+    @staticmethod
+    def _yahoo_daily(yf_ticker: Optional[str], lookback_days: int = 365) -> pd.DataFrame:
+        if not yf_ticker:
+            return pd.DataFrame()
+        try:
+            from src.data import yahoo
+            df = yahoo.daily(yf_ticker, lookback_days)
+            if not df.empty:
+                log.debug(f"📈 yahoo ✓ {yf_ticker} — {len(df)} bars")
+            return df
+        except Exception as e:
+            log.debug(f"yahoo daily {yf_ticker} failed: {e}")
+            return pd.DataFrame()
 
     # ---------- intraday OHLCV ----------
     def intraday(self, yf_ticker: str, instrument_key: Optional[str],
@@ -126,29 +180,43 @@ class MarketData:
     # ---------- LTP / quote ----------
     def ltp(self, yf_ticker: str, instrument_key: Optional[str] = None) -> Optional[float]:
         ikey = self._resolve_key(instrument_key, yf_ticker)
-        if not (self.upstox and ikey):
-            return None
+        if self.upstox and ikey and not _DATA_BREAKER.open:
+            try:
+                resp = self.upstox.ltp([ikey])
+                for v in (resp or {}).values():
+                    if "last_price" in v:
+                        _DATA_BREAKER.ok()
+                        return float(v["last_price"])
+                _DATA_BREAKER.fail()
+            except Exception as e:
+                _DATA_BREAKER.fail()
+                log.debug(f"broker LTP failed {ikey}: {e} — Yahoo fallback")
+        # Failproof fallback
         try:
-            resp = self.upstox.ltp([ikey])
-            for v in (resp or {}).values():
-                if "last_price" in v:
-                    return float(v["last_price"])
-        except Exception as e:
-            log.debug(f"upstox LTP failed {ikey}: {e}")
-        return None
+            from src.data import yahoo
+            return yahoo.ltp(yf_ticker)
+        except Exception:
+            return None
 
     def quote(self, yf_ticker: str, instrument_key: Optional[str] = None) -> dict:
-        """Full snapshot from Upstox: OHLC + day range + last price + volume + OI."""
+        """Full snapshot: OHLC + last price + volume. Broker first, Yahoo fallback."""
         ikey = self._resolve_key(instrument_key, yf_ticker)
-        if not (self.upstox and ikey):
-            return {}
+        if self.upstox and ikey and not _DATA_BREAKER.open:
+            try:
+                resp = self.upstox.quote([ikey])
+                for v in (resp or {}).values():
+                    if v:
+                        _DATA_BREAKER.ok()
+                        return v
+                _DATA_BREAKER.fail()
+            except Exception as e:
+                _DATA_BREAKER.fail()
+                log.debug(f"broker quote failed {ikey}: {e} — Yahoo fallback")
         try:
-            resp = self.upstox.quote([ikey])
-            for v in (resp or {}).values():
-                return v
-        except Exception as e:
-            log.debug(f"upstox quote failed {ikey}: {e}")
-        return {}
+            from src.data import yahoo
+            return yahoo.quote(yf_ticker)
+        except Exception:
+            return {}
 
     # ---------- "fundamentals" — Upstox doesn't expose FA data ----------
     # We return whatever the Upstox quote endpoint provides (OHLC, day/52w

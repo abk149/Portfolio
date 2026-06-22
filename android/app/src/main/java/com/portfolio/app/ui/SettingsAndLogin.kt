@@ -97,6 +97,8 @@ fun SettingsScreen(openLogin: () -> Unit) {
             }
         }
 
+        var llmBusy by remember { mutableStateOf(false) }
+        var llmMsg by remember { mutableStateOf<String?>(null) }
         SectionCard("Analysis LLM", Warn) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 listOf("nvidia", "anthropic").forEach {
@@ -105,6 +107,28 @@ fun SettingsScreen(openLogin: () -> Unit) {
             }
             Spacer(Modifier.height(8.dp))
             Field("LLM API key", llmKey, password = true) { llmKey = it }
+            Spacer(Modifier.height(8.dp))
+            Button(
+                onClick = {
+                    scope.launch {
+                        save()                       // persist provider+key first
+                        llmBusy = true; llmMsg = "Contacting ${llmProvider}…"
+                        when (val r = Api.llmTest()) {
+                            is Api.Resp.Ok ->
+                                llmMsg = if (r.body.optBoolean("ok", false))
+                                    "✅ ${r.body.optString("provider")} OK — \"${r.body.optString("reply")}\""
+                                else "❌ ${r.body.optString("error", r.body.optString("reply", "failed"))}"
+                            is Api.Resp.Err -> llmMsg = "❌ Backend: ${r.message}"
+                        }
+                        llmBusy = false
+                    }
+                },
+                enabled = !llmBusy && BackendBus.running, modifier = Modifier.fillMaxWidth(),
+            ) { Text(if (llmBusy) "Testing…" else "🔌 Test LLM connection") }
+            llmMsg?.let {
+                Spacer(Modifier.height(8.dp))
+                StatusBanner(it, if (it.startsWith("✅")) Bull else Bear)
+            }
         }
 
         SectionCard("Notifications", AccentHi) {

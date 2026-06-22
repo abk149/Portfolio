@@ -393,6 +393,97 @@ def api_agent(body: AgentBody):
     return {"job_id": job_id}
 
 
+@app.post("/api/llm/test")
+def api_llm_test():
+    """Quick connectivity check for the configured LLM (NVIDIA → fallback chain)."""
+    try:
+        from src.llm import get_llm
+        llm = get_llm()
+        reply = (llm.complete("You are a connectivity test.",
+                              "Reply with exactly: OK") or "").strip()
+        provider = getattr(llm, "name", None) or settings.llm_provider
+        # Providers return sentinels like "[nvidia error …]" on failure.
+        ok = bool(reply) and not reply.lstrip().startswith("[")
+        return {"ok": ok, "provider": provider, "reply": reply[:300]}
+    except Exception as e:
+        return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+
+
+def _chat_context() -> str:
+    """Compact snapshot of everything the AI should know: portfolio, the latest
+    DR-Quant run, and the Universe-Map / KB. Every piece is best-effort."""
+    parts: list[str] = []
+    # Portfolio
+    try:
+        from src.portfolio import PortfolioManager
+        snap = PortfolioManager().snapshot()
+        s = snap.summary
+        parts.append(
+            "PORTFOLIO: invested ₹{:.0f}, current ₹{:.0f}, P&L ₹{:.0f} ({:.2f}%), "
+            "day change ₹{:.0f}, {} holdings.".format(
+                s.get("holdings_invested", 0), s.get("holdings_value", 0),
+                s.get("holdings_pnl", 0), s.get("holdings_pnl_pct", 0),
+                s.get("day_change_value", 0), s.get("n_holdings", 0)))
+        if not snap.holdings.empty:
+            top = snap.holdings.sort_values("current_value", ascending=False).head(12)
+            rows = [f"{r.get('tradingsymbol')}: qty {r.get('quantity')}, "
+                    f"avg {r.get('average_price')}, ltp {r.get('last_price')}, "
+                    f"P&L {round(r.get('pnl', 0), 0)}" for _, r in top.iterrows()]
+            parts.append("HOLDINGS:\n" + "\n".join(rows))
+    except Exception as e:
+        parts.append(f"PORTFOLIO: unavailable ({e}).")
+    # Latest DR-Quant run
+    try:
+        import glob
+        import json as _j
+        files = sorted(glob.glob(str(_quant_dir() / "*.json")), key=os.path.getmtime)
+        if files:
+            res = _j.loads(Path(files[-1]).read_text())
+            val = res.get("validated", [])
+            parts.append(f"DR-QUANT (latest): {res.get('candidates')} candidates, "
+                         f"{len(val)} validated. Top: "
+                         + ", ".join(str(v.get('symbol') or v.get('ticker')) for v in val[:10]))
+    except Exception:
+        pass
+    # Universe map / KB
+    try:
+        from src.kb import KnowledgeBase
+        kb = KnowledgeBase.get()
+        st = kb.stats()
+        parts.append(f"UNIVERSE/KB: {st.get('universe_stocks', 0)} stocks, "
+                     f"{st.get('documents', 0)} docs, {st.get('chunks', 0)} chunks.")
+        buys = [s for s in (kb.all_stocks() or [])
+                if s.get("recommendation") in ("STRONG_BUY", "BUY")][:12]
+        if buys:
+            parts.append("KB BUY candidates: "
+                         + ", ".join(f"{b.get('symbol')}({b.get('recommendation')})" for b in buys))
+    except Exception:
+        pass
+    return "\n\n".join(parts) if parts else "No data loaded yet."
+
+
+@app.post("/api/chat")
+def api_chat(body: dict):
+    """Free-form chat grounded in the user's loaded data (portfolio, DR-Quant,
+    Universe Map). Synchronous — returns the answer inline."""
+    msg = (body.get("message") or body.get("question") or "").strip()
+    if not msg:
+        return {"ok": False, "error": "empty message"}
+    try:
+        from src.llm import get_llm
+        context = _chat_context()
+        system = (
+            "You are the in-app portfolio assistant for an Indian-equities quant "
+            "app. Answer concisely and specifically using ONLY the user's data "
+            "below; if something isn't present, say so. Data:\n\n" + context)
+        reply = (get_llm().complete(system, msg) or "").strip()
+        if not reply or reply.lstrip().startswith("["):
+            return {"ok": False, "error": reply or "LLM returned nothing"}
+        return {"ok": True, "reply": reply}
+    except Exception as e:
+        return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+
+
 # ---------------- telegram ----------------
 @app.post("/api/telegram/send-report")
 def api_tg_report():

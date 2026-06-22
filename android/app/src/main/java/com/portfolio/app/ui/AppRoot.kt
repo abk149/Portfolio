@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Chat
 import androidx.compose.material.icons.filled.Insights
 import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.Lock
@@ -37,6 +38,7 @@ fun AppRoot() {
     var dest by remember { mutableStateOf(Dest.HOME) }
     var showLogin by remember { mutableStateOf(false) }
     var showTerminal by remember { mutableStateOf(false) }
+    var showChat by remember { mutableStateOf(false) }
 
     Scaffold(
         containerColor = Bg,
@@ -52,6 +54,9 @@ fun AppRoot() {
                         else -> "●" to Muted
                     }
                     Text(dot, color = col, modifier = Modifier.padding(end = 4.dp))
+                    IconButton(onClick = { showChat = true }) {
+                        Icon(Icons.Filled.Chat, contentDescription = "AI Assistant", tint = AccentHi)
+                    }
                     IconButton(onClick = { showTerminal = true }) {
                         Icon(Icons.Filled.List, contentDescription = "Terminal", tint = AccentHi)
                     }
@@ -102,6 +107,22 @@ fun AppRoot() {
                         TextButton(onClick = { showTerminal = false }) { Text("✕ Close") }
                     }
                     Box(Modifier.weight(1f)) { TerminalScreen() }
+                }
+            }
+        }
+    }
+
+    if (showChat) {
+        Dialog(onDismissRequest = { showChat = false },
+            properties = DialogProperties(usePlatformDefaultWidth = false)) {
+            Surface(color = Bg, modifier = Modifier.fillMaxSize()) {
+                Column(Modifier.fillMaxSize()) {
+                    Row(Modifier.fillMaxWidth().padding(8.dp),
+                        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                        Spacer(Modifier.weight(1f))
+                        TextButton(onClick = { showChat = false }) { Text("✕ Close") }
+                    }
+                    Box(Modifier.weight(1f)) { ChatScreen() }
                 }
             }
         }

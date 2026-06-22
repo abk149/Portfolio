@@ -87,6 +87,9 @@ object Api {
     suspend fun portfolioRisk() = get("/api/portfolio/risk")
     suspend fun performanceCached() = get("/api/portfolio/performance/cached")
     suspend fun performance() = get("/api/portfolio/performance")
+    suspend fun optimize(mode: String, maxWeight: Double) =
+        post("/api/portfolio/optimize",
+            JSONObject().put("mode", mode).put("max_weight", maxWeight))
 
     // ── Analysis ──
     suspend fun screener(universe: String, minScore: Int) =
@@ -108,6 +111,10 @@ object Api {
             JSONObject().put("universe", universe).put("max_age_days", maxAgeDays))
     suspend fun umapData() = get("/api/universe-map/data")
     suspend fun umapReport() = get("/api/universe-map/report")
+
+    // ── LLM ──
+    suspend fun llmTest() = post("/api/llm/test")
+    suspend fun chat(message: String) = post("/api/chat", JSONObject().put("message", message))
 
     // ── Knowledge base ──
     suspend fun kbStats() = get("/api/kb/stats")

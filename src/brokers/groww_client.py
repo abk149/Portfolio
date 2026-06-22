@@ -237,16 +237,71 @@ class GrowwClient:
             })
         return out
 
+    def _order_list(self, pages: int = 10, page_size: int = 100) -> list[dict]:
+        """Paged executed/working orders: GET /v1/order/list?segment=CASH&page=&page_size=."""
+        out: list[dict] = []
+        for page in range(pages):
+            data = self._get("/v1/order/list", params={
+                "segment": "CASH", "page": page, "page_size": page_size})
+            rows = (data.get("order_list") or data.get("orders") or data
+                    if isinstance(data, dict) else data) or []
+            if not isinstance(rows, list) or not rows:
+                break
+            out.extend(rows)
+            if len(rows) < page_size:
+                break
+        return out
+
     def order_book(self) -> list[dict]:
-        return self._get("/v1/order/list") or []
+        return self._order_list()
+
+    @staticmethod
+    def _order_to_trade(o: dict) -> Optional[dict]:
+        """Normalise a FILLED Groww order into the trade shape the analytics
+        expect. Groww has no bulk trade feed, so executed orders are our source
+        of 'orders that were executed' (works with limited access)."""
+        status = str(o.get("order_status") or o.get("status") or "").upper()
+        if status not in ("EXECUTED", "FILLED", "COMPLETE", "COMPLETED"):
+            return None
+        qty = float(o.get("filled_quantity") or o.get("quantity") or 0)
+        price = float(o.get("average_fill_price") or o.get("filled_price")
+                      or o.get("average_price") or o.get("price") or 0)
+        if qty <= 0 or price <= 0:
+            return None
+        ts = (o.get("exchange_time") or o.get("created_at")
+              or o.get("order_timestamp") or o.get("trade_date") or "")
+        sym = o.get("trading_symbol") or o.get("tradingsymbol") or o.get("symbol") or ""
+        return {
+            "trade_date": str(ts)[:10],
+            "order_timestamp": ts,
+            "tradingsymbol": sym,
+            "trading_symbol": sym,
+            "transaction_type": str(o.get("transaction_type") or "").upper(),
+            "quantity": qty,
+            "price": price,
+            "isin": o.get("isin", ""),
+            "exchange": o.get("exchange", "NSE"),
+        }
 
     def trades_today(self) -> list[dict]:
-        return self._get("/v1/trade/list") or []
+        today = date.today().isoformat()
+        return [t for o in self._order_list(pages=2)
+                if (t := self._order_to_trade(o)) and t["trade_date"] == today]
 
     def trade_history(self, start: date, end: date, segment: str = "EQ") -> list[dict]:
-        # Groww exposes order/trade history; shape varies. Best-effort.
-        return self._get("/v1/trade/list", params={
-            "from": start.isoformat(), "to": end.isoformat()}) or []
+        out = []
+        for o in self._order_list():
+            t = self._order_to_trade(o)
+            if not t:
+                continue
+            try:
+                d = date.fromisoformat(t["trade_date"])
+                if not (start <= d <= end):
+                    continue
+            except Exception:
+                pass   # keep undated rows rather than drop history
+            out.append(t)
+        return out
 
     # ---------------- market data ----------------
     def _exchange_symbol(self, symbol: str, exchange: str = "NSE") -> str:

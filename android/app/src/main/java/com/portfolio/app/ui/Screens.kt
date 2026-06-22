@@ -273,8 +273,8 @@ fun MapScreen() {
 // ─────────────────────────────────────────────────────────────────────────────
 @Composable
 fun AnalysisScreen() {
-    var sub by remember { mutableStateOf("Screener") }
-    val tabs = listOf("Screener", "Intraday", "Performance", "KB")
+    var sub by remember { mutableStateOf("Optimize") }
+    val tabs = listOf("Optimize", "Screener", "Intraday", "Performance", "KB")
     Column(Modifier.fillMaxSize()) {
         ScrollableTabRow(
             selectedTabIndex = tabs.indexOf(sub),
@@ -287,6 +287,7 @@ fun AnalysisScreen() {
         }
         Box(Modifier.weight(1f)) {
             when (sub) {
+                "Optimize" -> OptimizeTab()
                 "Screener" -> ScreenerTab()
                 "Intraday" -> IntradayTab()
                 "Performance" -> PerformanceTab()
@@ -387,21 +388,118 @@ fun AnalysisScreen() {
     }
 }
 
+// (vol%, ret%) from an optimizer record, tolerant of decimal vs _pct keys.
+private fun xyPct(o: JSONObject?): Pair<Float, Float>? {
+    if (o == null) return null
+    fun f(vararg keys: String): Float? {
+        for (k in keys) { val v = o.opt(k); if (v is Number) return v.toFloat() }
+        return null
+    }
+    val volPct = f("vol_pct", "volatility_pct") ?: f("vol", "volatility")?.let { it * 100 }
+    val retPct = f("return_pct") ?: f("return", "ret", "expected_return")?.let { it * 100 }
+    return if (volPct != null && retPct != null) volPct to retPct else null
+}
+
+@Composable private fun OptimizeTab() {
+    var mode by remember { mutableStateOf("max_sharpe") }
+    var maxW by remember { mutableStateOf(25) }
+    var running by remember { mutableStateOf(false) }
+    var res by remember { mutableStateOf<JSONObject?>(null) }
+    var status by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+        if (!BackendBus.running) { BackendOfflineHint(); return@Column }
+        SectionCard("MPT optimizer", AccentHi) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf("max_sharpe" to "Max Sharpe", "min_variance" to "Min Var").forEach { (k, lbl) ->
+                    FilterChip(selected = mode == k, onClick = { mode = k }, label = { Text(lbl) })
+                }
+            }
+            Spacer(Modifier.height(6.dp))
+            Text("Max weight per name: $maxW%", color = Muted, fontSize = 12.sp)
+            Slider(value = maxW.toFloat(), onValueChange = { maxW = it.toInt() }, valueRange = 5f..100f)
+            Button(
+                onClick = {
+                    scope.launch {
+                        running = true; res = null; status = "Optimising… (prices via broker or Yahoo fallback)"
+                        val sub = Api.optimize(mode, maxW / 100.0).objOrNull()
+                        val jobId = sub?.optString("job_id")
+                        if (jobId.isNullOrBlank()) { status = "Failed: $sub"; running = false; return@launch }
+                        val fin = pollJob(jobId)
+                        if (fin.optString("status") == "done") {
+                            val r = fin.optJSONObject("result")
+                            if (r != null && r.has("error")) status = r.optString("error")
+                            else { res = r; status = null }
+                        } else status = "Failed: ${fin.optString("error")}"
+                        running = false
+                    }
+                },
+                enabled = !running, modifier = Modifier.fillMaxWidth(),
+            ) { Text(if (running) "Optimising…" else "▶ Optimise portfolio") }
+            status?.let { Spacer(Modifier.height(8.dp)); StatusBanner(it, if (running) Warn else Bear) }
+        }
+        res?.let { r ->
+            SectionCard("Optimal", Bull) {
+                KpiGrid(listOf(
+                    Triple("Exp. return", fmtNum(r.opt("expected_return_pct")) + "%", Bull),
+                    Triple("Volatility", fmtNum(r.opt("volatility_pct")) + "%", OnBg),
+                    Triple("Sharpe", fmtNum(r.opt("sharpe")), AccentHi),
+                ))
+            }
+            SectionCard("Efficient frontier", AccentHi) {
+                val frontier = buildList {
+                    arr(r, "frontier")?.let { for (i in 0 until it.length()) xyPct(it.optJSONObject(i))?.let(::add) }
+                }
+                val holdings = buildList {
+                    arr(r, "per_name")?.let { for (i in 0 until it.length()) xyPct(it.optJSONObject(i))?.let(::add) }
+                }
+                val current = xyPct(r.optJSONObject("current_portfolio"))
+                val optimal = xyPct(JSONObject()
+                    .put("vol_pct", r.opt("volatility_pct")).put("return_pct", r.opt("expected_return_pct")))
+                FrontierChart(frontier, holdings, current, optimal)
+            }
+            SectionCard("Target weights", AccentHi) { DataTable(arr(r, "weights")) }
+            SectionCard("Rebalance actions", Warn) { DataTable(arr(r, "rebalance")) }
+        }
+    }
+}
+
 @Composable private fun KbTab() {
     var stats by remember { mutableStateOf<JSONObject?>(null) }
+    var docs by remember { mutableStateOf<JSONObject?>(null) }
     var query by remember { mutableStateOf("") }
     var res by remember { mutableStateOf<JSONObject?>(null) }
     val scope = rememberCoroutineScope()
-    LaunchedEffect(Unit) { if (BackendBus.running) stats = Api.kbStats().objOrNull() }
+    fun reload() {
+        scope.launch {
+            stats = Api.kbStats().objOrNull()
+            docs = Api.get("/api/kb/documents").objOrNull()
+        }
+    }
+    LaunchedEffect(Unit) { if (BackendBus.running) reload() }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
         if (!BackendBus.running) { BackendOfflineHint(); return@Column }
         stats?.let {
-            SectionCard("Knowledge base", AccentHi) {
+            SectionCard("Knowledge base", AccentHi, trailing = {
+                TextButton(onClick = { reload() }) { Text("Refresh") }
+            }) {
                 KpiGrid(listOf(
-                    Triple("Stocks", fmtNum(it.opt("stocks")), OnBg),
+                    Triple("Universe stocks", fmtNum(it.opt("universe_stocks")), OnBg),
                     Triple("Documents", fmtNum(it.opt("documents")), OnBg),
+                    Triple("Doc chunks", fmtNum(it.opt("chunks")), OnBg),
+                    Triple("Decisions", fmtNum(it.opt("decisions")), OnBg),
                 ))
+                Spacer(Modifier.height(8.dp))
+                val active = (it.opt("universe_stocks") as? Number)?.toInt() ?: 0
+                StatusBanner(
+                    (if (active > 0) "● Storage active" else "○ Empty — run Universe Map to populate") +
+                    "\nMode: ${it.optString("search_mode", "—")}" +
+                    "\nDB: ${it.optString("path", "—")}",
+                    if (active > 0) Bull else Muted)
             }
+        }
+        arr(docs, "documents")?.takeIf { it.length() > 0 }?.let {
+            SectionCard("Stored documents", AccentHi) { DataTable(it, 40) }
         }
         SectionCard("Search", AccentHi) {
             OutlinedTextField(query, { query = it }, label = { Text("Query") },
@@ -455,6 +553,70 @@ fun TerminalScreen() {
                 enabled = BackendBus.state.value == BackendBus.State.RUNNING,
                 colors = ButtonDefaults.buttonColors(containerColor = Bear),
                 modifier = Modifier.weight(1f)) { Text("⏹ Stop") }
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AI CHAT — grounded in the user's loaded data (portfolio, DR-Quant, U-Map)
+// ─────────────────────────────────────────────────────────────────────────────
+@Composable
+fun ChatScreen() {
+    val msgs = remember { mutableStateListOf<Pair<Boolean, String>>() }   // isUser, text
+    var input by remember { mutableStateOf("") }
+    var busy by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    val listState = rememberLazyListState()
+    LaunchedEffect(msgs.size) { if (msgs.isNotEmpty()) listState.animateScrollToItem(msgs.size - 1) }
+
+    fun send() {
+        val q = input.trim()
+        if (q.isEmpty()) return
+        msgs.add(true to q); input = ""; busy = true
+        scope.launch {
+            val reply = when (val r = Api.chat(q)) {
+                is Api.Resp.Ok ->
+                    if (r.body.optBoolean("ok", false)) r.body.optString("reply")
+                    else "⚠ ${r.body.optString("error", "no answer")}"
+                is Api.Resp.Err -> "⚠ Backend: ${r.message}"
+            }
+            msgs.add(false to reply); busy = false
+        }
+    }
+
+    Column(Modifier.fillMaxSize().padding(12.dp)) {
+        Text("AI Assistant", color = OnBg, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+        Spacer(Modifier.height(4.dp))
+        Text("Knows your portfolio, latest DR-Quant run, and the Universe Map.",
+            color = Muted, fontSize = 11.sp)
+        Spacer(Modifier.height(8.dp))
+        if (!BackendBus.running) StatusBanner("Start the backend first (Terminal ▶).", Warn)
+        LazyColumn(state = listState, modifier = Modifier.weight(1f).fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            items(msgs.size) { i ->
+                val (isUser, text) = msgs[i]
+                Row(Modifier.fillMaxWidth(),
+                    horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start) {
+                    Box(
+                        Modifier.widthIn(max = 300.dp)
+                            .background(if (isUser) Accent else Panel2,
+                                androidx.compose.foundation.shape.RoundedCornerShape(12.dp))
+                            .padding(10.dp)
+                    ) { Text(text, color = OnBg, fontSize = 13.sp) }
+                }
+            }
+        }
+        if (busy) Row(Modifier.padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+            CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp, color = AccentHi)
+            Spacer(Modifier.width(8.dp)); Text("Thinking…", color = Muted, fontSize = 12.sp)
+        }
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            OutlinedTextField(input, { input = it }, modifier = Modifier.weight(1f),
+                placeholder = { Text("Ask about your data…") }, maxLines = 3)
+            Spacer(Modifier.width(8.dp))
+            Button(onClick = { send() }, enabled = !busy && input.isNotBlank() && BackendBus.running) {
+                Text("Send")
+            }
         }
     }
 }
