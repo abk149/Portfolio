@@ -159,17 +159,25 @@ class GrowwClient:
             # let a price-enrichment failure mark the whole portfolio as auth-failed.
             log.info(f"groww holdings LTP enrich skipped ({e}); using avg price as LTP")
 
-        # Previous close for day-change — quote carries ohlc/previous_close.
+        # Quote carries last_price + previous close (ohlc). Use it for day-change,
+        # and as a last_price fallback when the LTP endpoint returned nothing.
         # Best-effort + capped; if restricted, day-change just stays flat.
         close_map: dict = {}
         try:
-            for sym, data in self.quote(wanted[:40]).items():
+            for sym, data in self.quote(wanted[:50]).items():
                 if not isinstance(data, dict):
                     continue
                 ohlc = data.get("ohlc") if isinstance(data.get("ohlc"), dict) else {}
-                close = data.get("previous_close") or data.get("close") or ohlc.get("close")
+                close = (self._as_price(data.get("previous_close"))
+                         or self._as_price(data.get("close"))
+                         or self._as_price(ohlc.get("close")))
                 if close:
-                    close_map[sym] = float(close)
+                    close_map[sym] = close
+                # Fallback last_price from quote if LTP missed this symbol.
+                if sym not in price_map:
+                    lp = self._as_price(data.get("last_price")) or self._as_price(data.get("ltp"))
+                    if lp:
+                        price_map[sym] = {"last_price": lp}
         except Exception as e:
             log.info(f"groww holdings close enrich skipped ({e})")
 
@@ -231,11 +239,32 @@ class GrowwClient:
     def _exchange_symbol(self, symbol: str, exchange: str = "NSE") -> str:
         return f"{exchange}_{symbol.upper()}"
 
+    @staticmethod
+    def _as_price(v) -> Optional[float]:
+        """Coerce a value to a price, tolerating dict shapes like
+        {"ltp": 2334.2} / {"last_price": ...} / {"ltpInRupees": ...}."""
+        if isinstance(v, bool):
+            return None
+        if isinstance(v, (int, float)):
+            return float(v)
+        if isinstance(v, str):
+            try:
+                return float(v)
+            except ValueError:
+                return None
+        if isinstance(v, dict):
+            for k in ("ltp", "last_price", "lastPrice", "ltpInRupees", "price", "value"):
+                p = GrowwClient._as_price(v.get(k))
+                if p is not None:
+                    return p
+        return None
+
     def ltp(self, instruments: list[str]) -> dict:
         """instruments: bare symbols or yf tickers. Returns {sym: {last_price}}.
 
         Groww LTP: GET /v1/live-data/ltp?segment=CASH&exchange_symbols=NSE_X,NSE_Y
-        → payload {"NSE_X": 2334.2, ...}. Up to 50 symbols per call.
+        → payload {"NSE_X": 2334.2, ...} (or values nested as {"ltp": ...}, or
+        wrapped under a "ltp"/"prices" key). Parse all of those shapes.
         """
         syms = [_sym_from_key(i, i) for i in instruments if _sym_from_key(i, i)]
         out: dict = {}
@@ -243,11 +272,21 @@ class GrowwClient:
             chunk = syms[i:i + 50]
             ex = ",".join(self._exchange_symbol(s) for s in chunk)
             data = self._get(EP_LTP, params={"segment": "CASH", "exchange_symbols": ex})
-            if isinstance(data, dict):
-                for ex_sym, price in data.items():
-                    sym = str(ex_sym).split("_", 1)[-1]      # 'NSE_RELIANCE' → 'RELIANCE'
-                    if isinstance(price, (int, float)):
-                        out[sym] = {"last_price": float(price)}
+            if not isinstance(data, dict):
+                continue
+            # Descend one wrapper level if the symbol map is nested (e.g. {"ltp": {...}}).
+            candidate_maps = [data]
+            for wrap in ("ltp", "prices", "data", "payload"):
+                if isinstance(data.get(wrap), dict):
+                    candidate_maps.append(data[wrap])
+            for m in candidate_maps:
+                for ex_sym, raw in m.items():
+                    price = self._as_price(raw)
+                    if price is None:
+                        continue
+                    sym = str(ex_sym).split("_", 1)[-1]   # 'NSE_RELIANCE' → 'RELIANCE'
+                    out[sym] = {"last_price": price}
+        log.info(f"groww ltp resolved {len(out)}/{len(syms)} prices")
         return out
 
     def quote(self, instruments: list[str]) -> dict:
