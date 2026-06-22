@@ -96,10 +96,17 @@ def _post_token(api_key: str, body: dict) -> str:
     if r.status_code != 200:
         raise RuntimeError(f"Groww token endpoint HTTP {r.status_code}: {r.text[:300]}")
     j = r.json() if r.text else {}
-    tok = j.get("token") or j.get("access_token") or (j.get("data") or {}).get("token")
+    # Groww wraps most responses as {"status":"SUCCESS","payload":{...}}. The
+    # token may be top-level or nested under payload/data.
+    payload = j.get("payload") if isinstance(j.get("payload"), dict) else {}
+    data = j.get("data") if isinstance(j.get("data"), dict) else {}
+    tok = (j.get("token") or j.get("access_token")
+           or payload.get("token") or payload.get("access_token")
+           or data.get("token") or data.get("access_token"))
     if not tok:
         raise RuntimeError(f"Groww token endpoint returned no token: {str(j)[:300]}")
-    _save(tok, meta=j if isinstance(j, dict) else None)
+    meta = payload or data or (j if isinstance(j, dict) else None)
+    _save(tok, meta=meta)
     return tok
 
 
