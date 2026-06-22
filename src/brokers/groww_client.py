@@ -79,7 +79,10 @@ class GrowwClient:
             log.debug(f"groww GET {path} error: {e}")
             return None
         if r.status_code in (401, 403):
-            raise BrokerAuthError(f"Groww token expired/invalid ({r.status_code}).")
+            # Name the endpoint so we can tell holdings vs live-data vs margins
+            # apart (live-data is often restricted per-account while holdings work).
+            raise BrokerAuthError(
+                f"Groww {path} → {r.status_code} (token/permission/IP). {r.text[:160]}")
         if r.status_code != 200:
             log.debug(f"groww {path} → {r.status_code}: {r.text[:200]}")
             return None
@@ -94,14 +97,20 @@ class GrowwClient:
 
     # ---------------- account ----------------
     def profile(self) -> dict:
-        # Groww has no dedicated profile endpoint; a successful margins call
-        # proves the token works. Return a minimal profile so broker_status()
-        # and the dashboard show "authenticated".
-        m = self._get(EP_MARGINS)
-        if m is None:
-            # Force the auth contract: if even margins fails non-auth, surface it
-            raise BrokerAuthError("Groww: could not verify token (margins call failed).")
-        return {"user_name": "Groww account", "broker": "groww", "raw_margins": m}
+        # Groww has no profile endpoint. Verify the token with a real call —
+        # try margins, then fall back to holdings (one of them being restricted
+        # per-account shouldn't read as "not authenticated").
+        last_err: Optional[Exception] = None
+        for probe in (EP_MARGINS, EP_HOLDINGS):
+            try:
+                res = self._get(probe)
+                if res is not None:
+                    return {"user_name": "Groww account", "broker": "groww"}
+            except BrokerAuthError as e:
+                last_err = e          # try the next probe before giving up
+        if last_err:
+            raise last_err
+        raise BrokerAuthError("Groww: could not verify token (no probe endpoint responded).")
 
     def funds(self) -> dict:
         return self._get(EP_MARGINS) or {}
@@ -120,10 +129,10 @@ class GrowwClient:
         price_map: dict = {}
         try:
             price_map = self.ltp([s for s in symbols if s])
-        except BrokerAuthError:
-            raise
         except Exception as e:
-            log.debug(f"groww holdings LTP enrich failed: {e}")
+            # Live-data is frequently restricted even when holdings work — never
+            # let a price-enrichment failure mark the whole portfolio as auth-failed.
+            log.info(f"groww holdings LTP enrich skipped ({e}); using avg price as LTP")
 
         out = []
         for h in rows:
