@@ -16,6 +16,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.portfolio.app.net.Api
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -159,6 +160,23 @@ fun LoginDialog(onDismiss: () -> Unit) {
     var msg by remember { mutableStateOf<String?>(null) }
     var loginUrl by remember { mutableStateOf<String?>(null) }
     var redirectPaste by remember { mutableStateOf("") }
+    var polling by remember { mutableStateOf(false) }
+
+    // After the browser is opened, auto-detect the completed login (the
+    // /callback exchange happens out-of-app) by polling the backend.
+    LaunchedEffect(polling) {
+        if (!polling) return@LaunchedEffect
+        repeat(40) {            // ~2 min @ 3s
+            delay(3000)
+            val r = Api.brokerTest().objOrNull()
+            if (r?.optBoolean("ok", false) == true) {
+                msg = "✅ ${r.optString("message", "Logged in")}"
+                polling = false
+                return@LaunchedEffect
+            }
+        }
+        polling = false
+    }
     // Editable here so the client_id can never be empty when we build the link.
     var ak by remember { mutableStateOf(prefs.get("upstox_api_key")) }
     var sk by remember { mutableStateOf(prefs.get("upstox_secret")) }
@@ -224,12 +242,22 @@ fun LoginDialog(onDismiss: () -> Unit) {
                         Text(u, color = Muted, fontSize = 10.sp)
                         Spacer(Modifier.height(6.dp))
                         Button(onClick = {
+                            polling = true
                             runCatching { ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(u))) }
                         }, modifier = Modifier.fillMaxWidth()) { Text("2 · Open Upstox login in browser") }
                         Spacer(Modifier.height(4.dp))
-                        Text("Log in; the browser auto-completes (shows ✅) since the redirect " +
-                            "lands back on this device. Then tap below.",
-                            color = Muted, fontSize = 11.sp)
+                        if (polling) {
+                            Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                                CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp, color = AccentHi)
+                                Spacer(Modifier.width(8.dp))
+                                Text("Waiting for login to complete in the browser…",
+                                    color = Muted, fontSize = 11.sp)
+                            }
+                        } else {
+                            Text("Log in in the browser (it shows ✅). The app detects it " +
+                                "automatically — no need to come back and paste.",
+                                color = Muted, fontSize = 11.sp)
+                        }
                         Spacer(Modifier.height(6.dp))
                         Button(
                             onClick = {
