@@ -103,5 +103,26 @@ def start_dashboard(app_files_dir: str, receiver: Any) -> None:
         }
     }
 
+    # Bind dual-stack so the OAuth redirect to http://localhost:8000/callback
+    # reaches us no matter how Android resolves "localhost" (IPv6 ::1 vs IPv4
+    # 127.0.0.1). On Linux/Android an IPv6 wildcard socket ("::") with
+    # bindv6only=0 also accepts IPv4-mapped connections (so 127.0.0.1 — used by
+    # the app's own HTTP client — still works). Fall back to 127.0.0.1 if the
+    # IPv6 socket can't be created.
+    host = "::"
+    try:
+        import socket
+        s = socket.socket(socket.AF_INET6, socket.SOCK_STREAM)
+        try:
+            s.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)
+        except OSError:
+            pass
+        s.bind((host, 8000))
+        s.close()
+        print("[Android Runner] Binding dual-stack on [::]:8000 (covers localhost + 127.0.0.1)")
+    except OSError as e:
+        print(f"[Android Runner] IPv6 bind unavailable ({e}); falling back to 127.0.0.1")
+        host = "127.0.0.1"
+
     # Run uvicorn server with custom log_config
-    uvicorn.run(app, host="127.0.0.1", port=8000, reload=False, log_config=log_config)
+    uvicorn.run(app, host=host, port=8000, reload=False, log_config=log_config)
