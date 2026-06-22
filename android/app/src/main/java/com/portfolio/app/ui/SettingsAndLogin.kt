@@ -30,7 +30,7 @@ fun SettingsScreen(openLogin: () -> Unit) {
     var broker by remember { mutableStateOf(prefs.get("broker", "upstox")) }
     var apiKey by remember { mutableStateOf(prefs.get("upstox_api_key")) }
     var secret by remember { mutableStateOf(prefs.get("upstox_secret")) }
-    var redirect by remember { mutableStateOf(prefs.get("redirect_uri", "http://127.0.0.1:8765/callback")) }
+    var redirect by remember { mutableStateOf(prefs.get("redirect_uri", "http://localhost:8000/callback")) }
     var baseUrl by remember { mutableStateOf(prefs.get("upstox_base_url", "https://api.upstox.com/v2")) }
     var growwTok by remember { mutableStateOf(prefs.get("groww_access_token")) }
     var growwKey by remember { mutableStateOf(prefs.get("groww_api_key")) }
@@ -162,7 +162,7 @@ fun LoginDialog(onDismiss: () -> Unit) {
     // Editable here so the client_id can never be empty when we build the link.
     var ak by remember { mutableStateOf(prefs.get("upstox_api_key")) }
     var sk by remember { mutableStateOf(prefs.get("upstox_secret")) }
-    var ru by remember { mutableStateOf(prefs.get("redirect_uri", "http://127.0.0.1:8765/callback")) }
+    var ru by remember { mutableStateOf(prefs.get("redirect_uri", "http://localhost:8000/callback")) }
     var token by remember {
         mutableStateOf(prefs.get(if (broker == "groww") "groww_access_token" else "upstox_bearer_token"))
     }

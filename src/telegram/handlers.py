@@ -51,7 +51,7 @@ def cmd_upstox_login(bot, chat_id, args):
         f"1. Open this link on any device:\n{url}\n\n"
         "2. Log in to Upstox.\n"
         "3. The browser will be redirected to a URL like\n"
-        "   `http://localhost:8765/callback?code=XXXXXX` (page may fail to load — that's fine).\n"
+        "   `http://localhost:8000/callback?code=XXXXXX` (page may fail to load — that's fine).\n"
         "4. *Copy that entire URL* from the address bar and paste it back here.\n"
         "   (Or just paste the value after `code=`.)\n\n"
         "I'll exchange it for your access token and save it.",
