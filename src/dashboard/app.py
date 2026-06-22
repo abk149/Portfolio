@@ -66,7 +66,12 @@ def _run_job(job_id: str, fn, *args, **kwargs):
 
 def _df(o):
     if isinstance(o, pd.DataFrame):
-        return o.where(pd.notnull(o), None).to_dict("records")
+        import numpy as np
+        # Replace ±Inf → NaN → None so Starlette's strict JSON encoder (which
+        # rejects NaN/Infinity) doesn't 500. pd.notnull keeps Inf, so the
+        # explicit Inf→NaN step is required.
+        clean = o.replace([np.inf, -np.inf], np.nan)
+        return clean.where(pd.notnull(clean), None).to_dict("records")
     return o
 
 
@@ -96,12 +101,12 @@ def api_portfolio():
              "hint": "Run /upstox_login on Telegram, or:  python -m src.upstox.auth"},
             status_code=200,
         )
-    return {
+    return _scrub_for_json({
         "summary": snap.summary,
         "holdings": _df(snap.holdings),
         "positions": _df(snap.positions),
         "allocation": _df(snap.allocation),
-    }
+    })
 
 
 @app.get("/api/portfolio/risk")

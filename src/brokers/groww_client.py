@@ -34,7 +34,7 @@ EP_POSITIONS  = "/v1/positions/user"
 EP_MARGINS    = "/v1/margins/detail/user"
 EP_LTP        = "/v1/live-data/ltp"
 EP_QUOTE      = "/v1/live-data/quote"
-EP_HISTORICAL = "/v1/historical/candle"
+EP_HISTORICAL = "/v1/historical/candle/range"
 EP_ORDER      = "/v1/order/create"
 
 # Groww interval (minutes) for our generic interval names
@@ -110,13 +110,29 @@ class GrowwClient:
     def holdings(self) -> list[dict]:
         raw = self._get(EP_HOLDINGS) or {}
         rows = raw.get("holdings", raw) if isinstance(raw, dict) else raw
+        rows = rows or []
+
+        # Groww's holdings payload carries NO price — only isin/symbol/qty/avg.
+        # Enrich with live LTP so current_value/pnl/weights are real (and don't
+        # divide-by-zero into NaN downstream). One batched LTP call.
+        symbols = [(h.get("trading_symbol") or h.get("tradingsymbol")
+                    or h.get("symbol") or "") for h in rows]
+        price_map: dict = {}
+        try:
+            price_map = self.ltp([s for s in symbols if s])
+        except BrokerAuthError:
+            raise
+        except Exception as e:
+            log.debug(f"groww holdings LTP enrich failed: {e}")
+
         out = []
-        for h in (rows or []):
+        for h in rows:
             qty = float(h.get("quantity") or h.get("qty") or 0)
             avg = float(h.get("average_price") or h.get("avg_price") or 0)
-            ltp = float(h.get("ltp") or h.get("last_price") or h.get("current_price") or 0)
             sym = (h.get("trading_symbol") or h.get("tradingsymbol")
                    or h.get("symbol") or "")
+            ltp = float(h.get("ltp") or h.get("last_price") or h.get("current_price")
+                        or price_map.get(sym, {}).get("last_price") or avg)
             out.append({
                 "tradingsymbol": sym,
                 "quantity": qty,
@@ -165,29 +181,32 @@ class GrowwClient:
         return f"{exchange}_{symbol.upper()}"
 
     def ltp(self, instruments: list[str]) -> dict:
-        """instruments: bare symbols or yf tickers. Returns {sym: {last_price}}."""
-        out = {}
-        for ins in instruments:
-            sym = _sym_from_key(ins, ins)
-            data = self._get(EP_LTP, params={
-                "segment": "CASH",
-                "exchange_symbols": self._exchange_symbol(sym)}) or {}
-            # data may be {exchange_symbol: price} or {ltp: price}
-            price = None
+        """instruments: bare symbols or yf tickers. Returns {sym: {last_price}}.
+
+        Groww LTP: GET /v1/live-data/ltp?segment=CASH&exchange_symbols=NSE_X,NSE_Y
+        → payload {"NSE_X": 2334.2, ...}. Up to 50 symbols per call.
+        """
+        syms = [_sym_from_key(i, i) for i in instruments if _sym_from_key(i, i)]
+        out: dict = {}
+        for i in range(0, len(syms), 50):
+            chunk = syms[i:i + 50]
+            ex = ",".join(self._exchange_symbol(s) for s in chunk)
+            data = self._get(EP_LTP, params={"segment": "CASH", "exchange_symbols": ex})
             if isinstance(data, dict):
-                price = data.get("ltp") or next(
-                    (v for v in data.values() if isinstance(v, (int, float))), None)
-            if price is not None:
-                out[sym] = {"last_price": float(price)}
+                for ex_sym, price in data.items():
+                    sym = str(ex_sym).split("_", 1)[-1]      # 'NSE_RELIANCE' → 'RELIANCE'
+                    if isinstance(price, (int, float)):
+                        out[sym] = {"last_price": float(price)}
         return out
 
     def quote(self, instruments: list[str]) -> dict:
+        """Groww quote: GET /v1/live-data/quote?exchange=NSE&segment=CASH&trading_symbol=X
+        → payload {last_price, ohlc{...}, volume, ...}."""
         out = {}
         for ins in instruments:
             sym = _sym_from_key(ins, ins)
             data = self._get(EP_QUOTE, params={
-                "segment": "CASH",
-                "exchange_symbol": self._exchange_symbol(sym)})
+                "exchange": "NSE", "segment": "CASH", "trading_symbol": sym})
             if data:
                 out[sym] = data
         return out
@@ -202,11 +221,12 @@ class GrowwClient:
             return pd.DataFrame()
         to_date = to_date or date.today()
         from_date = from_date or (to_date - timedelta(days=365))
+        # Groww wants 'yyyy-MM-dd HH:mm:ss' (space, not ISO 'T') or epoch seconds.
         data = self._get(EP_HISTORICAL, params={
             "trading_symbol": sym, "exchange": "NSE", "segment": "CASH",
             "interval_in_minutes": _INTERVAL_MIN.get(interval, 1440),
-            "start_time": from_date.isoformat(),
-            "end_time": to_date.isoformat(),
+            "start_time": f"{from_date.isoformat()} 00:00:00",
+            "end_time": f"{to_date.isoformat()} 23:59:59",
         })
         candles = (data or {}).get("candles", []) if isinstance(data, dict) else (data or [])
         if not candles:
