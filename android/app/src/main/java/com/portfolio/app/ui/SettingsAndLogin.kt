@@ -202,10 +202,17 @@ fun LoginDialog(onDismiss: () -> Unit) {
                                 // Persist + push live so the backend builds the link with these creds.
                                 prefs.put("upstox_api_key" to ak.trim(), "upstox_secret" to sk.trim(),
                                     "redirect_uri" to ru.trim())
-                                Api.upstoxConfig(ak.trim(), sk.trim(), ru.trim())
-                                val r = Api.upstoxAuthUrl().objOrNull()
-                                if (r != null && r.optBoolean("ok", false)) loginUrl = r.optString("url")
-                                else msg = "❌ Could not build login URL: ${r?.optString("error")}"
+                                val cfg = Api.upstoxConfig(ak.trim(), sk.trim(), ru.trim())
+                                if (cfg is Api.Resp.Err) {
+                                    msg = "❌ Backend unreachable: ${cfg.message}. Is it running (Terminal ▶)?"
+                                    busy = false; return@launch
+                                }
+                                when (val resp = Api.upstoxAuthUrl()) {
+                                    is Api.Resp.Ok ->
+                                        if (resp.body.optBoolean("ok", false)) loginUrl = resp.body.optString("url")
+                                        else msg = "❌ ${resp.body.optString("error", "could not build login URL")}"
+                                    is Api.Resp.Err -> msg = "❌ Backend error: ${resp.message}"
+                                }
                                 busy = false
                             }
                         },

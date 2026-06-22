@@ -559,12 +559,24 @@ def api_upstox_auth_url():
 
     print(f"[API] Auth Request. Key={repr(key)} URI={repr(uri)}")
 
-    if not (key and settings.upstox_api_secret):
+    secret = settings.upstox_api_secret
+    if not key or not secret:
+        missing = []
+        if not key:
+            missing.append("Client ID")
+        if not secret:
+            missing.append("Client Secret")
         return JSONResponse(
-            {"ok": False, "error": f"Credentials missing. Key={bool(key)} Secret={bool(settings.upstox_api_secret)}"},
+            {"ok": False,
+             "error": f"{' and '.join(missing)} not set on the backend. "
+                      f"Fill it in the login dialog and tap Get login link again."},
             status_code=200,
         )
-    return {"ok": True, "url": build_auth_url(), "redirect_uri": uri}
+    try:
+        url = build_auth_url()
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": f"{type(e).__name__}: {e}"}, status_code=200)
+    return {"ok": True, "url": url, "redirect_uri": uri}
 
 
 class _UpstoxCodeBody(BaseModel):
