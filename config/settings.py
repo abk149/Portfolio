@@ -54,6 +54,12 @@ class Settings:
     def groww_api_secret(self) -> str: return self._get("GROWW_API_SECRET")
 
     @property
+    def groww_totp_secret(self) -> str:
+        # Base32 TOTP seed from Groww's "Generate TOTP token" — distinct from the
+        # API secret. Used with pyotp to mint a daily access token.
+        return self._get("GROWW_TOTP_SECRET")
+
+    @property
     def groww_access_token(self) -> str: return self._get("GROWW_ACCESS_TOKEN")
 
     @property

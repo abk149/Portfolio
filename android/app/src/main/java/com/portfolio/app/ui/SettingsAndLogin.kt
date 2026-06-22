@@ -36,6 +36,7 @@ fun SettingsScreen(openLogin: () -> Unit) {
     var growwTok by remember { mutableStateOf(prefs.get("groww_access_token")) }
     var growwKey by remember { mutableStateOf(prefs.get("groww_api_key")) }
     var growwSec by remember { mutableStateOf(prefs.get("groww_api_secret")) }
+    var growwTotp by remember { mutableStateOf(prefs.get("groww_totp_secret")) }
     var teleTok by remember { mutableStateOf(prefs.get("tele_token")) }
     var teleChat by remember { mutableStateOf(prefs.get("tele_chat_id")) }
     var llmProvider by remember { mutableStateOf(prefs.get("llm_provider", "nvidia")) }
@@ -45,7 +46,8 @@ fun SettingsScreen(openLogin: () -> Unit) {
         prefs.put(
             "broker" to broker, "upstox_api_key" to apiKey, "upstox_secret" to secret,
             "redirect_uri" to redirect, "upstox_base_url" to baseUrl,
-            "groww_access_token" to growwTok, "groww_api_key" to growwKey, "groww_api_secret" to growwSec,
+            "groww_access_token" to growwTok, "groww_api_key" to growwKey,
+            "groww_api_secret" to growwSec, "groww_totp_secret" to growwTotp,
             "tele_token" to teleTok, "tele_chat_id" to teleChat,
             "llm_provider" to llmProvider, "llm_api_key" to llmKey,
         )
@@ -83,9 +85,13 @@ fun SettingsScreen(openLogin: () -> Unit) {
             }
         } else {
             SectionCard("Groww credentials", AccentHi) {
-                Field("Access token (daily)", growwTok) { growwTok = it }
-                Field("API key (optional, TOTP)", growwKey) { growwKey = it }
-                Field("API secret (optional, TOTP)", growwSec, password = true) { growwSec = it }
+                Field("API key", growwKey) { growwKey = it }
+                Field("TOTP secret (base32 seed)", growwTotp, password = true) { growwTotp = it }
+                Field("API secret (alt: checksum flow)", growwSec, password = true) { growwSec = it }
+                Field("Access token (optional, direct)", growwTok) { growwTok = it }
+                Text("TOTP login: API key + TOTP secret (from Groww's 'Generate TOTP " +
+                    "token'). The app mints a fresh daily token automatically.",
+                    color = Muted, fontSize = 11.sp, modifier = Modifier.padding(top = 6.dp))
             }
         }
 
@@ -184,6 +190,10 @@ fun LoginDialog(onDismiss: () -> Unit) {
     var token by remember {
         mutableStateOf(prefs.get(if (broker == "groww") "groww_access_token" else "upstox_bearer_token"))
     }
+    // Groww TOTP login fields
+    var gak by remember { mutableStateOf(prefs.get("groww_api_key")) }
+    var gtotp by remember { mutableStateOf(prefs.get("groww_totp_secret")) }
+    var gsec by remember { mutableStateOf(prefs.get("groww_api_secret")) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -304,7 +314,49 @@ fun LoginDialog(onDismiss: () -> Unit) {
                     Spacer(Modifier.height(14.dp))
                 }
 
-                Text(if (broker == "groww") "Access token" else "B · Direct access token",
+                if (broker == "groww") {
+                    Text("A · TOTP login (recommended)", color = AccentHi, fontSize = 12.sp,
+                        fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold)
+                    Spacer(Modifier.height(6.dp))
+                    OutlinedTextField(gak, { gak = it }, label = { Text("API key") },
+                        singleLine = true, modifier = Modifier.fillMaxWidth())
+                    Spacer(Modifier.height(6.dp))
+                    OutlinedTextField(gtotp, { gtotp = it }, label = { Text("TOTP secret (base32 seed)") },
+                        singleLine = true, modifier = Modifier.fillMaxWidth())
+                    Spacer(Modifier.height(6.dp))
+                    OutlinedTextField(gsec, { gsec = it }, label = { Text("API secret (optional alt)") },
+                        singleLine = true, modifier = Modifier.fillMaxWidth())
+                    Spacer(Modifier.height(8.dp))
+                    Button(
+                        onClick = {
+                            scope.launch {
+                                busy = true; msg = null
+                                if (gak.isBlank() || (gtotp.isBlank() && gsec.isBlank())) {
+                                    msg = "❌ Enter API key + TOTP secret (or API secret)."
+                                    busy = false; return@launch
+                                }
+                                prefs.put("groww_api_key" to gak.trim(),
+                                    "groww_totp_secret" to gtotp.trim(),
+                                    "groww_api_secret" to gsec.trim(), "broker" to "groww")
+                                when (val r = Api.growwLogin(gak.trim(), gtotp.trim(), gsec.trim())) {
+                                    is Api.Resp.Ok ->
+                                        msg = if (r.body.optBoolean("ok", false))
+                                            "✅ ${r.body.optString("message", "Logged in to Groww")}"
+                                        else "❌ ${r.body.optString("message", "login failed")}"
+                                    is Api.Resp.Err -> msg = "❌ Backend error: ${r.message}"
+                                }
+                                busy = false
+                            }
+                        },
+                        enabled = !busy && BackendBus.running, modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.buttonColors(containerColor = Bull),
+                    ) { Text(if (busy) "Logging in…" else "Mint daily token & log in") }
+                    Spacer(Modifier.height(14.dp))
+                    Divider(color = BorderCol)
+                    Spacer(Modifier.height(14.dp))
+                }
+
+                Text("B · Direct access token (fallback)",
                     color = AccentHi, fontSize = 12.sp,
                     fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold)
                 Spacer(Modifier.height(6.dp))

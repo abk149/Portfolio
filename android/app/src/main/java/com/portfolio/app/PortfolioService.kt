@@ -133,6 +133,8 @@ class PortfolioService : LifecycleService() {
         if (growwKey.isNotBlank()) config["GROWW_API_KEY"] = growwKey
         val growwSecret = prefs.getString("groww_api_secret", "") ?: ""
         if (growwSecret.isNotBlank()) config["GROWW_API_SECRET"] = growwSecret
+        val growwTotp = prefs.getString("groww_totp_secret", "") ?: ""
+        if (growwTotp.isNotBlank()) config["GROWW_TOTP_SECRET"] = growwTotp
 
         appendLog("[Service] Injecting ${config.size} environment variables into Python...")
         val pythonSuccess = pythonManager.start(config)

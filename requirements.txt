@@ -36,3 +36,5 @@ python-telegram-bot>=20.7
 # Optional native deps (install separately if you want them):
 #   brew install ta-lib   then:  pip install TA-Lib
 # (we ship a pure-pandas fallback if TA-Lib is absent)
+
+pyotp

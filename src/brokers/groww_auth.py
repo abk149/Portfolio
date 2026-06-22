@@ -1,22 +1,32 @@
-"""Groww authentication.
+"""Groww authentication — robust, mirroring the Upstox auth contract.
 
-Groww's Trading API does not use an OAuth redirect like Upstox. There are two
-supported ways to get an access token (https://groww.in/trade-api/docs):
+Groww has no OAuth redirect. A daily access token is obtained one of three ways
+(https://groww.in/trade-api/docs/curl):
 
-  1. Direct daily access token — generated in the Groww web console and pasted
-     in (simplest; like Upstox's "direct bearer token"). Set GROWW_ACCESS_TOKEN
-     or paste it in the app.
-  2. API key + secret + TOTP — the SDK generates a daily token from an API key
-     and a TOTP seed. We support this when `pyotp` is available.
+  1. Direct daily access token — generated in the Groww console and pasted in
+     (like Upstox's "direct bearer token").
+  2. API key + TOTP — pyotp turns a base32 TOTP seed into a 6-digit code which
+     is exchanged for a daily token.  ← the method this app uses.
+  3. API key + secret (checksum) — SHA256(secret + epoch_ts) exchanged for a
+     daily token.
 
-Token resolution order (mirrors Upstox's load_token):
-  env GROWW_ACCESS_TOKEN  →  cached token file  →  API-key/secret/TOTP
+Token endpoint (verified against current docs):
+    POST https://api.groww.in/v1/token/api/access
+    headers: Authorization: Bearer <API_KEY>, X-API-VERSION: 1.0
+    body (TOTP):     {"key_type":"totp","totp":"<6-digit>"}
+    body (checksum): {"key_type":"approval","checksum":"<sha256>","timestamp":"<epoch>"}
+    response: {"token": "...", "expiry": ..., "isActive": true, ...}
+
+Resolution order (mirrors Upstox load_token):
+    env GROWW_ACCESS_TOKEN  →  cached token file (same-day)  →  TOTP  →  checksum
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
-from datetime import datetime, timezone
+import time
+from datetime import date, datetime, timezone
 from typing import Optional
 
 import requests
@@ -26,75 +36,135 @@ from src.utils.logger import get_logger
 
 log = get_logger("brokers.groww_auth")
 
-# ── Groww Trading API endpoints (verify against current docs; isolated here) ──
 GROWW_BASE = "https://api.groww.in"
-TOKEN_ENDPOINT = f"{GROWW_BASE}/v1/token/api/access"   # api-key + checksum → token
+TOKEN_ENDPOINT = f"{GROWW_BASE}/v1/token/api/access"
 
 
-def _save(token: str) -> None:
-    settings.groww_token_file.parent.mkdir(parents=True, exist_ok=True)
-    settings.groww_token_file.write_text(json.dumps(
-        {"access_token": token, "fetched_at": datetime.now(timezone.utc).isoformat()},
-        indent=2))
-    log.info(f"Saved Groww token → {settings.groww_token_file}")
+# ── persistence ───────────────────────────────────────────────────────────────
+def _save(token: str, meta: Optional[dict] = None) -> None:
+    path = settings.groww_token_file
+    path.parent.mkdir(parents=True, exist_ok=True)
+    doc = {"access_token": token,
+           "fetched_at": datetime.now(timezone.utc).isoformat(),
+           "fetched_date": date.today().isoformat()}
+    if meta:
+        for k in ("expiry", "tokenRefId", "sessionName"):
+            if k in meta:
+                doc[k] = meta[k]
+    path.write_text(json.dumps(doc, indent=2))
+    log.info(f"Saved Groww token → {path}")
 
 
 def save_token(token: str) -> str:
-    token = (token or "").strip()
+    """Persist a directly-pasted daily token."""
+    token = (token or "").strip().strip('"').strip("'").strip()
     if token.lower().startswith("bearer "):
         token = token[7:].strip()
     _save(token)
     return token
 
 
-def _from_api_key_totp() -> Optional[str]:
-    """Generate a daily token from API key + secret (TOTP). Best-effort —
-    requires `pyotp`. Returns None if not configured/available."""
-    key, secret = settings.groww_api_key, settings.groww_api_secret
-    if not (key and secret):
-        return None
+def _cached_token() -> Optional[str]:
     try:
-        import pyotp  # optional dep
-    except ImportError:
-        log.info("groww: pyotp not installed — skipping API-key/TOTP token path")
-        return None
-    try:
-        totp = pyotp.TOTP(secret).now()
-        r = requests.post(
-            TOKEN_ENDPOINT,
-            json={"key_type": "totp", "totp": totp},
-            headers={"Authorization": f"Bearer {key}",
-                     "Accept": "application/json",
-                     "X-API-VERSION": "1.0"},
-            timeout=20,
-        )
-        if r.status_code == 200:
-            tok = (r.json().get("token") or r.json().get("access_token")
-                   or (r.json().get("data") or {}).get("token"))
-            if tok:
-                _save(tok)
-                return tok
-        log.warning(f"groww token endpoint → {r.status_code}: {r.text[:200]}")
+        if not settings.groww_token_file.exists():
+            return None
+        data = json.loads(settings.groww_token_file.read_text())
+        tok = data.get("access_token")
+        if not tok:
+            return None
+        # Groww tokens are daily — only reuse if minted today.
+        if data.get("fetched_date") != date.today().isoformat():
+            return None
+        return tok
     except Exception as e:
-        log.warning(f"groww TOTP token generation failed: {e}")
-    return None
+        log.debug(f"groww token file read failed: {e}")
+        return None
 
 
+# ── token minting ───────────────────────────────────────────────────────────
+def _post_token(api_key: str, body: dict) -> str:
+    """POST to the token endpoint; return the token or raise with the real
+    Groww error message (so the UI can show exactly what's wrong)."""
+    r = requests.post(
+        TOKEN_ENDPOINT, json=body,
+        headers={"Authorization": f"Bearer {api_key}",
+                 "Content-Type": "application/json",
+                 "Accept": "application/json",
+                 "X-API-VERSION": "1.0"},
+        timeout=20,
+    )
+    if r.status_code != 200:
+        raise RuntimeError(f"Groww token endpoint HTTP {r.status_code}: {r.text[:300]}")
+    j = r.json() if r.text else {}
+    tok = j.get("token") or j.get("access_token") or (j.get("data") or {}).get("token")
+    if not tok:
+        raise RuntimeError(f"Groww token endpoint returned no token: {str(j)[:300]}")
+    _save(tok, meta=j if isinstance(j, dict) else None)
+    return tok
+
+
+def mint_via_totp(api_key: str, totp_secret: str) -> str:
+    """API key + base32 TOTP seed → daily access token."""
+    import pyotp  # optional dep (added to Chaquopy pip)
+    api_key = (api_key or "").strip().strip('"').strip("'").strip()
+    totp_secret = (totp_secret or "").strip().replace(" ", "")
+    if not api_key or not totp_secret:
+        raise RuntimeError("Groww API key and TOTP secret are both required.")
+    code = pyotp.TOTP(totp_secret).now()
+    log.info("groww: minting token via TOTP")
+    return _post_token(api_key, {"key_type": "totp", "totp": code})
+
+
+def mint_via_secret(api_key: str, api_secret: str) -> str:
+    """API key + API secret → daily access token (checksum flow)."""
+    api_key = (api_key or "").strip().strip('"').strip("'").strip()
+    api_secret = (api_secret or "").strip().strip('"').strip("'").strip()
+    if not api_key or not api_secret:
+        raise RuntimeError("Groww API key and secret are both required.")
+    ts = str(int(time.time()))
+    checksum = hashlib.sha256(f"{api_secret}{ts}".encode()).hexdigest()
+    log.info("groww: minting token via checksum/secret")
+    return _post_token(api_key, {"key_type": "approval", "checksum": checksum, "timestamp": ts})
+
+
+def login(api_key: Optional[str] = None, totp_secret: Optional[str] = None,
+          secret: Optional[str] = None) -> str:
+    """Explicit login used by the app/login endpoint. Tries TOTP first, then
+    checksum. Raises RuntimeError with the real error if both fail."""
+    api_key = api_key or settings.groww_api_key
+    totp_secret = totp_secret or settings.groww_totp_secret
+    secret = secret or settings.groww_api_secret
+    errors = []
+    if api_key and totp_secret:
+        try:
+            return mint_via_totp(api_key, totp_secret)
+        except Exception as e:
+            errors.append(f"TOTP: {e}")
+    if api_key and secret:
+        try:
+            return mint_via_secret(api_key, secret)
+        except Exception as e:
+            errors.append(f"checksum: {e}")
+    raise RuntimeError("Groww login failed. " + (" | ".join(errors) if errors
+                       else "Provide API key + TOTP secret (or API secret)."))
+
+
+# ── resolution order used by GrowwClient ──────────────────────────────────────
 def load_token() -> Optional[str]:
-    # 1. Direct token from env (injected by the Android layer or .env)
+    # 1. Direct token from env (.env or Android-injected)
     env_tok = os.getenv("GROWW_ACCESS_TOKEN")
     if env_tok and env_tok.strip():
         tok = env_tok.strip()
         return tok[7:].strip() if tok.lower().startswith("bearer ") else tok
 
-    # 2. Cached token file
-    try:
-        if settings.groww_token_file.exists():
-            data = json.loads(settings.groww_token_file.read_text())
-            if data.get("access_token"):
-                return data["access_token"]
-    except Exception as e:
-        log.debug(f"groww token file read failed: {e}")
+    # 2. Cached token (only if minted today)
+    cached = _cached_token()
+    if cached:
+        return cached
 
-    # 3. API key + secret + TOTP
-    return _from_api_key_totp()
+    # 3. Mint a fresh one from TOTP / secret if creds are configured
+    try:
+        return login()
+    except Exception as e:
+        log.info(f"groww: no token and auto-mint failed — {e}")
+        return None

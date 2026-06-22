@@ -127,4 +127,7 @@ object Api {
     suspend fun upstoxTestToken() = post("/api/upstox/test-token")
     suspend fun growwSaveToken(token: String) =
         post("/api/groww/save-token", JSONObject().put("token", token))
+    suspend fun growwLogin(apiKey: String, totpSecret: String, secret: String) =
+        post("/api/groww/login", JSONObject()
+            .put("api_key", apiKey).put("totp_secret", totpSecret).put("secret", secret))
 }

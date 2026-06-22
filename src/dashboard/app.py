@@ -729,6 +729,51 @@ def api_broker_test():
     return {"ok": False, "message": s.get("error") or "authentication failed"}
 
 
+@app.post("/api/groww/login")
+def api_groww_login(body: dict):
+    """Groww TOTP/secret login — the robust equivalent of Upstox OAuth.
+    Pushes creds live, mints a daily access token, persists it, switches the
+    active broker to groww, and verifies. Returns {ok, message}."""
+    import os
+
+    def _clean(v):
+        return (str(v or "")).strip().strip('"').strip("'").strip()
+
+    api_key = _clean(body.get("api_key"))
+    totp_secret = _clean(body.get("totp_secret")).replace(" ", "")
+    secret = _clean(body.get("secret") or body.get("api_secret"))
+
+    if api_key:
+        os.environ["GROWW_API_KEY"] = api_key
+    if totp_secret:
+        os.environ["GROWW_TOTP_SECRET"] = totp_secret
+    if secret:
+        os.environ["GROWW_API_SECRET"] = secret
+    # A stale direct token would shadow the freshly-minted one.
+    os.environ.pop("GROWW_ACCESS_TOKEN", None)
+
+    from src.brokers.groww_auth import login as groww_login
+    try:
+        groww_login(api_key or None, totp_secret or None, secret or None)
+    except Exception as e:
+        return {"ok": False, "message": f"{e}"}
+
+    os.environ["BROKER"] = "groww"
+    try:
+        settings.refresh()
+        (settings.cache_dir / "active_broker.txt").write_text("groww")
+    except Exception:
+        pass
+    from src.brokers import broker_status
+    s = broker_status()
+    if s.get("ok"):
+        return {"ok": True, "message": f"Logged in to Groww as {s.get('user')}"}
+    # Token minted but verification call failed — still treat as logged in
+    # (best-effort, same as Upstox), surfacing the detail.
+    return {"ok": True, "message": "Groww token minted and saved.",
+            "warning": s.get("error")}
+
+
 @app.post("/api/groww/save-token")
 def api_groww_save_token(body: dict):
     """Save a Groww daily access token (the 'direct bearer' equivalent)."""

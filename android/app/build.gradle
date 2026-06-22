@@ -72,6 +72,7 @@ chaquopy {
             install "ebooklib"
             install "python-multipart"
             install "APScheduler"
+            install "pyotp"
         }
     }
 }

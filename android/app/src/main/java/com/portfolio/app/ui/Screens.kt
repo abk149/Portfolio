@@ -40,6 +40,39 @@ private suspend fun pollJob(jobId: String, maxSecs: Int = 600): JSONObject {
 private fun arr(o: JSONObject?, key: String): JSONArray? =
     o?.optJSONArray(key) ?: o?.optJSONObject(key)?.optJSONArray("array")
 
+// Allocation records → (label, value) pie slices. Label = first non-numeric
+// field (sector/symbol); value = current_value (or weight) as fallback.
+private fun allocationSlices(arr: JSONArray?): List<Pair<String, Float>> {
+    if (arr == null) return emptyList()
+    val out = ArrayList<Pair<String, Float>>()
+    for (i in 0 until arr.length()) {
+        val o = arr.optJSONObject(i) ?: continue
+        var label = "—"
+        val keys = o.keys()
+        while (keys.hasNext()) {
+            val k = keys.next()
+            if (o.opt(k) is String) { label = o.optString(k); break }
+        }
+        val v = (o.opt("current_value") as? Number)?.toFloat()
+            ?: (o.opt("value") as? Number)?.toFloat()
+            ?: (o.opt("weight_pct") as? Number)?.toFloat()
+            ?: (o.opt("weight") as? Number)?.toFloat() ?: 0f
+        if (v > 0f) out.add(label to v)
+    }
+    return out
+}
+
+// equity_curve [{date, portfolio_value, invested}] → (values, invested).
+private fun equitySeries(arr: JSONArray?): Pair<List<Float>, List<Float>> {
+    val pv = ArrayList<Float>(); val inv = ArrayList<Float>()
+    if (arr != null) for (i in 0 until arr.length()) {
+        val o = arr.optJSONObject(i) ?: continue
+        pv.add((o.opt("portfolio_value") as? Number)?.toFloat() ?: continue)
+        inv.add((o.opt("invested") as? Number)?.toFloat() ?: Float.NaN)
+    }
+    return pv to inv
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // HOME · Portfolio
 // ─────────────────────────────────────────────────────────────────────────────
@@ -92,7 +125,11 @@ fun HomeScreen() {
             arr(d, "positions")?.takeIf { it.length() > 0 }?.let {
                 SectionCard("Positions", AccentHi) { DataTable(it) }
             }
-            SectionCard("Allocation", AccentHi) { DataTable(arr(d, "allocation")) }
+            SectionCard("Allocation", AccentHi) {
+                DonutChart(allocationSlices(arr(d, "allocation")))
+                Spacer(Modifier.height(10.dp))
+                DataTable(arr(d, "allocation"))
+            }
         }
         risk?.let { rk ->
             SectionCard("Concentration risk", Warn) { DataTable(arr(rk, "concentration"), 20) }
@@ -332,6 +369,12 @@ fun AnalysisScreen() {
             }
         }
         res?.let { r ->
+            arr(r, "equity_curve")?.let { curve ->
+                val (pv, inv) = equitySeries(curve)
+                if (pv.size >= 2) SectionCard("Equity curve", Bull) {
+                    LineChart(primary = pv, secondary = inv.takeIf { it.size == pv.size })
+                }
+            }
             arr(r, "winners")?.let { SectionCard("Winners", Bull) { DataTable(it) } }
             arr(r, "losers")?.let { SectionCard("Losers", Bear) { DataTable(it) } }
         }
