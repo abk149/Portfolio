@@ -69,7 +69,7 @@ class Settings:
 
     @property
     def upstox_redirect_uri(self) -> str:
-        return self._get("UPSTOX_REDIRECT_URI", "http://localhost:8000/callback")
+        return self._get("UPSTOX_REDIRECT_URI", "http://127.0.0.1:8000/callback")
 
     @property
     def upstox_token_file(self) -> Path:

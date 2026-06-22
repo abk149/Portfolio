@@ -107,7 +107,7 @@ class PortfolioService : LifecycleService() {
         val config = mutableMapOf(
             "UPSTOX_API_KEY" to (prefs.getString("upstox_api_key", "") ?: ""),
             "UPSTOX_API_SECRET" to (prefs.getString("upstox_secret", "") ?: ""),
-            "UPSTOX_REDIRECT_URI" to (prefs.getString("redirect_uri", "http://localhost:8000/callback") ?: ""),
+            "UPSTOX_REDIRECT_URI" to (prefs.getString("redirect_uri", "http://127.0.0.1:8000/callback") ?: ""),
             "UPSTOX_BASE_URL" to (prefs.getString("upstox_base_url", "https://api.upstox.com/v2") ?: ""),
             "UPSTOX_BEARER_TOKEN" to (prefs.getString("upstox_bearer_token", "") ?: ""),
             "LLM_PROVIDER" to provider,
