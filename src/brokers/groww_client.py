@@ -150,13 +150,28 @@ class GrowwClient:
         # divide-by-zero into NaN downstream). One batched LTP call.
         symbols = [(h.get("trading_symbol") or h.get("tradingsymbol")
                     or h.get("symbol") or "") for h in rows]
+        wanted = [s for s in symbols if s]
         price_map: dict = {}
         try:
-            price_map = self.ltp([s for s in symbols if s])
+            price_map = self.ltp(wanted)        # batched last_price (1 call)
         except Exception as e:
             # Live-data is frequently restricted even when holdings work — never
             # let a price-enrichment failure mark the whole portfolio as auth-failed.
             log.info(f"groww holdings LTP enrich skipped ({e}); using avg price as LTP")
+
+        # Previous close for day-change — quote carries ohlc/previous_close.
+        # Best-effort + capped; if restricted, day-change just stays flat.
+        close_map: dict = {}
+        try:
+            for sym, data in self.quote(wanted[:40]).items():
+                if not isinstance(data, dict):
+                    continue
+                ohlc = data.get("ohlc") if isinstance(data.get("ohlc"), dict) else {}
+                close = data.get("previous_close") or data.get("close") or ohlc.get("close")
+                if close:
+                    close_map[sym] = float(close)
+        except Exception as e:
+            log.info(f"groww holdings close enrich skipped ({e})")
 
         out = []
         for h in rows:
@@ -166,15 +181,18 @@ class GrowwClient:
                    or h.get("symbol") or "")
             ltp = float(h.get("ltp") or h.get("last_price") or h.get("current_price")
                         or price_map.get(sym, {}).get("last_price") or avg)
+            close = float(h.get("close_price") or h.get("prev_close")
+                          or close_map.get(sym) or ltp)
+            day_change = (ltp - close) if close and close != ltp else float(h.get("day_change") or 0)
             out.append({
                 "tradingsymbol": sym,
                 "quantity": qty,
                 "average_price": avg,
                 "last_price": ltp,
-                "close_price": float(h.get("close_price") or h.get("prev_close") or ltp),
+                "close_price": close,
                 "pnl": round((ltp - avg) * qty, 2),
-                "day_change": float(h.get("day_change") or 0),
-                "day_change_percentage": float(h.get("day_change_perc") or 0),
+                "day_change": round(day_change, 2),
+                "day_change_percentage": round(day_change / close * 100, 2) if close else 0.0,
                 "instrument_token": h.get("isin") or h.get("instrument_token") or "",
                 "isin": h.get("isin", ""),
                 "exchange": h.get("exchange", "NSE"),

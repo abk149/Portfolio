@@ -112,13 +112,19 @@ fun HomeScreen() {
         }
         data?.let { d ->
             val s = d.optJSONObject("summary") ?: JSONObject()
+            fun num(k: String) = (s.opt(k) as? Number)?.toDouble() ?: 0.0
+            val pnl = num("holdings_pnl")
+            val pct = num("holdings_pnl_pct")
+            val day = num("day_change_value")
             val kpis = buildList {
-                add(Triple("Invested", "₹" + fmtNum(s.opt("invested")), OnBg))
-                add(Triple("Current", "₹" + fmtNum(s.opt("current_value")), OnBg))
-                val pnl = (s.opt("pnl") as? Number)?.toDouble() ?: 0.0
-                add(Triple("P&L", "₹" + fmtNum(s.opt("pnl")), if (pnl >= 0) Bull else Bear))
-                val pct = (s.opt("pnl_pct") as? Number)?.toDouble() ?: 0.0
-                add(Triple("Return", fmtNum(s.opt("pnl_pct")) + "%", if (pct >= 0) Bull else Bear))
+                add(Triple("Invested", "₹" + fmtNum(s.opt("holdings_invested")), OnBg))
+                add(Triple("Current", "₹" + fmtNum(s.opt("holdings_value")), OnBg))
+                add(Triple("P&L", "₹" + fmtNum(s.opt("holdings_pnl")),
+                    if (pnl >= 0) Bull else Bear))
+                add(Triple("Return", "%.2f%%".format(pct), if (pct >= 0) Bull else Bear))
+                add(Triple("Day change", "₹" + fmtNum(s.opt("day_change_value")),
+                    if (day >= 0) Bull else Bear))
+                add(Triple("Holdings", fmtNum(s.opt("n_holdings")), OnBg))
             }
             SectionCard("Summary", AccentHi) { KpiGrid(kpis) }
             SectionCard("Holdings", AccentHi) { DataTable(arr(d, "holdings")) }

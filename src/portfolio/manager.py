@@ -27,11 +27,21 @@ class PortfolioManager:
         p = pd.DataFrame(self.upstox.positions())
 
         if not h.empty:
+            # Be tolerant of broker-specific gaps: ensure the numeric columns we
+            # rely on exist and are numeric (Groww/Upstox field sets differ).
+            for col in ("quantity", "average_price", "last_price", "close_price", "day_change"):
+                if col not in h.columns:
+                    h[col] = 0.0
+                h[col] = pd.to_numeric(h[col], errors="coerce").fillna(0.0)
+            # If a broker gives a close price but no per-share day_change, derive it.
+            no_dc = h["day_change"] == 0
+            h.loc[no_dc & (h["close_price"] > 0), "day_change"] = (
+                h["last_price"] - h["close_price"])
             h["invested"] = h["quantity"] * h["average_price"]
             h["current_value"] = h["quantity"] * h["last_price"]
             h["pnl"] = h["current_value"] - h["invested"]
-            h["pnl_pct"] = (h["pnl"] / h["invested"]).round(4) * 100
-            h["day_change_value"] = h["quantity"] * h.get("day_change", 0)
+            h["pnl_pct"] = (h["pnl"] / h["invested"].replace(0, pd.NA)).fillna(0).round(4) * 100
+            h["day_change_value"] = h["quantity"] * h["day_change"]
 
         if not p.empty:
             p["pnl"] = p.get("pnl", 0)
