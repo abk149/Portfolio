@@ -57,11 +57,28 @@ class GrowwClient:
 
     def __init__(self, access_token: Optional[str] = None):
         self._token = access_token or load_token()
+        self._explicit_token = access_token is not None
+        self._reminted = False
         if not self._token:
             raise BrokerAuthError(
                 "No Groww access token. Paste a daily token in the app, set "
                 "GROWW_ACCESS_TOKEN, or configure GROWW_API_KEY/SECRET (TOTP)."
             )
+
+    def _remint(self) -> bool:
+        """Mint a fresh token from stored API key + TOTP secret (auto-login).
+        Used to self-heal across the daily 06:00 reset without any manual step."""
+        if self._explicit_token:
+            return False          # caller pinned a token; don't override it
+        try:
+            from src.brokers.groww_auth import login as _login
+            tok = _login()        # mints via TOTP/checksum from env creds
+            if tok:
+                self._token = tok
+                return True
+        except Exception as e:
+            log.info(f"groww auto re-mint failed: {e}")
+        return False
 
     @property
     def _headers(self) -> dict:
@@ -79,6 +96,13 @@ class GrowwClient:
             log.debug(f"groww GET {path} error: {e}")
             return None
         if r.status_code in (401, 403):
+            # Self-heal: the daily 06:00 reset (or a same-day expiry) invalidates
+            # the token. Auto re-mint once from stored creds and retry — fully
+            # automatic, no manual TOTP. Only retry once to avoid loops.
+            if not self._reminted and self._remint():
+                self._reminted = True
+                log.info(f"groww {path}: token rejected — re-minted, retrying")
+                return self._get(path, params)
             # Name the endpoint so we can tell holdings vs live-data vs margins
             # apart (live-data is often restricted per-account while holdings work).
             raise BrokerAuthError(

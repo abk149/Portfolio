@@ -64,7 +64,19 @@ def save_token(token: str) -> str:
     return token
 
 
+def _last_reset() -> datetime:
+    """Most recent Groww 06:00 (local) token-reset boundary."""
+    from datetime import time as _time, timedelta
+    now = datetime.now()
+    boundary = now.replace(hour=6, minute=0, second=0, microsecond=0)
+    if now < boundary:
+        boundary -= timedelta(days=1)
+    return boundary
+
+
 def _cached_token() -> Optional[str]:
+    """Reuse a cached token only if it was minted AFTER the most recent 06:00
+    reset — so the morning reset transparently forces a fresh mint."""
     try:
         if not settings.groww_token_file.exists():
             return None
@@ -72,10 +84,17 @@ def _cached_token() -> Optional[str]:
         tok = data.get("access_token")
         if not tok:
             return None
-        # Groww tokens are daily — only reuse if minted today.
-        if data.get("fetched_date") != date.today().isoformat():
-            return None
-        return tok
+        fetched_at = data.get("fetched_at")
+        if fetched_at:
+            try:
+                ts = datetime.fromisoformat(fetched_at)
+                ts_local = (ts.astimezone().replace(tzinfo=None)
+                            if ts.tzinfo else ts)
+                return tok if ts_local >= _last_reset() else None
+            except Exception:
+                pass
+        # Fallback to a same-day check if the timestamp is unparseable.
+        return tok if data.get("fetched_date") == date.today().isoformat() else None
     except Exception as e:
         log.debug(f"groww token file read failed: {e}")
         return None

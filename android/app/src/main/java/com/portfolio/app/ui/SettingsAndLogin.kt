@@ -89,8 +89,10 @@ fun SettingsScreen(openLogin: () -> Unit) {
                 Field("TOTP secret (base32 seed)", growwTotp, password = true) { growwTotp = it }
                 Field("API secret (alt: checksum flow)", growwSec, password = true) { growwSec = it }
                 Field("Access token (optional, direct)", growwTok) { growwTok = it }
-                Text("TOTP login: API key + TOTP secret (from Groww's 'Generate TOTP " +
-                    "token'). The app mints a fresh daily token automatically.",
+                Text("Enter the API key + TOTP secret (base32 seed from Groww's " +
+                    "'Generate TOTP token') ONCE. The app then mints a fresh token " +
+                    "automatically every day after Groww's 6 AM reset — and re-mints " +
+                    "on the fly if a token is rejected. No daily manual step needed.",
                     color = Muted, fontSize = 11.sp, modifier = Modifier.padding(top = 6.dp))
             }
         }
