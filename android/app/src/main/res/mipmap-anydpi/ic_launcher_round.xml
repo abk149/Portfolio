@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Legacy (API 24-25) launcher icon: single self-contained vector with
+     rounded corners, since adaptive-icon is unavailable before API 26. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Rounded navy backdrop -->
+    <path android:pathData="M20,2 h68 a18,18 0 0 1 18,18 v68 a18,18 0 0 1 -18,18 h-68 a18,18 0 0 1 -18,-18 v-68 a18,18 0 0 1 18,-18 z">
+        <aapt:attr xmlns:aapt="http://schemas.android.com/aapt"
+            name="android:fillColor">
+            <gradient
+                android:startX="0" android:startY="0"
+                android:endX="108" android:endY="108"
+                android:type="linear">
+                <item android:offset="0" android:color="#FF0B0E14" />
+                <item android:offset="1" android:color="#FF161B22" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- Candle 1 (down, muted) -->
+    <path android:pathData="M37,60 v18" android:strokeColor="#8B949E"
+        android:strokeWidth="2.2" android:strokeLineCap="round" />
+    <path android:pathData="M33,63 h8 v9 h-8 z" android:fillColor="#8B949E" />
+    <!-- Candle 2 (up, green) -->
+    <path android:pathData="M52,44 v30" android:strokeColor="#3FB950"
+        android:strokeWidth="2.2" android:strokeLineCap="round" />
+    <path android:pathData="M48,50 h8 v16 h-8 z" android:fillColor="#3FB950" />
+    <!-- Candle 3 (up, green, tall) -->
+    <path android:pathData="M67,30 v34" android:strokeColor="#3FB950"
+        android:strokeWidth="2.2" android:strokeLineCap="round" />
+    <path android:pathData="M63,36 h8 v20 h-8 z" android:fillColor="#3FB950" />
+    <!-- Momentum trend line + arrow -->
+    <path android:pathData="M30,70 L45,58 L60,46 L78,28"
+        android:strokeColor="#58A6FF" android:strokeWidth="3.4"
+        android:strokeLineCap="round" android:strokeLineJoin="round" />
+    <path android:pathData="M78,28 L68,28 M78,28 L78,38"
+        android:strokeColor="#58A6FF" android:strokeWidth="3.4"
+        android:strokeLineCap="round" android:strokeLineJoin="round" />
+</vector>

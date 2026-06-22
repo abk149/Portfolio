@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Content sits inside the adaptive safe zone (~24..84). A rising
+         candlestick chart with a green momentum arrow — "quant / up". -->
+
+    <!-- Candle 1 (down, muted) -->
+    <path android:pathData="M37,60 v18" android:strokeColor="#8B949E"
+        android:strokeWidth="2.2" android:strokeLineCap="round" />
+    <path android:pathData="M33,63 h8 v9 h-8 z" android:fillColor="#8B949E" />
+
+    <!-- Candle 2 (up, green) -->
+    <path android:pathData="M52,44 v30" android:strokeColor="#3FB950"
+        android:strokeWidth="2.2" android:strokeLineCap="round" />
+    <path android:pathData="M48,50 h8 v16 h-8 z" android:fillColor="#3FB950" />
+
+    <!-- Candle 3 (up, green, tall) -->
+    <path android:pathData="M67,30 v34" android:strokeColor="#3FB950"
+        android:strokeWidth="2.2" android:strokeLineCap="round" />
+    <path android:pathData="M63,36 h8 v20 h-8 z" android:fillColor="#3FB950" />
+
+    <!-- Momentum trend line through the highs -->
+    <path android:pathData="M30,70 L45,58 L60,46 L78,28"
+        android:strokeColor="#58A6FF" android:strokeWidth="3.4"
+        android:strokeLineCap="round" android:strokeLineJoin="round" />
+
+    <!-- Arrow head at the top-right of the trend line -->
+    <path android:pathData="M78,28 L68,28 M78,28 L78,38"
+        android:strokeColor="#58A6FF" android:strokeWidth="3.4"
+        android:strokeLineCap="round" android:strokeLineJoin="round" />
+</vector>
