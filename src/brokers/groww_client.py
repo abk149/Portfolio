@@ -96,17 +96,18 @@ class GrowwClient:
             log.debug(f"groww GET {path} error: {e}")
             return None
         if r.status_code in (401, 403):
-            # Self-heal: the daily 06:00 reset (or a same-day expiry) invalidates
-            # the token. Auto re-mint once from stored creds and retry — fully
-            # automatic, no manual TOTP. Only retry once to avoid loops.
-            if not self._reminted and self._remint():
+            body = (r.text or "")[:200]
+            # A 403 "Access forbidden" is a PERMISSION/entitlement error (e.g. the
+            # live-data feed isn't enabled) — re-minting can't fix it, so don't.
+            # Re-mint only for genuine token-expiry (401, or a 403 not about
+            # permissions) to self-heal across the daily 06:00 reset.
+            forbidden = "forbidden" in body.lower() or "permission" in body.lower()
+            if not self._reminted and not (r.status_code == 403 and forbidden) and self._remint():
                 self._reminted = True
                 log.info(f"groww {path}: token rejected — re-minted, retrying")
                 return self._get(path, params)
-            # Name the endpoint so we can tell holdings vs live-data vs margins
-            # apart (live-data is often restricted per-account while holdings work).
-            raise BrokerAuthError(
-                f"Groww {path} → {r.status_code} (token/permission/IP). {r.text[:160]}")
+            # Name the endpoint so we can tell holdings vs live-data vs margins apart.
+            raise BrokerAuthError(f"Groww {path} → {r.status_code}. {body[:160]}")
         if r.status_code != 200:
             log.debug(f"groww {path} → {r.status_code}: {r.text[:200]}")
             return None
@@ -180,6 +181,18 @@ class GrowwClient:
                         price_map[sym] = {"last_price": lp}
         except Exception as e:
             log.info(f"groww holdings close enrich skipped ({e})")
+
+        # Fallback: Groww live-data is often not entitled (403). For any symbol
+        # we still couldn't price, fetch last_price + previous close from a free
+        # public source so P&L / day-change are real instead of 0.
+        missing = [s for s in wanted if s not in price_map]
+        if missing:
+            log.info(f"groww: live-data missing {len(missing)} symbols — using public price fallback")
+            for sym, d in self._yahoo_prices(missing).items():
+                if d.get("last_price"):
+                    price_map[sym] = {"last_price": d["last_price"]}
+                if d.get("close"):
+                    close_map.setdefault(sym, d["close"])
 
         out = []
         for h in rows:
@@ -258,6 +271,36 @@ class GrowwClient:
                 if p is not None:
                     return p
         return None
+
+    @staticmethod
+    def _yahoo_prices(symbols: list[str]) -> dict:
+        """Free public price source — used when Groww live-data is not entitled
+        (403 'Access forbidden'). Yahoo's v8 chart endpoint needs no key/cookie
+        and works with plain requests (so it's fine on-device too). Returns
+        {sym: {"last_price": float, "close": float}}."""
+        out: dict = {}
+        for sym in symbols:
+            for suf in (".NS", ".BO"):     # NSE first, then BSE
+                try:
+                    r = requests.get(
+                        f"https://query1.finance.yahoo.com/v8/finance/chart/{sym}{suf}",
+                        params={"interval": "1d", "range": "5d"},
+                        headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
+                    if r.status_code != 200:
+                        continue
+                    res = (r.json().get("chart") or {}).get("result") or []
+                    if not res:
+                        continue
+                    meta = res[0].get("meta") or {}
+                    lp = meta.get("regularMarketPrice")
+                    pc = meta.get("chartPreviousClose") or meta.get("previousClose")
+                    if lp:
+                        out[sym] = {"last_price": float(lp),
+                                    "close": float(pc) if pc else None}
+                        break
+                except Exception:
+                    continue
+        return out
 
     def ltp(self, instruments: list[str]) -> dict:
         """instruments: bare symbols or yf tickers. Returns {sym: {last_price}}.
