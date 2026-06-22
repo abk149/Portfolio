@@ -218,8 +218,10 @@ fun LoginDialog(onDismiss: () -> Unit) {
                                     msg = "❌ Enter Client ID and Secret first."; busy = false; return@launch
                                 }
                                 // Persist + push live so the backend builds the link with these creds.
+                                // Also clear any stale direct bearer token: it is Priority 1 in the
+                                // backend's token loader and would shadow the OAuth token (UDAPI100050).
                                 prefs.put("upstox_api_key" to ak.trim(), "upstox_secret" to sk.trim(),
-                                    "redirect_uri" to ru.trim())
+                                    "redirect_uri" to ru.trim(), "upstox_bearer_token" to "")
                                 val cfg = Api.upstoxConfig(ak.trim(), sk.trim(), ru.trim())
                                 if (cfg is Api.Resp.Err) {
                                     msg = "❌ Backend unreachable: ${cfg.message}. Is it running (Terminal ▶)?"

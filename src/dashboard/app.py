@@ -536,6 +536,9 @@ def api_upstox_config(body: dict):
         v = (body.get(body_key) or "").strip().strip('"').strip("'").strip()
         if v:
             os.environ[env_key] = v
+    # Starting an OAuth login → a stale direct bearer token (Priority 1 in
+    # load_token) must not shadow the OAuth token we're about to get.
+    os.environ.pop("UPSTOX_BEARER_TOKEN", None)
     try:
         settings.refresh()
     except Exception:

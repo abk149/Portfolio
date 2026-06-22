@@ -95,6 +95,11 @@ def exchange_and_save(code: str) -> dict:
     """Public helper — exchange an auth code for an access token and persist it."""
     token = _exchange_code(code)
     _save(token)
+    # A stale UPSTOX_BEARER_TOKEN (Priority 1 in load_token) would shadow the
+    # token we just saved and cause UDAPI100050. OAuth and direct-bearer are
+    # mutually exclusive — drop the env bearer so the fresh OAuth token wins.
+    import os
+    os.environ.pop("UPSTOX_BEARER_TOKEN", None)
     return token
 
 
