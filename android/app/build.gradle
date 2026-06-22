@@ -44,6 +44,10 @@ android {
     }
     packagingOptions {
         resources.excludes += '/META-INF/{AL2.0,LGPL2.1}'
+        // Keep native libs uncompressed + page-aligned in the APK (16 KB ready)
+        jniLibs {
+            useLegacyPackaging false
+        }
     }
 }
 

@@ -159,6 +159,10 @@ fun LoginDialog(onDismiss: () -> Unit) {
     var msg by remember { mutableStateOf<String?>(null) }
     var loginUrl by remember { mutableStateOf<String?>(null) }
     var redirectPaste by remember { mutableStateOf("") }
+    // Editable here so the client_id can never be empty when we build the link.
+    var ak by remember { mutableStateOf(prefs.get("upstox_api_key")) }
+    var sk by remember { mutableStateOf(prefs.get("upstox_secret")) }
+    var ru by remember { mutableStateOf(prefs.get("redirect_uri", "http://127.0.0.1:8765/callback")) }
     var token by remember {
         mutableStateOf(prefs.get(if (broker == "groww") "groww_access_token" else "upstox_bearer_token"))
     }
@@ -179,15 +183,29 @@ fun LoginDialog(onDismiss: () -> Unit) {
                     Text("A · Login link (recommended)", color = AccentHi, fontSize = 12.sp,
                         fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold)
                     Spacer(Modifier.height(6.dp))
+                    OutlinedTextField(ak, { ak = it }, label = { Text("Client ID (API key)") },
+                        singleLine = true, modifier = Modifier.fillMaxWidth())
+                    Spacer(Modifier.height(6.dp))
+                    OutlinedTextField(sk, { sk = it }, label = { Text("Client Secret") },
+                        singleLine = true, modifier = Modifier.fillMaxWidth())
+                    Spacer(Modifier.height(6.dp))
+                    OutlinedTextField(ru, { ru = it }, label = { Text("Redirect URI") },
+                        singleLine = true, modifier = Modifier.fillMaxWidth())
+                    Spacer(Modifier.height(6.dp))
                     Button(
                         onClick = {
                             scope.launch {
-                                busy = true; msg = null
-                                Api.upstoxConfig(prefs.get("upstox_api_key"), prefs.get("upstox_secret"),
-                                    prefs.get("redirect_uri", "http://127.0.0.1:8765/callback"))
+                                busy = true; msg = null; loginUrl = null
+                                if (ak.isBlank() || sk.isBlank()) {
+                                    msg = "❌ Enter Client ID and Secret first."; busy = false; return@launch
+                                }
+                                // Persist + push live so the backend builds the link with these creds.
+                                prefs.put("upstox_api_key" to ak.trim(), "upstox_secret" to sk.trim(),
+                                    "redirect_uri" to ru.trim())
+                                Api.upstoxConfig(ak.trim(), sk.trim(), ru.trim())
                                 val r = Api.upstoxAuthUrl().objOrNull()
                                 if (r != null && r.optBoolean("ok", false)) loginUrl = r.optString("url")
-                                else msg = "Could not build login URL: ${r?.optString("error")}"
+                                else msg = "❌ Could not build login URL: ${r?.optString("error")}"
                                 busy = false
                             }
                         },
@@ -195,6 +213,8 @@ fun LoginDialog(onDismiss: () -> Unit) {
                     ) { Text("1 · Get login link") }
 
                     loginUrl?.let { u ->
+                        Spacer(Modifier.height(6.dp))
+                        Text(u, color = Muted, fontSize = 10.sp)
                         Spacer(Modifier.height(6.dp))
                         OutlinedButton(onClick = {
                             runCatching { ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(u))) }

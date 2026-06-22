@@ -23,8 +23,13 @@ class Settings:
         pass
 
     def _get(self, key: str, default: str = "") -> str:
+        # A set-but-empty env var (e.g. UPSTOX_BASE_URL="") must NOT override a
+        # sane default — otherwise it can produce relative/dead URLs. Treat
+        # blank/whitespace as "unset → use default".
         val = os.getenv(key)
-        return val.strip() if val is not None else default
+        if val is not None and val.strip():
+            return val.strip()
+        return default
 
     # ── Active broker (either/or) ──
     @property

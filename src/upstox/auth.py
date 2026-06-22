@@ -60,13 +60,14 @@ def build_auth_url() -> str:
 
     key = settings.upstox_api_key
     uri = settings.upstox_redirect_uri
-    base = settings.upstox_base_url.rstrip("/")
 
     # ── DEBUG LOGGING ──────────────────────────────────────────────────────
     print(f"[Upstox Auth] Building URL.")
-    print(f"  > base_url:     {repr(base)}")
     print(f"  > client_id:    {repr(key)}")
     print(f"  > redirect_uri: {repr(uri)}")
+
+    if not key:
+        raise ValueError("UPSTOX_API_KEY (client_id) is empty — set it before login.")
 
     params = {
         "client_id": key,
@@ -74,7 +75,10 @@ def build_auth_url() -> str:
         "response_type": "code",
     }
 
-    url = f"{base}/login/authorization/dialog?{urllib.parse.urlencode(params)}"
+    # Use the fixed, absolute Upstox login host — NOT settings.upstox_base_url.
+    # A blank/misconfigured base_url must never be able to produce a relative
+    # (dead) login URL. This mirrors the working Upstox bot exactly.
+    url = f"{AUTH_URL}?{urllib.parse.urlencode(params)}"
 
     print(f"[Upstox Auth] Final generated URL: {url}")
     return url
