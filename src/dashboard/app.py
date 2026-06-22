@@ -631,12 +631,17 @@ def api_upstox_exchange(body: _UpstoxCodeBody):
 
     try:
         exchange_and_save(code)
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+    # Token saved → success. Profile is best-effort (don't fail a good login).
+    name = "you"
+    try:
         from src.upstox.client import UpstoxClient
         prof = UpstoxClient().profile()
         name = prof.get("user_name") or prof.get("email") or "(unknown)"
-        return {"ok": True, "user": name}
     except Exception as e:
-        return {"ok": False, "error": str(e)}
+        print(f"[Upstox exchange] token saved; profile check deferred: {e}")
+    return {"ok": True, "user": name}
 
 
 @app.get("/callback", response_class=HTMLResponse)
@@ -665,13 +670,20 @@ def upstox_callback(code: str = "", error: str = "", error_description: str = ""
         return _page("No auth code", "Upstox didn't return a code in the redirect.", ok=False)
     try:
         from src.upstox.auth import exchange_and_save
-        exchange_and_save(code)
+        exchange_and_save(code)   # exchange + persist; raises only on real failure
+    except Exception as e:
+        return _page("Token exchange failed", str(e), ok=False)
+
+    # Token is saved → login succeeded. The profile lookup is best-effort only;
+    # a transient hiccup here must NOT report the login as failed.
+    name = "you"
+    try:
         from src.upstox.client import UpstoxClient
         prof = UpstoxClient().profile()
         name = prof.get("user_name") or prof.get("email") or "you"
-        return _page(f"Logged in as {name}", "Your Upstox token is saved on this device.", ok=True)
     except Exception as e:
-        return _page("Token exchange failed", str(e), ok=False)
+        print(f"[Upstox callback] token saved; profile check deferred: {e}")
+    return _page(f"Logged in as {name}", "Your Upstox token is saved on this device.", ok=True)
 
 
 # ---------------- broker selection (either/or) ----------------

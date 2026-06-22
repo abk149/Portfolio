@@ -27,8 +27,13 @@ TOKEN_URL = "https://api.upstox.com/v2/login/authorization/token"
 
 def _save(token: dict) -> None:
     token["fetched_at"] = datetime.now(timezone.utc).isoformat()
-    settings.upstox_token_file.write_text(json.dumps(token, indent=2))
-    log.info(f"Saved token → {settings.upstox_token_file}")
+    path = settings.upstox_token_file
+    # Ensure the parent dir exists — on a fresh Android install .cache/ may not
+    # exist yet, and Path.write_text does NOT create it (the exchange would
+    # succeed at Upstox but then fail to persist, looking like a login error).
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(token, indent=2))
+    log.info(f"Saved token → {path}")
 
 
 def load_token() -> Optional[dict]:
