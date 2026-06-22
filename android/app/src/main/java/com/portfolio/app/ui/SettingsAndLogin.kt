@@ -160,7 +160,9 @@ fun LoginDialog(onDismiss: () -> Unit) {
     val ctx = LocalContext.current
     val prefs = remember { Prefs(ctx) }
     val scope = rememberCoroutineScope()
-    val broker = prefs.broker
+    // Broker is selectable right here — a Groww-only user (no Upstox account)
+    // can switch without digging into Settings first.
+    var broker by remember { mutableStateOf(prefs.broker) }
 
     var busy by remember { mutableStateOf(false) }
     var msg by remember { mutableStateOf<String?>(null) }
@@ -201,6 +203,25 @@ fun LoginDialog(onDismiss: () -> Unit) {
         title = { Text("Login · ${broker.replaceFirstChar { it.uppercase() }}") },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState())) {
+                // Broker selector — pick which one you're logging into.
+                Text("Broker", color = Muted, fontSize = 11.sp)
+                Spacer(Modifier.height(4.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf("upstox", "groww").forEach { b ->
+                        FilterChip(
+                            selected = broker == b,
+                            onClick = {
+                                broker = b
+                                prefs.put("broker" to b)
+                                msg = null; loginUrl = null; polling = false
+                                if (BackendBus.running) scope.launch { Api.setBroker(b) }
+                            },
+                            label = { Text(b.replaceFirstChar { it.uppercase() }) },
+                        )
+                    }
+                }
+                Spacer(Modifier.height(12.dp))
+
                 if (!BackendBus.running) {
                     StatusBanner("Start the backend first (Terminal ▶).", Warn)
                     Spacer(Modifier.height(10.dp))
