@@ -93,19 +93,35 @@ def exchange_and_save(code: str) -> dict:
     return token
 
 
+def _clean(v: str) -> str:
+    """Strip stray surrounding quotes/whitespace (common when creds are pasted
+    from a quoted .env line). Mismatched/quoted creds cause 401 on exchange."""
+    return (v or "").strip().strip('"').strip("'").strip()
+
+
 def _exchange_code(code: str) -> dict:
-    base = settings.upstox_base_url.rstrip("/")
-    token_url = f"{base}/login/authorization/token"
+    # Use the fixed absolute token endpoint (not base_url, which may be blank).
+    # The redirect_uri here MUST exactly equal the one used in the login dialog
+    # and registered with Upstox, or the exchange returns 401.
+    token_url = TOKEN_URL
+
+    client_id = _clean(settings.upstox_api_key)
+    client_secret = _clean(settings.upstox_api_secret)
+    redirect_uri = _clean(settings.upstox_redirect_uri)
+    code = _clean(code)
 
     print(f"[Upstox Auth] Exchanging code at: {token_url}")
+    print(f"  > client_id:    {repr(client_id)}")
+    print(f"  > redirect_uri: {repr(redirect_uri)}")
+    print(f"  > secret set:   {bool(client_secret)} (len={len(client_secret)})")
 
     resp = requests.post(
         token_url,
         data={
             "code": code,
-            "client_id": settings.upstox_api_key,
-            "client_secret": settings.upstox_api_secret,
-            "redirect_uri": settings.upstox_redirect_uri,
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "redirect_uri": redirect_uri,
             "grant_type": "authorization_code",
         },
         headers={"accept": "application/json", "Api-Version": "2.0"},
@@ -113,7 +129,8 @@ def _exchange_code(code: str) -> dict:
     )
     if resp.status_code != 200:
         print(f"[Upstox Auth] Exchange FAILED: {resp.status_code} {resp.text}")
-    resp.raise_for_status()
+        # Surface Upstox's own message (e.g. invalid client_secret) to the UI.
+        raise RuntimeError(f"Upstox token exchange failed (HTTP {resp.status_code}): {resp.text}")
     return resp.json()
 
 
