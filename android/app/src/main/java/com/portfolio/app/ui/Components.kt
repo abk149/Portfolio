@@ -14,7 +14,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -164,53 +163,66 @@ fun DataTable(arr: JSONArray?, maxRows: Int = 60) {
     val cols = ArrayList<String>(); first.keys().forEach { cols.add(it) }
     val n = minOf(arr.length(), maxRows)
 
+    val rowH = 38.dp
+    val headerH = 32.dp
+    fun zebra(i: Int) = if (i % 2 == 1) Color.White.copy(alpha = 0.025f) else Color.Transparent
+
     if (cols.size > 4) {
-        Text("Swipe sideways for more →", color = Muted, fontSize = 10.sp)
+        Text("Swipe values sideways →", color = Muted, fontSize = 10.sp)
         Spacer(Modifier.height(4.dp))
     }
-    Column(Modifier.horizontalScroll(rememberScrollState())) {
-        // header
-        Row(
-            Modifier.clip(RoundedCornerShape(6.dp)).background(Panel2).padding(vertical = 7.dp)
-        ) {
-            cols.forEach { c ->
-                Text(prettyHeader(c), color = Muted, fontSize = 11.sp, fontWeight = FontWeight.Medium,
-                    modifier = Modifier.width(cellWidth(c)).padding(horizontal = 8.dp),
-                    maxLines = 1, overflow = TextOverflow.Ellipsis)
+    // Sticky first column (the identifier) + horizontally-scrollable values, so
+    // the symbol stays visible while you scan the numbers.
+    Row(Modifier.clip(RoundedCornerShape(8.dp)).border(1.dp, BorderCol, RoundedCornerShape(8.dp))) {
+        Column(Modifier.background(Panel2.copy(alpha = 0.5f))) {
+            Box(Modifier.width(cellWidth(cols[0])).height(headerH).background(Panel2)
+                .padding(horizontal = 10.dp), contentAlignment = Alignment.CenterStart) {
+                Text(prettyHeader(cols[0]), color = Muted, fontSize = 11.sp,
+                    fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
-        }
-        for (i in 0 until n) {
-            val row = arr.optJSONObject(i) ?: continue
-            Row(
-                Modifier
-                    .background(if (i % 2 == 1) Color.White.copy(alpha = 0.02f) else Color.Transparent)
-                    .padding(vertical = 6.dp)
-            ) {
-                cols.forEachIndexed { idx, c ->
-                    val raw = if (row.isNull(c)) null else row.opt(c)
-                    val signed = if (isSignedKey(c)) numeric(raw) else null
-                    val color = when {
-                        signed == null -> OnBg.copy(alpha = 0.9f)
-                        signed > 0 -> Bull; signed < 0 -> Bear; else -> OnBg
-                    }
-                    val text = when {
-                        idx == 0 -> fmtNum(raw)
-                        numeric(raw) != null && isMoneyKey(c) -> fmtCompact(raw)
-                        else -> fmtNum(raw)
-                    }
-                    Text(text, color = color, fontSize = 12.sp,
-                        textAlign = if (idx == 0) TextAlign.Start else TextAlign.End,
-                        modifier = Modifier.width(cellWidth(c)).padding(horizontal = 8.dp),
-                        maxLines = 1, overflow = TextOverflow.Ellipsis,
-                        fontFamily = if (idx == 0) FontFamily.Default else FontFamily.Monospace)
+            for (i in 0 until n) {
+                val row = arr.optJSONObject(i)
+                Box(Modifier.width(cellWidth(cols[0])).height(rowH).background(zebra(i))
+                    .padding(horizontal = 10.dp), contentAlignment = Alignment.CenterStart) {
+                    Text(fmtNum(row?.opt(cols[0])), color = OnBg, fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }
-            Divider(color = BorderCol.copy(alpha = 0.35f), thickness = 0.5.dp)
         }
-        if (arr.length() > n) {
-            Spacer(Modifier.height(6.dp))
-            Text("… ${arr.length() - n} more rows", color = Muted, fontSize = 11.sp)
+        Column(Modifier.horizontalScroll(rememberScrollState())) {
+            Row(Modifier.height(headerH).background(Panel2)) {
+                cols.drop(1).forEach { c ->
+                    Box(Modifier.width(cellWidth(c)).height(headerH).padding(horizontal = 8.dp),
+                        contentAlignment = Alignment.CenterEnd) {
+                        Text(prettyHeader(c), color = Muted, fontSize = 11.sp,
+                            fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                }
+            }
+            for (i in 0 until n) {
+                val row = arr.optJSONObject(i)
+                Row(Modifier.height(rowH).background(zebra(i))) {
+                    cols.drop(1).forEach { c ->
+                        val raw = if (row == null || row.isNull(c)) null else row.opt(c)
+                        val signed = if (isSignedKey(c)) numeric(raw) else null
+                        val color = when {
+                            signed == null -> OnBg.copy(alpha = 0.9f)
+                            signed > 0 -> Bull; signed < 0 -> Bear; else -> OnBg
+                        }
+                        val text = if (numeric(raw) != null && isMoneyKey(c)) fmtCompact(raw) else fmtNum(raw)
+                        Box(Modifier.width(cellWidth(c)).height(rowH).padding(horizontal = 8.dp),
+                            contentAlignment = Alignment.CenterEnd) {
+                            Text(text, color = color, fontSize = 12.sp, maxLines = 1,
+                                overflow = TextOverflow.Ellipsis, fontFamily = FontFamily.Monospace)
+                        }
+                    }
+                }
+            }
         }
+    }
+    if (arr.length() > n) {
+        Spacer(Modifier.height(6.dp))
+        Text("… ${arr.length() - n} more rows", color = Muted, fontSize = 11.sp)
     }
 }
 

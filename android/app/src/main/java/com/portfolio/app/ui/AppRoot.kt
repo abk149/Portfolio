@@ -7,6 +7,9 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.sp
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Chat
 import androidx.compose.material.icons.filled.Insights
@@ -45,15 +48,23 @@ fun AppRoot() {
         topBar = {
             TopAppBar(
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = Panel, titleContentColor = OnBg),
-                title = { Text("Portfolio Quant") },
-                actions = {
-                    val (dot, col) = when (BackendBus.state.value) {
-                        BackendBus.State.RUNNING -> "●" to Bull
-                        BackendBus.State.STARTING -> "●" to Warn
-                        BackendBus.State.ERROR -> "●" to Bear
-                        else -> "●" to Muted
+                title = {
+                    val (label, col) = when (BackendBus.state.value) {
+                        BackendBus.State.RUNNING -> "Engine live" to Bull
+                        BackendBus.State.STARTING -> "Starting…" to Warn
+                        BackendBus.State.ERROR -> "Engine error" to Bear
+                        else -> "Engine off" to Muted
                     }
-                    Text(dot, color = col, modifier = Modifier.padding(end = 4.dp))
+                    androidx.compose.foundation.layout.Column {
+                        Text("Portfolio Quant", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                        Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                            Text("●", color = col, fontSize = 10.sp)
+                            Spacer(Modifier.width(5.dp))
+                            Text(label, color = Muted, fontSize = 11.sp)
+                        }
+                    }
+                },
+                actions = {
                     IconButton(onClick = { showChat = true }) {
                         Icon(Icons.Filled.Chat, contentDescription = "AI Assistant", tint = AccentHi)
                     }

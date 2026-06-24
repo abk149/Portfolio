@@ -116,17 +116,25 @@ fun HomeScreen() {
             val pnl = num("holdings_pnl")
             val pct = num("holdings_pnl_pct")
             val day = num("day_change_value")
-            val kpis = buildList {
-                add(Triple("Invested", "₹" + fmtNum(s.opt("holdings_invested")), OnBg))
-                add(Triple("Current", "₹" + fmtNum(s.opt("holdings_value")), OnBg))
-                add(Triple("P&L", "₹" + fmtNum(s.opt("holdings_pnl")),
-                    if (pnl >= 0) Bull else Bear))
-                add(Triple("Return", "%.2f%%".format(pct), if (pct >= 0) Bull else Bear))
-                add(Triple("Day change", "₹" + fmtNum(s.opt("day_change_value")),
-                    if (day >= 0) Bull else Bear))
-                add(Triple("Holdings", fmtNum(s.opt("n_holdings")), OnBg))
+            SectionCard("Portfolio value", AccentHi) {
+                Text("₹" + fmtNum(s.opt("holdings_value")), color = OnBg,
+                    fontSize = 30.sp, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(6.dp))
+                Row(verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    val up = pnl >= 0
+                    Text((if (up) "▲ ₹" else "▼ ₹") + fmtNum(kotlin.math.abs(pnl)) +
+                        "  (%.2f%%)".format(pct), color = if (up) Bull else Bear,
+                        fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                    Pill((if (day >= 0) "Day ▲ ₹" else "Day ▼ ₹") + fmtNum(kotlin.math.abs(day)),
+                        if (day >= 0) Bull else Bear)
+                }
+                Spacer(Modifier.height(14.dp))
+                KpiGrid(listOf(
+                    Triple("Invested", "₹" + fmtCompact(s.opt("holdings_invested")), OnBg),
+                    Triple("Holdings", fmtNum(s.opt("n_holdings")), OnBg),
+                ))
             }
-            SectionCard("Summary", AccentHi) { KpiGrid(kpis) }
             SectionCard("Holdings", AccentHi) { DataTable(arr(d, "holdings")) }
             arr(d, "positions")?.takeIf { it.length() > 0 }?.let {
                 SectionCard("Positions", AccentHi) { DataTable(it) }
