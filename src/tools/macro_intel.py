@@ -238,16 +238,18 @@ def build_macro_themes(days: int = 14, max_themes: int = 6) -> dict:
                  + "\n".join(f"  • {r}" for r in (macro.get('reasons') or [])))
 
     system = (
-        "You are a buy-side macro strategist for Indian equities. You connect "
-        "recent macro/market developments to sectors and to specific stocks. You "
-        "are rigorous, cite the driver, and NEVER use information older than the "
-        "stated window. Output STRICT JSON only.")
+        "You are the CIO of an Indian-equities fund. You weigh ALL macro forces "
+        "TOGETHER — interest rates, inflation, currency (USDINR), crude/commodities, "
+        "FII/DII flows, global risk (Fed, geopolitics), sector momentum and "
+        "sentiment — into ONE integrated, holistic view. You do NOT pick a stock "
+        "for a single factor; each pick must survive the combined picture. Use "
+        "ONLY information within the stated window. Output STRICT JSON only.")
     prompt = f"""As of {signals['as_of']} (use ONLY signals from the last {days} days).
 
 MACRO SNAPSHOT:
 {macro_str}
 
-RECENT NEWS (domestic + global affecting India):
+RECENT NEWS (domestic + global affecting India, {len(signals['news'])} items from {signals.get('sources_used')} sources):
 {news_str or '(none)'}
 
 RETAIL CHATTER (Reddit):
@@ -258,15 +260,19 @@ DR-QUANT validated this run: {', '.join(quant) or '(none)'}
 INVESTABLE UNIVERSE (you may ONLY recommend symbols from this list):
 {uni_str}
 
-TASK: Identify up to {max_themes} investable THEMES driven by the above. For each,
-map it to the impacted sector(s) and pick 2-5 stocks FROM THE UNIVERSE that best
-express it, each with a one-line rationale tying the stock to the macro driver.
-Skip a theme if no universe stock fits.
+TASK:
+1. Synthesise a single HOLISTIC macro view that integrates EVERY factor above
+   (rates + inflation + INR + crude + flows + global + sentiment) — how they
+   net out for Indian equities right now.
+2. Select 3 to 7 stocks FROM THE UNIVERSE that are best positioned under that
+   COMBINED view (not single-factor bets). For each, give a DETAILED thesis
+   (3-5 sentences) that explicitly weighs MULTIPLE factors for/against it, plus
+   the key risk. Prefer names the combined picture supports with conviction.
 
 Return STRICT JSON, no prose:
-{{"themes":[{{"theme":"...","driver":"... (cite the recent development)","sectors":["..."],
-"sentiment":"BULLISH|BEARISH|NEUTRAL","horizon":"weeks|months|quarters",
-"stocks":[{{"symbol":"<from universe>","rationale":"..."}}]}}]}}"""
+{{"macro_view":"integrated paragraph weighing all factors",
+"picks":[{{"symbol":"<from universe>","sector":"...","conviction":"HIGH|MEDIUM|LOW",
+"thesis":"detailed multi-factor analysis (3-5 sentences) + key risk"}}]}}"""
 
     from src.llm import get_llm
     reply = get_llm().complete(system, prompt) or ""
@@ -275,36 +281,37 @@ Return STRICT JSON, no prose:
         data = _extract_json(reply)
     except Exception:
         data = None
-    if not isinstance(data, dict) or "themes" not in data:
-        return {"error": "LLM did not return usable themes.",
+    if not isinstance(data, dict) or "picks" not in data:
+        return {"error": "LLM did not return usable picks.",
                 "raw": reply[:600], **signals}
 
-    # Keep only universe symbols; attach sector/score; collect tickers for allocation.
+    # Validate against the universe; attach sector + a quant entry price per pick.
     by_sym = {u["symbol"]: u for u in universe}
+    try:
+        from src.tools.deep_dive import _entry_price
+    except Exception:
+        _entry_price = lambda s: {}
     tickers: list[str] = []
-    clean_themes = []
-    for t in (data.get("themes") or [])[:max_themes]:
-        stocks = []
-        for s in (t.get("stocks") or []):
-            sym = str(s.get("symbol") or "").upper().strip()
-            if sym in by_sym:
-                u = by_sym[sym]
-                stocks.append({"symbol": sym, "rationale": s.get("rationale", ""),
-                               "sector": u.get("sector"), "recommendation": u.get("recommendation")})
-                if sym not in tickers:
-                    tickers.append(sym)
-        if stocks:
-            clean_themes.append({
-                "theme": t.get("theme", ""), "driver": t.get("driver", ""),
-                "sectors": t.get("sectors", []),
-                "sentiment": str(t.get("sentiment", "NEUTRAL")).upper(),
-                "horizon": t.get("horizon", ""), "stocks": stocks,
-            })
+    picks = []
+    for p in (data.get("picks") or [])[:7]:
+        sym = str(p.get("symbol") or "").upper().strip()
+        if sym not in by_sym or sym in tickers:
+            continue
+        u = by_sym[sym]
+        picks.append({
+            "symbol": sym,
+            "sector": p.get("sector") or u.get("sector"),
+            "conviction": str(p.get("conviction", "MEDIUM")).upper(),
+            "thesis": p.get("thesis", ""),
+            "recommendation": u.get("recommendation"),
+            "entry": _entry_price(sym),
+        })
+        tickers.append(sym)
 
     return {
         "as_of": signals["as_of"], "window_days": days,
-        "macro": macro, "themes": clean_themes,
-        "tickers": tickers,
+        "macro": macro, "macro_view": data.get("macro_view", ""),
+        "picks": picks, "tickers": tickers,
         "counts": {"news": len(signals["news"]), "reddit": len(signals["reddit"]),
-                   "universe": len(universe)},
+                   "universe": len(universe), "sources": signals.get("sources_used")},
     }

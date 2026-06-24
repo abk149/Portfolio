@@ -304,43 +304,44 @@ fun ThemesScreen() {
                     "${counts?.optInt("reddit") ?: 0} reddit, ${counts?.optInt("universe") ?: 0} universe stocks",
                     AccentHi)
             }
-            val themes = r.optJSONArray("themes")
-            if (themes == null || themes.length() == 0) {
-                SectionCard("No themes", Muted) { Text("No clear themes from recent signals. " +
-                    "Build/refresh the Universe Map for more coverage.", color = Muted, fontSize = 12.sp) }
+            r.optString("macro_view").takeIf { it.isNotBlank() }?.let { view ->
+                SectionCard("Holistic macro view", AccentHi) {
+                    Text(view, color = OnBg, fontSize = 13.sp, lineHeight = 19.sp)
+                }
+            }
+            val picks = r.optJSONArray("picks")
+            if (picks == null || picks.length() == 0) {
+                SectionCard("No picks", Muted) { Text("No high-conviction picks from recent " +
+                    "signals. Build/refresh the Universe Map for more coverage.",
+                    color = Muted, fontSize = 12.sp) }
             } else {
-                for (i in 0 until themes.length()) {
-                    val t = themes.optJSONObject(i) ?: continue
-                    val sent = t.optString("sentiment", "NEUTRAL")
-                    val col = when (sent) { "BULLISH" -> Bull; "BEARISH" -> Bear; else -> Warn }
-                    SectionCard(t.optString("theme", "Theme"), col, trailing = { Pill(sent, col) }) {
-                        Text(t.optString("driver", ""), color = OnBg, fontSize = 13.sp)
-                        val secs = t.optJSONArray("sectors")
-                        if (secs != null && secs.length() > 0) {
-                            Spacer(Modifier.height(6.dp))
-                            Text("Sectors: " + (0 until secs.length()).joinToString(", ") { secs.optString(it) },
-                                color = Muted, fontSize = 11.sp)
+                SectionCard("Top picks (${picks.length()})", Bull) {
+                    Text("All factors weighed together. Tap a stock for the full deep dive.",
+                        color = Muted, fontSize = 11.sp)
+                }
+                for (i in 0 until picks.length()) {
+                    val p = picks.optJSONObject(i) ?: continue
+                    val sym = p.optString("symbol")
+                    val conv = p.optString("conviction", "MEDIUM")
+                    val col = when (conv) { "HIGH" -> Bull; "LOW" -> Muted; else -> AccentHi }
+                    val e = p.optJSONObject("entry")
+                    SectionCard(sym, col, trailing = { Pill(conv, col) }) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(p.optString("sector", ""), color = Muted, fontSize = 11.sp,
+                                modifier = Modifier.weight(1f))
+                            Text("🔍 deep dive", color = AccentHi, fontSize = 11.sp,
+                                modifier = Modifier.clickable { deepSym = sym })
                         }
-                        Text("Horizon: ${t.optString("horizon", "—")}", color = Muted, fontSize = 11.sp)
-                        Spacer(Modifier.height(10.dp))
-                        val stocks = t.optJSONArray("stocks")
-                        if (stocks != null) for (j in 0 until stocks.length()) {
-                            val s = stocks.optJSONObject(j) ?: continue
-                            val sym = s.optString("symbol")
-                            Column(Modifier.fillMaxWidth().clickable { deepSym = sym }
-                                .padding(vertical = 6.dp)) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text(sym, color = col, fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                                    Spacer(Modifier.width(8.dp))
-                                    Text(s.optString("sector", ""), color = Muted, fontSize = 10.sp,
-                                        modifier = Modifier.weight(1f))
-                                    Text("🔍 dive", color = AccentHi, fontSize = 11.sp)
-                                }
-                                Text(s.optString("rationale", ""), color = OnBg.copy(alpha = 0.85f),
-                                    fontSize = 12.sp, lineHeight = 16.sp)
-                            }
-                            Divider(color = BorderCol.copy(alpha = 0.3f))
+                        if (e != null) {
+                            Spacer(Modifier.height(8.dp))
+                            StatusBanner("Entry ₹${fmtNum(e.opt("suggested_entry"))}  " +
+                                "(zone ₹${fmtNum(e.opt("entry_low"))}–${fmtNum(e.opt("entry_high"))})  ·  " +
+                                "CMP ₹${fmtNum(e.opt("current"))}  ·  50-DMA ₹${fmtNum(e.opt("dma50"))}  ·  " +
+                                "RSI ${fmtNum(e.opt("rsi"))}", Bull)
                         }
+                        Spacer(Modifier.height(8.dp))
+                        Text(p.optString("thesis", ""), color = OnBg.copy(alpha = 0.9f),
+                            fontSize = 13.sp, lineHeight = 18.sp)
                     }
                 }
 
