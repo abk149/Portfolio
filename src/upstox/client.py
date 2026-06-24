@@ -117,7 +117,9 @@ class UpstoxClient:
                 raise UpstoxAuthError("Upstox token expired. Re-run python -m src.upstox.auth")
 
         if r.status_code != 200:
-            log.debug(f"Upstox {path} → {r.status_code}")
+            # Log the URL + body so 405/400 (e.g. out-of-window date ranges on
+            # /charges/historical-trades) are diagnosable from the Terminal.
+            log.info(f"Upstox {r.status_code} {url} params={params} → {r.text[:200]}")
             return None
 
         _UPSTOX_LIMITER.relax()      # clean response — drift back toward base rate

@@ -105,12 +105,16 @@ class PerformanceAnalyzer:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _fy_ranges(earliest_year: int = 2018) -> list[tuple[date, date]]:
-        """Return (start, end) for each FY from *earliest_year* to today."""
+    def _fy_ranges(years_back: int = 3) -> list[tuple[date, date]]:
+        """(start, end) for each of the last `years_back` financial years.
+
+        Upstox's /charges/historical-trades only serves the LAST 3 FINANCIAL
+        YEARS — requesting older ranges returns 405/400. Cap to that window and
+        never send a future end-date (the current FY ends at `today`).
+        """
         today = date.today()
-        current_fy_start_year = (
-            today.year if today.month >= 4 else today.year - 1
-        )
+        current_fy_start_year = today.year if today.month >= 4 else today.year - 1
+        earliest_year = current_fy_start_year - (max(1, years_back) - 1)
         ranges = []
         for y in range(current_fy_start_year, earliest_year - 1, -1):
             start = date(y, 4, 1)
