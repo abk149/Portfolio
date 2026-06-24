@@ -41,9 +41,12 @@ android {
     }
     packagingOptions {
         resources.excludes += '/META-INF/{AL2.0,LGPL2.1}'
-        // Keep native libs uncompressed + page-aligned in the APK (16 KB ready)
+        // Compress native libs in the APK (smaller download + reliable install).
+        // NOTE: do NOT set useLegacyPackaging=false here — uncompressed Chaquopy
+        // libs (numpy/pandas/lxml) bloat the APK and make ADB install time out.
+        // Chaquopy 17 still links its libs in 16 KB mode for device compatibility.
         jniLibs {
-            useLegacyPackaging false
+            useLegacyPackaging true
         }
     }
 }
