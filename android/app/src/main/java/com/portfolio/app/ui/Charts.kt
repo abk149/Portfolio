@@ -182,10 +182,12 @@ fun FrontierChart(
             fun py(y: Float) = h - pad - (y - ylo) / yr * (h - 2 * pad)
             drawLine(BorderCol, Offset(0f, h - 1), Offset(w, h - 1), 1f)
 
-            val sorted = frontier.sortedBy { it.first }
-            if (sorted.size >= 2) {
+            // Connect in the given (target-return) order — NOT sorted by vol.
+            // The optimizer sweeps target returns, tracing the full Markowitz
+            // curve; sorting by vol maps two returns to one vol → a zig-zag.
+            if (frontier.size >= 2) {
                 val path = Path()
-                sorted.forEachIndexed { i, (x, y) ->
+                frontier.forEachIndexed { i, (x, y) ->
                     if (i == 0) path.moveTo(px(x), py(y)) else path.lineTo(px(x), py(y))
                 }
                 drawPath(path, AccentHi, style = Stroke(width = 3f))
