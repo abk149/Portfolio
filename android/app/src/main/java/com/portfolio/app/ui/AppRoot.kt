@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Chat
 import androidx.compose.material.icons.filled.Insights
 import androidx.compose.material.icons.filled.List
@@ -29,6 +30,7 @@ import androidx.compose.ui.window.DialogProperties
 
 private enum class Dest(val label: String, val icon: ImageVector) {
     HOME("Portfolio", Icons.Filled.PieChart),
+    IDEAS("Ideas", Icons.Filled.AutoAwesome),
     QUANT("DR-Quant", Icons.Filled.Insights),
     MAP("U-Map", Icons.Filled.Map),
     ANALYSIS("Analysis", Icons.Filled.ShowChart),
@@ -97,6 +99,7 @@ fun AppRoot() {
         Box(Modifier.padding(pad)) {
             when (dest) {
                 Dest.HOME -> HomeScreen()
+                Dest.IDEAS -> ThemesScreen()
                 Dest.QUANT -> QuantScreen()
                 Dest.MAP -> MapScreen()
                 Dest.ANALYSIS -> AnalysisScreen()

@@ -221,6 +221,149 @@ fun QuantScreen() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// IDEAS — macro-infused themes → stocks → allocation toward the frontier
+// ─────────────────────────────────────────────────────────────────────────────
+@Composable
+fun ThemesScreen() {
+    var days by remember { mutableStateOf(14) }
+    var running by remember { mutableStateOf(false) }
+    var status by remember { mutableStateOf<String?>(null) }
+    var res by remember { mutableStateOf<JSONObject?>(null) }
+    var cash by remember { mutableStateOf("25000") }
+    var allocBusy by remember { mutableStateOf(false) }
+    var alloc by remember { mutableStateOf<JSONObject?>(null) }
+    var allocMsg by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
+
+    ScreenScaffold(title = "Macro Ideas", loading = running, onRefresh = null) {
+        if (!BackendBus.running) { BackendOfflineHint(); return@ScreenScaffold }
+        SectionCard("Generate ideas", AccentHi) {
+            Text("Pulls recent macro, news (domestic + global), and Reddit chatter, " +
+                "maps them to sectors, and picks stocks from your Universe Map — " +
+                "then allocates an amount toward the efficient frontier.",
+                color = Muted, fontSize = 12.sp)
+            Spacer(Modifier.height(8.dp))
+            Text("Freshness window", color = Muted, fontSize = 11.sp)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf(7, 14, 30).forEach { d ->
+                    FilterChip(selected = days == d, onClick = { days = d }, label = { Text("${d}d") })
+                }
+            }
+            Spacer(Modifier.height(10.dp))
+            Button(
+                onClick = {
+                    scope.launch {
+                        running = true; res = null; alloc = null
+                        status = "Ingesting macro/news/Reddit + reasoning over your universe…"
+                        val sub = Api.themes(days).objOrNull()
+                        val jobId = sub?.optString("job_id")
+                        if (jobId.isNullOrBlank()) { status = "Failed to start."; running = false; return@launch }
+                        val fin = pollJob(jobId, maxSecs = 300)
+                        if (fin.optString("status") == "done") {
+                            val r = fin.optJSONObject("result")
+                            if (r != null && r.has("error")) status = r.optString("error")
+                            else { res = r; status = null }
+                        } else status = "Failed: ${fin.optString("error")}"
+                        running = false
+                    }
+                },
+                enabled = !running, modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.buttonColors(containerColor = Bull),
+            ) { Text(if (running) "Thinking…" else "✨ Generate macro ideas") }
+            status?.let { Spacer(Modifier.height(8.dp)); StatusBanner(it, if (running) Warn else Bear) }
+        }
+
+        res?.let { r ->
+            val macro = r.optJSONObject("macro")
+            val counts = r.optJSONObject("counts")
+            SectionCard("As of ${r.optString("as_of")} · last ${r.optInt("window_days")}d", AccentHi) {
+                StatusBanner("Market mode: ${macro?.optString("mode", "—")}  ·  " +
+                    "VIX ${macro?.opt("india_vix")} · PCR ${macro?.opt("nifty_pcr")} · " +
+                    "USDINR ${macro?.opt("usdinr")}\nSignals: ${counts?.optInt("news") ?: 0} news, " +
+                    "${counts?.optInt("reddit") ?: 0} reddit, ${counts?.optInt("universe") ?: 0} universe stocks",
+                    AccentHi)
+            }
+            val themes = r.optJSONArray("themes")
+            if (themes == null || themes.length() == 0) {
+                SectionCard("No themes", Muted) { Text("No clear themes from recent signals. " +
+                    "Build/refresh the Universe Map for more coverage.", color = Muted, fontSize = 12.sp) }
+            } else {
+                for (i in 0 until themes.length()) {
+                    val t = themes.optJSONObject(i) ?: continue
+                    val sent = t.optString("sentiment", "NEUTRAL")
+                    val col = when (sent) { "BULLISH" -> Bull; "BEARISH" -> Bear; else -> Warn }
+                    SectionCard(t.optString("theme", "Theme"), col, trailing = { Pill(sent, col) }) {
+                        Text(t.optString("driver", ""), color = OnBg, fontSize = 13.sp)
+                        val secs = t.optJSONArray("sectors")
+                        if (secs != null && secs.length() > 0) {
+                            Spacer(Modifier.height(6.dp))
+                            Text("Sectors: " + (0 until secs.length()).joinToString(", ") { secs.optString(it) },
+                                color = Muted, fontSize = 11.sp)
+                        }
+                        Text("Horizon: ${t.optString("horizon", "—")}", color = Muted, fontSize = 11.sp)
+                        Spacer(Modifier.height(10.dp))
+                        val stocks = t.optJSONArray("stocks")
+                        if (stocks != null) for (j in 0 until stocks.length()) {
+                            val s = stocks.optJSONObject(j) ?: continue
+                            Column(Modifier.padding(vertical = 4.dp)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(s.optString("symbol"), color = col, fontSize = 14.sp,
+                                        fontWeight = FontWeight.Bold)
+                                    Spacer(Modifier.width(8.dp))
+                                    Text(s.optString("sector", ""), color = Muted, fontSize = 10.sp)
+                                }
+                                Text(s.optString("rationale", ""), color = OnBg.copy(alpha = 0.85f),
+                                    fontSize = 12.sp, lineHeight = 16.sp)
+                            }
+                            Divider(color = BorderCol.copy(alpha = 0.3f))
+                        }
+                    }
+                }
+
+                // Allocate the idea stocks toward the efficient frontier.
+                val tickers = buildList {
+                    r.optJSONArray("tickers")?.let { for (k in 0 until it.length()) add(it.optString(k)) }
+                }
+                SectionCard("Allocate toward the frontier", Bull) {
+                    Text("Deploy an amount across these ${tickers.size} idea stocks to best " +
+                        "improve your portfolio's risk/return (₹ + whole shares).",
+                        color = Muted, fontSize = 12.sp)
+                    Spacer(Modifier.height(8.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        OutlinedTextField(cash, { cash = it.filter { c -> c.isDigit() } },
+                            label = { Text("Amount (₹)") }, singleLine = true, modifier = Modifier.weight(1f))
+                        Spacer(Modifier.width(8.dp))
+                        Button(onClick = {
+                            val amt = cash.toDoubleOrNull() ?: 0.0
+                            if (amt <= 0 || tickers.isEmpty()) { allocMsg = "Enter an amount."; return@Button }
+                            scope.launch {
+                                allocBusy = true; alloc = null; allocMsg = "Optimising allocation…"
+                                val a = Api.deployCashTickers(amt, tickers).objOrNull()
+                                if (a == null) allocMsg = "Backend error."
+                                else if (a.has("error")) allocMsg = a.optString("error")
+                                else { alloc = a; allocMsg = null }
+                                allocBusy = false
+                            }
+                        }, enabled = !allocBusy) { Text(if (allocBusy) "…" else "Allocate") }
+                    }
+                    allocMsg?.let { Spacer(Modifier.height(8.dp)); StatusBanner(it, if (allocBusy) Warn else Bear) }
+                    alloc?.let { a ->
+                        val before = a.optJSONObject("before"); val after = a.optJSONObject("after")
+                        Spacer(Modifier.height(10.dp))
+                        KpiGrid(listOf(
+                            Triple("Sharpe now", fmtNum(before?.opt("sharpe")), OnBg),
+                            Triple("Sharpe after", fmtNum(after?.opt("sharpe")), Bull),
+                        ))
+                        Spacer(Modifier.height(10.dp))
+                        DataTable(allocationBuys(arr(a, "buys")))
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // UNIVERSE MAP
 // ─────────────────────────────────────────────────────────────────────────────
 @Composable

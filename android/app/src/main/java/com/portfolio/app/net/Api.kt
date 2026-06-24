@@ -93,6 +93,12 @@ object Api {
     suspend fun deployCash(cash: Double, includeUniverse: Boolean = true) =
         post("/api/portfolio/deploy-cash",
             JSONObject().put("cash", cash).put("include_universe", includeUniverse))
+    suspend fun deployCashTickers(cash: Double, tickers: List<String>) =
+        post("/api/portfolio/deploy-cash", JSONObject().put("cash", cash)
+            .put("include_universe", false).put("tickers", org.json.JSONArray(tickers)))
+
+    // ── Macro Ideas / themes ──
+    suspend fun themes(days: Int) = post("/api/themes", JSONObject().put("days", days))
 
     // ── Analysis ──
     suspend fun screener(universe: String, minScore: Int) =

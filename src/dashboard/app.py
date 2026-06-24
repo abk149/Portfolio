@@ -155,8 +155,14 @@ def api_portfolio_deploy_cash(body: dict):
         yf = f"{sym}.NS"
         val_by_yf[yf] = float(row.get("current_value", 0))
 
-    # Pull STRONG_BUY candidates from the KB universe store
+    # Explicit ticker list (e.g. from the macro Ideas tab) takes priority.
     candidates: list[str] = []
+    for t in (body.get("tickers") or []):
+        sym = str(t).upper().strip().replace(".NS", "").replace(".BO", "")
+        if sym:
+            candidates.append(f"{sym}.NS")
+
+    # Pull STRONG_BUY candidates from the KB universe store
     if include_universe:
         try:
             from src.kb import KnowledgeBase
@@ -400,6 +406,22 @@ def api_agent(body: AgentBody):
         from src.agents import IntradayAgent, PortfolioAgent, ScreenerAgent
         cls = {"portfolio": PortfolioAgent, "screener": ScreenerAgent, "intraday": IntradayAgent}[body.agent]
         return {"answer": cls().run(body.question)}
+
+    _run_job(job_id, _do)
+    return {"job_id": job_id}
+
+
+@app.post("/api/themes")
+def api_themes(body: dict):
+    """Macro-infused theme ideas: ingest recent macro/news/Reddit + Universe Map
+    + DR-Quant → themes mapped to stocks. Job-based (web + LLM = slow)."""
+    job_id = uuid.uuid4().hex[:8]
+    days = int(body.get("days", 14))
+    max_themes = int(body.get("max_themes", 6))
+
+    def _do():
+        from src.tools.macro_intel import build_macro_themes
+        return build_macro_themes(days=days, max_themes=max_themes)
 
     _run_job(job_id, _do)
     return {"job_id": job_id}
