@@ -99,6 +99,8 @@ object Api {
 
     // ── Macro Ideas / themes ──
     suspend fun themes(days: Int) = post("/api/themes", JSONObject().put("days", days))
+    suspend fun deepDive(symbol: String) =
+        post("/api/deep-dive", JSONObject().put("symbol", symbol))
 
     // ── Analysis ──
     suspend fun screener(universe: String, minScore: Int) =

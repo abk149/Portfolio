@@ -411,6 +411,23 @@ def api_agent(body: AgentBody):
     return {"job_id": job_id}
 
 
+@app.post("/api/deep-dive")
+def api_deep_dive(body: dict):
+    """Per-stock deep dive: last-2-quarter results + valuation issues + a quant
+    entry-price zone. Job-based (web + PDF + LLM = slow)."""
+    job_id = uuid.uuid4().hex[:8]
+    symbol = str(body.get("symbol") or "").upper().strip()
+    if not symbol:
+        return {"job_id": None, "error": "symbol required"}
+
+    def _do():
+        from src.tools.deep_dive import deep_dive
+        return deep_dive(symbol)
+
+    _run_job(job_id, _do)
+    return {"job_id": job_id}
+
+
 @app.post("/api/themes")
 def api_themes(body: dict):
     """Macro-infused theme ideas: ingest recent macro/news/Reddit + Universe Map

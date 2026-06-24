@@ -1,6 +1,7 @@
 package com.portfolio.app.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -164,12 +165,29 @@ fun QuantScreen() {
     var result by remember { mutableStateOf<JSONObject?>(null) }
     var status by remember { mutableStateOf<String?>(null) }
     var macro by remember { mutableStateOf<JSONObject?>(null) }
+    var deepSym by remember { mutableStateOf<String?>(null) }
+    var symInput by remember { mutableStateOf("") }
     val scope = rememberCoroutineScope()
 
     LaunchedEffect(Unit) { if (BackendBus.running) macro = Api.macro().objOrNull() }
+    deepSym?.let { DeepDiveDialog(it) { deepSym = null } }
 
     ScreenScaffold(title = "DR-Quant", loading = running, onRefresh = null) {
         if (!BackendBus.running) { BackendOfflineHint(); return@ScreenScaffold }
+        SectionCard("Deep dive a stock", AccentHi) {
+            Text("Drill into last-2-quarter results, valuation issues, and a quant " +
+                "entry price for any symbol (or a funnel-validated one).",
+                color = Muted, fontSize = 12.sp)
+            Spacer(Modifier.height(8.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                OutlinedTextField(symInput, { symInput = it.uppercase() },
+                    label = { Text("Symbol (e.g. RELIANCE)") }, singleLine = true,
+                    modifier = Modifier.weight(1f))
+                Spacer(Modifier.width(8.dp))
+                Button(onClick = { if (symInput.isNotBlank()) deepSym = symInput.trim() },
+                    enabled = symInput.isNotBlank()) { Text("🔍 Dive") }
+            }
+        }
         SectionCard("Funnel", Bull) {
             UniversePicker(universe) { universe = it }
             Spacer(Modifier.height(10.dp))
@@ -233,7 +251,10 @@ fun ThemesScreen() {
     var allocBusy by remember { mutableStateOf(false) }
     var alloc by remember { mutableStateOf<JSONObject?>(null) }
     var allocMsg by remember { mutableStateOf<String?>(null) }
+    var deepSym by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
+
+    deepSym?.let { DeepDiveDialog(it) { deepSym = null } }
 
     ScreenScaffold(title = "Macro Ideas", loading = running, onRefresh = null) {
         if (!BackendBus.running) { BackendOfflineHint(); return@ScreenScaffold }
@@ -305,12 +326,15 @@ fun ThemesScreen() {
                         val stocks = t.optJSONArray("stocks")
                         if (stocks != null) for (j in 0 until stocks.length()) {
                             val s = stocks.optJSONObject(j) ?: continue
-                            Column(Modifier.padding(vertical = 4.dp)) {
+                            val sym = s.optString("symbol")
+                            Column(Modifier.fillMaxWidth().clickable { deepSym = sym }
+                                .padding(vertical = 6.dp)) {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text(s.optString("symbol"), color = col, fontSize = 14.sp,
-                                        fontWeight = FontWeight.Bold)
+                                    Text(sym, color = col, fontSize = 14.sp, fontWeight = FontWeight.Bold)
                                     Spacer(Modifier.width(8.dp))
-                                    Text(s.optString("sector", ""), color = Muted, fontSize = 10.sp)
+                                    Text(s.optString("sector", ""), color = Muted, fontSize = 10.sp,
+                                        modifier = Modifier.weight(1f))
+                                    Text("🔍 dive", color = AccentHi, fontSize = 11.sp)
                                 }
                                 Text(s.optString("rationale", ""), color = OnBg.copy(alpha = 0.85f),
                                     fontSize = 12.sp, lineHeight = 16.sp)
@@ -894,6 +918,106 @@ fun ChatScreen() {
             }
         }
     }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DEEP DIVE — last-2-quarter results, valuation issues, quant entry price
+// ─────────────────────────────────────────────────────────────────────────────
+@Composable
+fun DeepDiveDialog(symbol: String, onDismiss: () -> Unit) {
+    var loading by remember { mutableStateOf(true) }
+    var res by remember { mutableStateOf<JSONObject?>(null) }
+    var error by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(symbol) {
+        loading = true; error = null; res = null
+        val sub = Api.deepDive(symbol).objOrNull()
+        val jobId = sub?.optString("job_id")
+        if (jobId.isNullOrBlank()) { error = "Failed to start."; loading = false; return@LaunchedEffect }
+        val fin = pollJob(jobId, maxSecs = 240)
+        if (fin.optString("status") == "done") res = fin.optJSONObject("result")
+        else error = "Failed: ${fin.optString("error")}"
+        loading = false
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } },
+        title = { Text("Deep dive · $symbol") },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState())) {
+                if (loading) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp, color = AccentHi)
+                        Spacer(Modifier.width(10.dp))
+                        Text("Pulling results PDFs, fundamentals & price model…",
+                            color = Muted, fontSize = 12.sp)
+                    }
+                }
+                error?.let { StatusBanner(it, Bear) }
+                res?.let { r ->
+                    val f = r.optJSONObject("fundamentals") ?: JSONObject()
+                    val e = r.optJSONObject("entry") ?: JSONObject()
+                    val a = r.optJSONObject("analysis") ?: JSONObject()
+
+                    Text("Valuation & quality", color = AccentHi, fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold)
+                    Spacer(Modifier.height(6.dp))
+                    KpiGrid(listOf(
+                        Triple("PE", fmtNum(f.opt("pe")), OnBg),
+                        Triple("ROE", fmtNum(f.opt("roe_pct")) + "%", OnBg),
+                        Triple("D/E", fmtNum(f.opt("debt_to_equity")), OnBg),
+                        Triple("Profit gr.", fmtNum(f.opt("profit_growth_pct")) + "%",
+                            if (((f.opt("profit_growth_pct") as? Number)?.toDouble() ?: 0.0) >= 0) Bull else Bear),
+                    ))
+
+                    Spacer(Modifier.height(12.dp))
+                    Text("Quant entry", color = AccentHi, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                    Spacer(Modifier.height(6.dp))
+                    StatusBanner("CMP ₹${fmtNum(e.opt("current"))}  ·  50-DMA ₹${fmtNum(e.opt("dma50"))}  ·  " +
+                        "RSI ${fmtNum(e.opt("rsi"))}\nSuggested entry ₹${fmtNum(e.opt("suggested_entry"))} " +
+                        "(zone ₹${fmtNum(e.opt("entry_low"))}–${fmtNum(e.opt("entry_high"))}, " +
+                        "${fmtNum(e.opt("discount_to_cmp_pct"))}% below CMP)\n${e.optString("note", "")}", Bull)
+
+                    Spacer(Modifier.height(12.dp))
+                    a.optString("verdict").takeIf { it.isNotBlank() }?.let { Pill(it, AccentHi); Spacer(Modifier.height(8.dp)) }
+                    deepText("Financial health", a.optString("financial_health"))
+                    deepText("Last 2 quarters", a.optString("quarter_trend"))
+                    deepText("Valuation", a.optString("valuation"))
+                    deepText("Entry view", a.optString("entry_view"))
+                    deepList("Issues", a.optJSONArray("issues"), Warn)
+                    deepList("Red flags", a.optJSONArray("red_flags"), Bear)
+                    a.optString("raw").takeIf { it.isNotBlank() }?.let {
+                        Spacer(Modifier.height(8.dp)); Text(it, color = Muted, fontSize = 11.sp)
+                    }
+                    val srcs = r.optJSONArray("sources")
+                    if (srcs != null && srcs.length() > 0) {
+                        Spacer(Modifier.height(10.dp))
+                        Text("Sources", color = Muted, fontSize = 11.sp)
+                        for (i in 0 until srcs.length())
+                            Text("• ${srcs.optJSONObject(i)?.optString("title")}",
+                                color = Muted, fontSize = 11.sp, maxLines = 1)
+                    }
+                }
+            }
+        },
+    )
+}
+
+@Composable
+private fun deepText(label: String, value: String?) {
+    if (value.isNullOrBlank()) return
+    Spacer(Modifier.height(8.dp))
+    Text(label, color = Muted, fontSize = 11.sp)
+    Text(value, color = OnBg, fontSize = 13.sp, lineHeight = 18.sp)
+}
+
+@Composable
+private fun deepList(label: String, arr: org.json.JSONArray?, color: Color) {
+    if (arr == null || arr.length() == 0) return
+    Spacer(Modifier.height(8.dp))
+    Text(label, color = color, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+    for (i in 0 until arr.length())
+        Text("• ${arr.optString(i)}", color = OnBg.copy(alpha = 0.9f), fontSize = 12.sp,
+            lineHeight = 16.sp, modifier = Modifier.padding(vertical = 1.dp))
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

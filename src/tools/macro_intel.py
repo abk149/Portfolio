@@ -40,7 +40,60 @@ _SUBREDDITS = [
     ("IndianStreetBets", "macro OR sector OR rate OR result"),
     ("IndiaInvestments", "market OR sector OR rate OR policy"),
     ("StockMarketIndia", "nifty OR sector OR macro"),
+    ("DalalStreetTalks", "sector OR result OR macro"),
+    ("IndianStockMarket", "nifty OR sector OR rate"),
+    ("NSEbets", "sector OR result"),
 ]
+
+# 12-15 distinct financial-news RSS feeds beyond Reddit. Best-effort per feed.
+_RSS_FEEDS = [
+    ("Economic Times Markets", "https://economictimes.indiatimes.com/markets/rssfeeds/1977021501.cms"),
+    ("ET Economy", "https://economictimes.indiatimes.com/news/economy/rssfeeds/1373380680.cms"),
+    ("Moneycontrol Markets", "https://www.moneycontrol.com/rss/marketreports.xml"),
+    ("Moneycontrol Business", "https://www.moneycontrol.com/rss/business.xml"),
+    ("LiveMint Markets", "https://www.livemint.com/rss/markets"),
+    ("LiveMint Economy", "https://www.livemint.com/rss/economy"),
+    ("Business Standard Markets", "https://www.business-standard.com/rss/markets-106.rss"),
+    ("BusinessLine Markets", "https://www.thehindubusinessline.com/markets/feeder/default.rss"),
+    ("Financial Express Market", "https://www.financialexpress.com/market/feed/"),
+    ("Financial Express Economy", "https://www.financialexpress.com/economy/feed/"),
+    ("NDTV Profit", "https://feeds.feedburner.com/ndtvprofit-latest"),
+    ("Investing.com India", "https://in.investing.com/rss/news_25.rss"),
+    ("Zeebiz Markets", "https://www.zeebiz.com/rss/markets.xml"),
+    ("Reuters India (GN)", None),   # via Google News fallback
+]
+
+
+def _fetch_rss(url: str, limit: int = 8) -> list[dict]:
+    """Generic RSS/Atom reader → [{title, url, published}]. Best-effort."""
+    import re
+    import requests
+    try:
+        r = requests.get(url, timeout=12,
+                         headers={"User-Agent": "Mozilla/5.0 (PortfolioQuant)"})
+        if r.status_code != 200 or not r.text:
+            return []
+        text = r.text
+        items = re.split(r"<item[ >]|<entry[ >]", text)[1:]
+        out = []
+        for it in items[:limit * 2]:
+            def grab(tag):
+                m = re.search(rf"<{tag}[^>]*>(.*?)</{tag}>", it, re.S | re.I)
+                if not m:
+                    return ""
+                v = re.sub(r"<!\[CDATA\[|\]\]>", "", m.group(1))
+                return re.sub(r"<[^>]+>", " ", v).strip()
+            title = grab("title")
+            pub = grab("pubDate") or grab("published") or grab("updated")
+            if title:
+                out.append({"title": title[:200], "source": "RSS", "published": pub,
+                            "snippet": grab("description")[:200]})
+            if len(out) >= limit:
+                break
+        return out
+    except Exception as e:
+        log.debug(f"rss {url} failed: {e}")
+        return []
 
 
 def _parse_pub(pub: Optional[str]) -> Optional[datetime]:
@@ -67,20 +120,37 @@ def gather_signals(days: int = 14, per_query: int = 5) -> dict:
         log.debug(f"macro snapshot failed: {e}")
 
     news: list[dict] = []
+    seen_titles: set = set()
+
+    def _add_news(topic, title, source, published, snippet):
+        if not title:
+            return
+        key = title.strip().lower()[:80]
+        if key in seen_titles:
+            return
+        dt = _parse_pub(published)
+        if dt and dt < cutoff:
+            return                                # too old → drop (no stale bias)
+        seen_titles.add(key)
+        news.append({"topic": topic, "title": title, "source": source,
+                     "published": published, "snippet": (snippet or "")[:240]})
+
+    # Source 1: Google News RSS over curated macro queries.
     try:
         from src.tools.google_news import google_news_rss
         for q in _QUERIES:
             for it in (google_news_rss(q, limit=per_query) or []):
-                dt = _parse_pub(it.get("published"))
-                if dt and dt < cutoff:
-                    continue                      # too old → drop (no stale bias)
-                news.append({
-                    "topic": q, "title": it.get("title"),
-                    "source": it.get("source"), "published": it.get("published"),
-                    "snippet": (it.get("snippet") or "")[:240],
-                })
+                _add_news(q, it.get("title"), it.get("source"),
+                          it.get("published"), it.get("snippet"))
     except Exception as e:
-        log.debug(f"news gather failed: {e}")
+        log.debug(f"google news failed: {e}")
+
+    # Sources 2-14: distinct financial-news RSS feeds.
+    for name, url in _RSS_FEEDS:
+        if not url:
+            continue
+        for it in _fetch_rss(url, limit=6):
+            _add_news(name, it.get("title"), name, it.get("published"), it.get("snippet"))
 
     reddit: list[dict] = []
     try:
@@ -101,8 +171,9 @@ def gather_signals(days: int = 14, per_query: int = 5) -> dict:
         "as_of": datetime.now().isoformat(timespec="minutes"),
         "window_days": days,
         "macro": macro,
-        "news": news[:70],
+        "news": news[:90],
         "reddit": reddit[:30],
+        "sources_used": len([u for _, u in _RSS_FEEDS if u]) + 1 + len(_SUBREDDITS),
     }
 
 
