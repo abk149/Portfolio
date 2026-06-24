@@ -90,6 +90,9 @@ object Api {
     suspend fun optimize(mode: String, maxWeight: Double) =
         post("/api/portfolio/optimize",
             JSONObject().put("mode", mode).put("max_weight", maxWeight))
+    suspend fun deployCash(cash: Double, includeUniverse: Boolean = true) =
+        post("/api/portfolio/deploy-cash",
+            JSONObject().put("cash", cash).put("include_universe", includeUniverse))
 
     // ── Analysis ──
     suspend fun screener(universe: String, minScore: Int) =

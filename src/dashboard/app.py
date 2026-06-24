@@ -179,6 +179,18 @@ def api_portfolio_deploy_cash(body: dict):
         max_weight=max_weight,
     )
     res["universe_candidates_considered"] = len(candidates)
+
+    # Enrich each buy with a live price and a whole-share count (amount → shares).
+    try:
+        from src.data import MarketData
+        md = MarketData()
+        for b in res.get("buys", []):
+            px = md.ltp(b.get("ticker", ""))
+            if px and px > 0:
+                b["price"] = round(float(px), 2)
+                b["shares"] = int(b.get("buy_inr", 0) // px)
+    except Exception as e:
+        get_logger("dashboard").debug(f"deploy-cash share enrich failed: {e}")
     return res
 
 

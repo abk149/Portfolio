@@ -167,6 +167,14 @@ fun DataTable(arr: JSONArray?, maxRows: Int = 60) {
     val headerH = 32.dp
     fun zebra(i: Int) = if (i % 2 == 1) Color.White.copy(alpha = 0.025f) else Color.Transparent
 
+    // Pick a human-readable identifier for the sticky column (company/symbol),
+    // never ISIN / instrument token.
+    val idCol = cols.firstOrNull { val k = it.lowercase(); k.contains("company") || k == "name" || k.endsWith("_name") }
+        ?: cols.firstOrNull { val k = it.lowercase(); k.contains("symbol") || k.contains("ticker") }
+        ?: cols.firstOrNull { val k = it.lowercase(); !k.contains("isin") && !k.contains("token") && !k.contains("instrument") }
+        ?: cols.first()
+    val rest = cols.filter { it != idCol }
+
     if (cols.size > 4) {
         Text("Swipe values sideways →", color = Muted, fontSize = 10.sp)
         Spacer(Modifier.height(4.dp))
@@ -175,23 +183,23 @@ fun DataTable(arr: JSONArray?, maxRows: Int = 60) {
     // the symbol stays visible while you scan the numbers.
     Row(Modifier.clip(RoundedCornerShape(8.dp)).border(1.dp, BorderCol, RoundedCornerShape(8.dp))) {
         Column(Modifier.background(Panel2.copy(alpha = 0.5f))) {
-            Box(Modifier.width(cellWidth(cols[0])).height(headerH).background(Panel2)
+            Box(Modifier.width(cellWidth(idCol)).height(headerH).background(Panel2)
                 .padding(horizontal = 10.dp), contentAlignment = Alignment.CenterStart) {
-                Text(prettyHeader(cols[0]), color = Muted, fontSize = 11.sp,
+                Text(prettyHeader(idCol), color = Muted, fontSize = 11.sp,
                     fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             for (i in 0 until n) {
                 val row = arr.optJSONObject(i)
-                Box(Modifier.width(cellWidth(cols[0])).height(rowH).background(zebra(i))
+                Box(Modifier.width(cellWidth(idCol)).height(rowH).background(zebra(i))
                     .padding(horizontal = 10.dp), contentAlignment = Alignment.CenterStart) {
-                    Text(fmtNum(row?.opt(cols[0])), color = OnBg, fontSize = 12.sp,
+                    Text(fmtNum(row?.opt(idCol)), color = OnBg, fontSize = 12.sp,
                         fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }
         }
         Column(Modifier.horizontalScroll(rememberScrollState())) {
             Row(Modifier.height(headerH).background(Panel2)) {
-                cols.drop(1).forEach { c ->
+                rest.forEach { c ->
                     Box(Modifier.width(cellWidth(c)).height(headerH).padding(horizontal = 8.dp),
                         contentAlignment = Alignment.CenterEnd) {
                         Text(prettyHeader(c), color = Muted, fontSize = 11.sp,
@@ -202,7 +210,7 @@ fun DataTable(arr: JSONArray?, maxRows: Int = 60) {
             for (i in 0 until n) {
                 val row = arr.optJSONObject(i)
                 Row(Modifier.height(rowH).background(zebra(i))) {
-                    cols.drop(1).forEach { c ->
+                    rest.forEach { c ->
                         val raw = if (row == null || row.isNull(c)) null else row.opt(c)
                         val signed = if (isSignedKey(c)) numeric(raw) else null
                         val color = when {

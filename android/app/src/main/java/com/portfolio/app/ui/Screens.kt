@@ -272,8 +272,51 @@ fun MapScreen() {
                 ))
             }
         }
-        arr(data, "stocks")?.let { SectionCard("Universe", AccentHi) { DataTable(it, 80) } }
+        arr(data, "stocks")?.takeIf { it.length() > 0 }?.let { stocks ->
+            SectionCard("Map · technical vs fundamental", AccentHi) {
+                ScatterChart(universePoints(stocks), xLabel = "Technical score", yLabel = "Fundamental score")
+            }
+            SectionCard("Universe", AccentHi) { DataTable(stocks, 80) }
+        }
     }
+}
+
+// deploy-cash buys → clean table (symbol first so it's the sticky column).
+private fun allocationBuys(arr: JSONArray?): JSONArray {
+    val out = JSONArray()
+    if (arr == null) return out
+    for (i in 0 until arr.length()) {
+        val o = arr.optJSONObject(i) ?: continue
+        val sym = o.optString("ticker").removeSuffix(".NS").removeSuffix(".BO")
+        out.put(JSONObject()
+            .put("symbol", sym)
+            .put("amount", o.opt("buy_inr") ?: JSONObject.NULL)
+            .put("shares", o.opt("shares") ?: JSONObject.NULL)
+            .put("price", o.opt("price") ?: JSONObject.NULL)
+            .put("weight_pct", o.opt("final_weight_pct") ?: JSONObject.NULL))
+    }
+    return out
+}
+
+// Universe stocks → scatter points (x=tech, y=fundamental, color by recommendation).
+private fun universePoints(arr: JSONArray): List<Triple<Float, Float, Color>> {
+    val out = ArrayList<Triple<Float, Float, Color>>()
+    for (i in 0 until arr.length()) {
+        val o = arr.optJSONObject(i) ?: continue
+        val x = (o.opt("tech_score") as? Number)?.toFloat()
+            ?: (o.opt("combined") as? Number)?.toFloat() ?: continue
+        val y = (o.opt("fund_score") as? Number)?.toFloat()
+            ?: (o.opt("combined") as? Number)?.toFloat() ?: continue
+        val reco = o.optString("recommendation", "")
+        val c = when {
+            reco.contains("STRONG_BUY") || reco == "BUY" || reco.contains("TECH_BUY") -> Bull
+            reco.contains("HOLD") || reco.contains("WATCH") -> Warn
+            reco.contains("AVOID") || reco.contains("SELL") -> Bear
+            else -> Muted
+        }
+        out.add(Triple(x, y, c))
+    }
+    return out
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -372,26 +415,59 @@ fun AnalysisScreen() {
 @Composable private fun PerformanceTab() {
     var res by remember { mutableStateOf<JSONObject?>(null) }
     var loading by remember { mutableStateOf(false) }
+    var status by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
-    LaunchedEffect(Unit) { if (BackendBus.running) res = Api.performanceCached().objOrNull()?.optJSONObject("data") }
+    LaunchedEffect(Unit) {
+        if (BackendBus.running) res = Api.performanceCached().objOrNull()?.optJSONObject("data")
+    }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
         if (!BackendBus.running) { BackendOfflineHint(); return@Column }
-        SectionCard("Performance", AccentHi) {
+        SectionCard("Performance over time", AccentHi) {
+            Text("Reconstructs your portfolio value day-by-day from your executed " +
+                "orders, vs the capital you put in — plus money-weighted return (XIRR), " +
+                "winners and losers.", color = Muted, fontSize = 12.sp)
+            Spacer(Modifier.height(10.dp))
             Button(onClick = {
-                scope.launch { loading = true; res = Api.performance().objOrNull(); loading = false }
+                scope.launch {
+                    loading = true; status = "Analysing — fetching trade history & building the curve…"
+                    val sub = Api.performance().objOrNull()       // job-based
+                    val jobId = sub?.optString("job_id")
+                    if (jobId.isNullOrBlank()) { status = "Failed to start."; loading = false; return@launch }
+                    val fin = pollJob(jobId)
+                    if (fin.optString("status") == "done") { res = fin.optJSONObject("result"); status = null }
+                    else status = "Failed: ${fin.optString("error")}"
+                    loading = false
+                }
             }, enabled = !loading, modifier = Modifier.fillMaxWidth()) {
-                Text(if (loading) "Analyzing…" else "▶ Analyze performance")
+                Text(if (loading) "Analysing…" else "▶ Analyse performance")
             }
+            status?.let { Spacer(Modifier.height(8.dp)); StatusBanner(it, if (loading) Warn else Bear) }
         }
         res?.let { r ->
-            arr(r, "equity_curve")?.let { curve ->
-                val (pv, inv) = equitySeries(curve)
-                if (pv.size >= 2) SectionCard("Equity curve", Bull) {
-                    LineChart(primary = pv, secondary = inv.takeIf { it.size == pv.size })
-                }
+            val s = r.optJSONObject("summary") ?: JSONObject()
+            fun n(k: String) = (s.opt(k) as? Number)?.toDouble() ?: 0.0
+            SectionCard("Returns", AccentHi) {
+                KpiGrid(listOf(
+                    Triple("Invested", "₹" + fmtCompact(s.opt("total_invested")), OnBg),
+                    Triple("Current", "₹" + fmtCompact(s.opt("current_value")), OnBg),
+                    Triple("Total P&L", "₹" + fmtCompact(s.opt("total_pnl")),
+                        if (n("total_pnl") >= 0) Bull else Bear),
+                    Triple("Return", "%.2f%%".format(n("total_pnl_pct")),
+                        if (n("total_pnl_pct") >= 0) Bull else Bear),
+                    Triple("XIRR", if (r.opt("xirr") is Number) "%.2f%%".format(n("xirr").let { if (it < 1) it * 100 else it }) else "—", AccentHi),
+                    Triple("Trades", fmtNum(s.opt("total_trades")), OnBg),
+                ))
             }
-            arr(r, "winners")?.let { SectionCard("Winners", Bull) { DataTable(it) } }
-            arr(r, "losers")?.let { SectionCard("Losers", Bear) { DataTable(it) } }
+            val curve = arr(r, "equity_curve")
+            val (pv, inv) = equitySeries(curve)
+            SectionCard("Portfolio value vs invested", Bull) {
+                if (pv.size >= 2) LineChart(primary = pv, secondary = inv.takeIf { it.size == pv.size })
+                else StatusBanner("No time series yet. This needs your executed order " +
+                    "history — on Groww with limited API access it may be unavailable; " +
+                    "Upstox provides full history.", Warn)
+            }
+            arr(r, "winners")?.takeIf { it.length() > 0 }?.let { SectionCard("Winners", Bull) { DataTable(it) } }
+            arr(r, "losers")?.takeIf { it.length() > 0 }?.let { SectionCard("Losers", Bear) { DataTable(it) } }
         }
     }
 }
@@ -414,9 +490,55 @@ private fun xyPct(o: JSONObject?): Pair<Float, Float>? {
     var running by remember { mutableStateOf(false) }
     var res by remember { mutableStateOf<JSONObject?>(null) }
     var status by remember { mutableStateOf<String?>(null) }
+    // Deploy-cash (reallocation by amount)
+    var cash by remember { mutableStateOf("15000") }
+    var deployBusy by remember { mutableStateOf(false) }
+    var deploy by remember { mutableStateOf<JSONObject?>(null) }
+    var deployMsg by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
         if (!BackendBus.running) { BackendOfflineHint(); return@Column }
+
+        SectionCard("Invest new cash → allocation", Bull) {
+            Text("Enter an amount; I'll suggest how to deploy it (₹ + whole shares) " +
+                "to best improve your portfolio's risk/return.", color = Muted, fontSize = 12.sp)
+            Spacer(Modifier.height(8.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                OutlinedTextField(cash, { cash = it.filter { ch -> ch.isDigit() } },
+                    label = { Text("Amount (₹)") }, singleLine = true,
+                    modifier = Modifier.weight(1f))
+                Spacer(Modifier.width(8.dp))
+                Button(
+                    onClick = {
+                        val amt = cash.toDoubleOrNull() ?: 0.0
+                        if (amt <= 0) { deployMsg = "Enter an amount."; return@Button }
+                        scope.launch {
+                            deployBusy = true; deploy = null; deployMsg = "Computing allocation…"
+                            val r = Api.deployCash(amt).objOrNull()
+                            if (r == null) deployMsg = "Backend error."
+                            else if (r.has("error")) deployMsg = r.optString("error")
+                            else { deploy = r; deployMsg = null }
+                            deployBusy = false
+                        }
+                    },
+                    enabled = !deployBusy,
+                ) { Text(if (deployBusy) "…" else "Suggest") }
+            }
+            deployMsg?.let { Spacer(Modifier.height(8.dp)); StatusBanner(it, if (deployBusy) Warn else Bear) }
+            deploy?.let { d ->
+                val before = d.optJSONObject("before"); val after = d.optJSONObject("after")
+                Spacer(Modifier.height(10.dp))
+                KpiGrid(listOf(
+                    Triple("Sharpe now", fmtNum(before?.opt("sharpe")), OnBg),
+                    Triple("Sharpe after", fmtNum(after?.opt("sharpe")), Bull),
+                ))
+                Spacer(Modifier.height(10.dp))
+                Text("Buy", color = Muted, fontSize = 11.sp)
+                Spacer(Modifier.height(4.dp))
+                DataTable(allocationBuys(arr(d, "buys")))
+            }
+        }
+
         SectionCard("MPT optimizer", AccentHi) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 listOf("max_sharpe" to "Max Sharpe", "min_variance" to "Min Var").forEach { (k, lbl) ->

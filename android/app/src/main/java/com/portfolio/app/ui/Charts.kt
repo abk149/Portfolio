@@ -182,12 +182,19 @@ fun FrontierChart(
             fun py(y: Float) = h - pad - (y - ylo) / yr * (h - 2 * pad)
             drawLine(BorderCol, Offset(0f, h - 1), Offset(w, h - 1), 1f)
 
-            // Connect in the given (target-return) order — NOT sorted by vol.
-            // The optimizer sweeps target returns, tracing the full Markowitz
-            // curve; sorting by vol maps two returns to one vol → a zig-zag.
-            if (frontier.size >= 2) {
+            // Draw the EFFICIENT (upper) envelope only: sort by volatility, then
+            // keep a point only if its return beats every lower-vol point
+            // (running max). This drops the inefficient lower branch and the
+            // solver's noisy interior points → a clean, monotone, smooth curve.
+            val eff = run {
+                var best = Float.NEGATIVE_INFINITY
+                frontier.sortedBy { it.first }.filter { (_, r) ->
+                    if (r >= best - 1e-4f) { best = maxOf(best, r); true } else false
+                }
+            }
+            if (eff.size >= 2) {
                 val path = Path()
-                frontier.forEachIndexed { i, (x, y) ->
+                eff.forEachIndexed { i, (x, y) ->
                     if (i == 0) path.moveTo(px(x), py(y)) else path.lineTo(px(x), py(y))
                 }
                 drawPath(path, AccentHi, style = Stroke(width = 3f))
@@ -199,6 +206,40 @@ fun FrontierChart(
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             Text("vol %", color = Muted, fontSize = 10.sp)
             Text("return % (↑)", color = Muted, fontSize = 10.sp)
+        }
+    }
+}
+
+/** Generic scatter — used for the Universe Map (tech vs fundamental score). */
+@Composable
+fun ScatterChart(
+    points: List<Triple<Float, Float, Color>>,    // x, y, color
+    xLabel: String, yLabel: String,
+    modifier: Modifier = Modifier,
+) {
+    if (points.size < 2) { Text("No universe data — build the map first.", color = Muted, fontSize = 12.sp); return }
+    val xs = points.map { it.first }; val ys = points.map { it.second }
+    val xlo = xs.min(); val xhi = xs.max(); val ylo = ys.min(); val yhi = ys.max()
+    val xr = (xhi - xlo).takeIf { it > 0 } ?: 1f
+    val yr = (yhi - ylo).takeIf { it > 0 } ?: 1f
+    Column(modifier.fillMaxWidth()) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            LegendDot(Bull, "Buy"); LegendDot(Warn, "Hold"); LegendDot(Bear, "Avoid")
+        }
+        Spacer(Modifier.height(6.dp))
+        Canvas(Modifier.fillMaxWidth().height(260.dp)) {
+            val w = size.width; val h = size.height; val pad = 10f
+            drawLine(BorderCol, Offset(0f, h - 1), Offset(w, h - 1), 1f)
+            drawLine(BorderCol, Offset(1f, 0f), Offset(1f, h), 1f)
+            points.forEach { (x, y, c) ->
+                val px = pad + (x - xlo) / xr * (w - 2 * pad)
+                val py = h - pad - (y - ylo) / yr * (h - 2 * pad)
+                drawCircle(c.copy(alpha = 0.85f), 4.5f, Offset(px, py))
+            }
+        }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text("↑ $yLabel", color = Muted, fontSize = 10.sp)
+            Text("$xLabel →", color = Muted, fontSize = 10.sp)
         }
     }
 }
