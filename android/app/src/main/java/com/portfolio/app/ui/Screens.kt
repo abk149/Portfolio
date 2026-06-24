@@ -62,13 +62,15 @@ private fun allocationSlices(arr: JSONArray?): List<Pair<String, Float>> {
     return out
 }
 
-// equity_curve [{date, portfolio_value, invested}] → (values, invested).
+// equity_curve [{date, portfolio_value, invested_capital}] → (values, invested).
 private fun equitySeries(arr: JSONArray?): Pair<List<Float>, List<Float>> {
     val pv = ArrayList<Float>(); val inv = ArrayList<Float>()
     if (arr != null) for (i in 0 until arr.length()) {
         val o = arr.optJSONObject(i) ?: continue
-        pv.add((o.opt("portfolio_value") as? Number)?.toFloat() ?: continue)
-        inv.add((o.opt("invested") as? Number)?.toFloat() ?: Float.NaN)
+        val p = (o.opt("portfolio_value") as? Number)?.toFloat() ?: continue
+        pv.add(p)
+        inv.add((o.opt("invested_capital") as? Number)?.toFloat()
+            ?: (o.opt("invested") as? Number)?.toFloat() ?: Float.NaN)
     }
     return pv to inv
 }

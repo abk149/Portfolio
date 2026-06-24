@@ -89,13 +89,16 @@ fun LineChart(
     modifier: Modifier = Modifier,
 ) {
     val pts = primary.filter { it.isFinite() }
+    val sec = secondary?.filter { it.isFinite() }
     if (pts.size < 2) {
         Text("No equity curve yet.", color = Muted, fontSize = 12.sp); return
     }
-    val all = pts + (secondary ?: emptyList())
+    // Range from FINITE values only — a single NaN in the invested series would
+    // otherwise make min/max NaN and blank the whole chart.
+    val all = pts + (sec ?: emptyList())
     val lo = all.min()
     val hi = all.max()
-    val range = (hi - lo).takeIf { it > 0f } ?: 1f
+    val range = (hi - lo).takeIf { it.isFinite() && it > 0f } ?: 1f
 
     Column(modifier.fillMaxWidth()) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
@@ -129,21 +132,18 @@ fun LineChart(
             }
             drawPath(line, AccentHi, style = Stroke(width = 3f))
 
-            // secondary: dashed muted line
-            secondary?.let { sec ->
-                val s = sec.filter { it.isFinite() }
-                if (s.size >= 2) {
-                    val p2 = Path().apply {
-                        s.forEachIndexed { i, v ->
-                            val px = x(i, s.size); val py = y(v)
-                            if (i == 0) moveTo(px, py) else lineTo(px, py)
-                        }
+            // secondary: dashed muted line (already NaN-filtered into `sec`)
+            if (sec != null && sec.size >= 2) {
+                val p2 = Path().apply {
+                    sec.forEachIndexed { i, v ->
+                        val px = x(i, sec.size); val py = y(v)
+                        if (i == 0) moveTo(px, py) else lineTo(px, py)
                     }
-                    drawPath(p2, Muted, style = Stroke(
-                        width = 2f,
-                        pathEffect = androidx.compose.ui.graphics.PathEffect.dashPathEffect(
-                            floatArrayOf(10f, 8f))))
                 }
+                drawPath(p2, Muted, style = Stroke(
+                    width = 2f,
+                    pathEffect = androidx.compose.ui.graphics.PathEffect.dashPathEffect(
+                        floatArrayOf(10f, 8f))))
             }
         }
         Text(fmtINR(lo), color = Muted, fontSize = 11.sp)
