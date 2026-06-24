@@ -86,7 +86,7 @@ object Api {
     suspend fun portfolio() = get("/api/portfolio")
     suspend fun portfolioRisk() = get("/api/portfolio/risk")
     suspend fun performanceCached() = get("/api/portfolio/performance/cached")
-    suspend fun performance() = get("/api/portfolio/performance")
+    suspend fun performance() = post("/api/portfolio/performance")
     suspend fun optimize(mode: String, maxWeight: Double) =
         post("/api/portfolio/optimize",
             JSONObject().put("mode", mode).put("max_weight", maxWeight))
