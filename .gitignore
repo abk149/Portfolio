@@ -29,8 +29,18 @@ llama-server
 # ── Stray nested repo (root-anchored; must NOT match com/portfolio/ package) ──
 /Portfolio/
 
+# ── Local dev notes (kept out of the public repo) ──
+task.md
+walkthrough.md
+build_llama_server.sh
+
+# ── Agent / tooling scratch ──
+.claude/
+*.command
+
 # ── OS / editor ──
 .DS_Store
+**/.DS_Store
 
 # JetBrains/Android Studio IDE files
 android/.idea/
