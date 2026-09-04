@@ -41,6 +41,9 @@ fun SettingsScreen(openLogin: () -> Unit) {
     var teleChat by remember { mutableStateOf(prefs.get("tele_chat_id")) }
     var llmProvider by remember { mutableStateOf(prefs.get("llm_provider", "nvidia")) }
     var llmKey by remember { mutableStateOf(prefs.get("llm_api_key")) }
+    var llmModel by remember {
+        mutableStateOf(prefs.get("llm_model", "nvidia/nemotron-3-super-120b-a12b"))
+    }
 
     fun save() {
         prefs.put(
@@ -50,6 +53,7 @@ fun SettingsScreen(openLogin: () -> Unit) {
             "groww_api_secret" to growwSec, "groww_totp_secret" to growwTotp,
             "tele_token" to teleTok, "tele_chat_id" to teleChat,
             "llm_provider" to llmProvider, "llm_api_key" to llmKey,
+            "llm_model" to llmModel,
         )
         Toast.makeText(ctx, "Saved on device", Toast.LENGTH_SHORT).show()
         if (BackendBus.running) scope.launch { Api.setBroker(broker) }
@@ -99,20 +103,95 @@ fun SettingsScreen(openLogin: () -> Unit) {
 
         var llmBusy by remember { mutableStateOf(false) }
         var llmMsg by remember { mutableStateOf<String?>(null) }
+        var models by remember { mutableStateOf<List<Triple<String, String, String>>>(emptyList()) }
+        var catalog by remember { mutableStateOf<List<String>>(emptyList()) }
+        var expanded by remember { mutableStateOf(false) }
+        // Load the picker options from the backend (curated + live catalog).
+        LaunchedEffect(BackendBus.state.value) {
+            if (BackendBus.running && models.isEmpty()) {
+                Api.llmModels().objOrNull()?.let { b ->
+                    val rec = ArrayList<Triple<String, String, String>>()
+                    b.optJSONArray("recommended")?.let { a ->
+                        for (i in 0 until a.length()) a.optJSONObject(i)?.let { o ->
+                            rec.add(Triple(o.optString("id"), o.optString("label"), o.optString("note")))
+                        }
+                    }
+                    models = rec
+                    catalog = buildList {
+                        b.optJSONArray("catalog")?.let { a ->
+                            for (i in 0 until a.length()) add(a.optString(i))
+                        }
+                    }
+                }
+            }
+        }
+
         SectionCard("Analysis LLM", Warn) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 listOf("nvidia", "anthropic").forEach {
                     FilterChip(selected = llmProvider == it, onClick = { llmProvider = it }, label = { Text(it) })
                 }
             }
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(10.dp))
             Field("LLM API key", llmKey, password = true) { llmKey = it }
-            Spacer(Modifier.height(8.dp))
+
+            Spacer(Modifier.height(10.dp))
+            Text("Model", color = Muted, fontSize = 11.sp)
+            Spacer(Modifier.height(4.dp))
+            Box {
+                OutlinedButton(onClick = { expanded = true }, modifier = Modifier.fillMaxWidth()) {
+                    Text(llmModel.ifBlank { "Select a model" },
+                        maxLines = 1, modifier = Modifier.weight(1f), fontSize = 13.sp)
+                    Text("▾", color = Muted)
+                }
+                DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false },
+                    modifier = Modifier.heightIn(max = 420.dp)) {
+                    if (models.isNotEmpty()) {
+                        DropdownMenuItem(enabled = false, onClick = {},
+                            text = { Text("RECOMMENDED FOR PORTFOLIO WORK",
+                                color = AccentHi, fontSize = 10.sp) })
+                        models.forEach { (id, label, note) ->
+                            DropdownMenuItem(
+                                onClick = { llmModel = id; expanded = false },
+                                text = {
+                                    Column {
+                                        Text(label, fontSize = 13.sp,
+                                            color = if (id == llmModel) Bull else OnBg)
+                                        Text(note, fontSize = 10.sp, color = Muted)
+                                    }
+                                })
+                        }
+                    }
+                    if (catalog.isNotEmpty()) {
+                        Divider(color = BorderCol)
+                        DropdownMenuItem(enabled = false, onClick = {},
+                            text = { Text("ALL MODELS ON YOUR KEY (${catalog.size})",
+                                color = Muted, fontSize = 10.sp) })
+                        catalog.forEach { id ->
+                            DropdownMenuItem(onClick = { llmModel = id; expanded = false },
+                                text = { Text(id, fontSize = 12.sp,
+                                    color = if (id == llmModel) Bull else OnBg) })
+                        }
+                    }
+                    if (models.isEmpty() && catalog.isEmpty()) {
+                        DropdownMenuItem(enabled = false, onClick = {},
+                            text = { Text("Start the backend to load models",
+                                color = Muted, fontSize = 12.sp) })
+                    }
+                }
+            }
+            Text("The catalog lists every model your key can see — some may not be " +
+                "enabled on your account (they answer 404). Always hit Test after switching.",
+                color = Muted, fontSize = 10.sp, modifier = Modifier.padding(top = 6.dp))
+
+            Spacer(Modifier.height(10.dp))
             Button(
                 onClick = {
                     scope.launch {
-                        save()                       // persist provider+key first
-                        llmBusy = true; llmMsg = "Contacting ${llmProvider}…"
+                        save()                       // persist provider+key+model
+                        llmBusy = true; llmMsg = "Contacting $llmModel…"
+                        // Push key+model live so the test uses what's on screen.
+                        Api.llmConfig(llmKey.trim(), llmModel.trim())
                         when (val r = Api.llmTest()) {
                             is Api.Resp.Ok ->
                                 llmMsg = if (r.body.optBoolean("ok", false))

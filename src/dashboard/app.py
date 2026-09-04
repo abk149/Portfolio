@@ -444,6 +444,79 @@ def api_themes(body: dict):
     return {"job_id": job_id}
 
 
+# Curated NVIDIA models for portfolio/finance work, ordered best-first.
+# Latencies measured live against integrate.api.nvidia.com (first token → done).
+# NOTE: the /v1/models catalog lists models your key may NOT be entitled to
+# (they answer 404 "Not found for account"), so this shortlist is what we've
+# actually verified end-to-end. Use "Test LLM connection" after switching.
+LLM_RECOMMENDED = [
+    {"id": "nvidia/nemotron-3-super-120b-a12b",
+     "label": "Nemotron 3 Super 120B — recommended",
+     "note": "Fast (~0.7s) + strong reasoning. Best all-round default."},
+    {"id": "nvidia/nemotron-3-ultra-550b-a55b",
+     "label": "Nemotron 3 Ultra 550B — deepest analysis",
+     "note": "~10s to first token. Sharpest financial judgement; great for Ideas & deep dives."},
+    {"id": "openai/gpt-oss-20b",
+     "label": "GPT-OSS 20B — fast, clean JSON",
+     "note": "~1.7s. Reliable structured output, lighter reasoning."},
+    {"id": "nvidia/nemotron-3.5-lightning-30b-a3b",
+     "label": "Nemotron 3.5 Lightning 30B — fastest",
+     "note": "~0.7s. Cheapest/quickest; can be chattier around JSON."},
+    {"id": "deepseek-ai/deepseek-v4-pro-0813",
+     "label": "DeepSeek V4 Pro (slow)",
+     "note": "Did not answer within 70s in testing — raise NVIDIA_TIMEOUT to try."},
+    {"id": "moonshotai/kimi-k3",
+     "label": "Kimi K3 (very slow — not advised)",
+     "note": "Measured ~240-300s to first token. Works via streaming but too slow for multi-call flows."},
+]
+
+
+@app.get("/api/llm/models")
+def api_llm_models():
+    """Model picker data: the curated shortlist + the live catalog for the
+    configured key. `available` marks catalog ids so the UI can flag unknowns."""
+    settings.refresh()
+    catalog: list[str] = []
+    err = None
+    key = settings.nvidia_api_key
+    if key:
+        try:
+            import requests as _rq
+            r = _rq.get(settings.nvidia_base_url.rstrip("/") + "/models",
+                        headers={"Authorization": f"Bearer {key}"}, timeout=20)
+            if r.status_code == 200:
+                catalog = sorted(m.get("id", "") for m in r.json().get("data", []))
+            else:
+                err = f"HTTP {r.status_code}: {r.text[:160]}"
+        except Exception as e:
+            err = f"{type(e).__name__}: {e}"
+    else:
+        err = "NVIDIA_API_KEY not set"
+    return {"ok": err is None, "error": err,
+            "current": settings.nvidia_model,
+            "recommended": LLM_RECOMMENDED,
+            "catalog": catalog}
+
+
+@app.post("/api/llm/config")
+def api_llm_config(body: dict):
+    """Push the LLM key/model into the running process (no restart)."""
+    def _clean(v):
+        return (str(v or "")).strip().strip('"').strip("'").strip()
+    key = _clean(body.get("api_key"))
+    model = _clean(body.get("model"))
+    if key:
+        os.environ["NVIDIA_API_KEY"] = key
+    if model:
+        os.environ["NVIDIA_MODEL"] = model
+    try:
+        settings.refresh()
+    except Exception:
+        pass
+    return {"ok": True, "model": settings.nvidia_model,
+            "have_key": bool(settings.nvidia_api_key)}
+
+
 @app.post("/api/llm/test")
 def api_llm_test():
     """Quick connectivity check for the configured LLM (NVIDIA → fallback chain)."""

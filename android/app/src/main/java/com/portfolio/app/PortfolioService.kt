@@ -121,6 +121,9 @@ class PortfolioService : LifecycleService() {
             config["NVIDIA_API_KEY"] = llmKey
             config["ANTHROPIC_API_KEY"] = llmKey
         }
+        // Model picked in Settings (dropdown). Blank → the .env / built-in default.
+        val llmModel = prefs.getString("llm_model", "") ?: ""
+        if (llmModel.isNotBlank()) config["NVIDIA_MODEL"] = llmModel
 
         // Active broker (either/or). Only inject if the user explicitly set it
         // in prefs; otherwise leave it unset so the dashboard's persisted

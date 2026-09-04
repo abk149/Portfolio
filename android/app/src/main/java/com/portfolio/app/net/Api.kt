@@ -125,6 +125,9 @@ object Api {
 
     // ── LLM ──
     suspend fun llmTest() = post("/api/llm/test")
+    suspend fun llmModels() = get("/api/llm/models")
+    suspend fun llmConfig(apiKey: String, model: String) =
+        post("/api/llm/config", JSONObject().put("api_key", apiKey).put("model", model))
     suspend fun chat(message: String) = post("/api/chat", JSONObject().put("message", message))
 
     // ── Knowledge base ──
