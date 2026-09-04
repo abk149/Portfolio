@@ -729,22 +729,35 @@ class PerformanceAnalyzer:
 
         cashflows: list[tuple[date, float]] = []
         for _, t in trades.iterrows():
-            d = t["date"]
-            amt = float(t["amount"])
-            side = t["side"]
+            d = t.get("date")
+            if d is None or pd.isna(d):
+                continue
+            # Some brokers omit trade_value/amount — fall back to qty x price so
+            # the cashflow isn't zero (zero flows make XIRR meaningless/0).
+            amt = float(t.get("amount") or 0)
+            if amt <= 0:
+                amt = float(t.get("quantity") or 0) * float(t.get("price") or 0)
+            if amt <= 0:
+                continue
+            side = t.get("side")
             if side == "BUY":
                 cashflows.append((d, -amt))    # outflow
             elif side == "SELL":
                 cashflows.append((d, amt))     # inflow
 
-        if not cashflows:
+        # XIRR needs at least one outflow AND a terminal inflow to bracket a root.
+        if not cashflows or current_value <= 0:
+            return None
+        if not any(a < 0 for _, a in cashflows):
             return None
 
         # Terminal cash flow: current portfolio value
         cashflows.append((date.today(), current_value))
 
         rate = xirr(cashflows)
-        return round(rate * 100, 2) if rate is not None else None
+        if rate is None or not math.isfinite(rate):
+            return None
+        return round(rate * 100, 2)
 
     # ------------------------------------------------------------------
     # Winners / Losers

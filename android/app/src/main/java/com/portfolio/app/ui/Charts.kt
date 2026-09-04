@@ -15,6 +15,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
@@ -151,9 +152,11 @@ fun LineChart(
 }
 
 /**
- * Efficient-frontier scatter (x = volatility %, y = expected return %).
- * Plots the frontier line, each holding as a dot, the current portfolio (◆),
- * and the optimal portfolio (★). Mirrors the web dashboard's frontier chart.
+ * Efficient-frontier chart (x = volatility %, y = expected return %).
+ *
+ * Proper chart furniture: padded plot area, gridlines with numeric tick labels
+ * on both axes, a SMOOTHED efficient envelope (Catmull-Rom spline), your
+ * holdings as small dots, and clearly distinguished Current vs Optimal markers.
  */
 @Composable
 fun FrontierChart(
@@ -163,51 +166,131 @@ fun FrontierChart(
     optimal: Pair<Float, Float>? = null,
     modifier: Modifier = Modifier,
 ) {
-    val all = frontier + holdings + listOfNotNull(current, optimal)
-    if (all.size < 2) { Text("Not enough data for the frontier.", color = Muted, fontSize = 12.sp); return }
-    val xs = all.map { it.first }; val ys = all.map { it.second }
-    val xlo = xs.min(); val xhi = xs.max(); val ylo = ys.min(); val yhi = ys.max()
-    val xr = (xhi - xlo).takeIf { it > 0 } ?: 1f
-    val yr = (yhi - ylo).takeIf { it > 0 } ?: 1f
+    // Efficient (upper) envelope only: sort by vol, keep running-max return.
+    // Drops the inefficient lower branch and solver noise.
+    val eff = run {
+        var best = Float.NEGATIVE_INFINITY
+        frontier.filter { it.first.isFinite() && it.second.isFinite() }
+            .sortedBy { it.first }
+            .filter { (_, r) -> if (r >= best - 1e-4f) { best = maxOf(best, r); true } else false }
+    }
+    val all = eff + holdings + listOfNotNull(current, optimal)
+    if (all.size < 2) {
+        Text("Not enough data for the frontier.", color = Muted, fontSize = 12.sp); return
+    }
+
+    // Padded, "nice" axis ranges so nothing sits on the edge.
+    val xTicks = niceTicks(all.minOf { it.first }, all.maxOf { it.first })
+    val yTicks = niceTicks(all.minOf { it.second }, all.maxOf { it.second })
+    val xlo = xTicks.first(); val xhi = xTicks.last()
+    val ylo = yTicks.first(); val yhi = yTicks.last()
+    val xr = (xhi - xlo).takeIf { it > 0f } ?: 1f
+    val yr = (yhi - ylo).takeIf { it > 0f } ?: 1f
 
     Column(modifier.fillMaxWidth()) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
             LegendDot(AccentHi, "Frontier"); LegendDot(Muted, "Holdings")
             LegendDot(Bear, "Current"); LegendDot(Bull, "Optimal")
         }
-        Spacer(Modifier.height(6.dp))
-        Canvas(Modifier.fillMaxWidth().height(220.dp)) {
-            val w = size.width; val h = size.height; val pad = 8f
-            fun px(x: Float) = pad + (x - xlo) / xr * (w - 2 * pad)
-            fun py(y: Float) = h - pad - (y - ylo) / yr * (h - 2 * pad)
-            drawLine(BorderCol, Offset(0f, h - 1), Offset(w, h - 1), 1f)
+        Spacer(Modifier.height(8.dp))
+        Canvas(Modifier.fillMaxWidth().height(240.dp)) {
+            val padL = 42.dp.toPx(); val padR = 10.dp.toPx()
+            val padT = 10.dp.toPx(); val padB = 26.dp.toPx()
+            val plotW = size.width - padL - padR
+            val plotH = size.height - padT - padB
+            fun px(x: Float) = padL + (x - xlo) / xr * plotW
+            fun py(y: Float) = padT + plotH - (y - ylo) / yr * plotH
 
-            // Draw the EFFICIENT (upper) envelope only: sort by volatility, then
-            // keep a point only if its return beats every lower-vol point
-            // (running max). This drops the inefficient lower branch and the
-            // solver's noisy interior points → a clean, monotone, smooth curve.
-            val eff = run {
-                var best = Float.NEGATIVE_INFINITY
-                frontier.sortedBy { it.first }.filter { (_, r) ->
-                    if (r >= best - 1e-4f) { best = maxOf(best, r); true } else false
-                }
+            val label = android.graphics.Paint().apply {
+                color = android.graphics.Color.argb(190, 139, 148, 158)
+                textSize = 9.sp.toPx(); isAntiAlias = true
             }
+
+            // Horizontal gridlines + y tick labels
+            yTicks.forEach { t ->
+                val y = py(t)
+                drawLine(BorderCol.copy(alpha = 0.45f), Offset(padL, y),
+                    Offset(padL + plotW, y), 1f)
+                drawContext.canvas.nativeCanvas.drawText(
+                    "%.0f%%".format(t), 4f, y + label.textSize / 3f, label)
+            }
+            // Vertical gridlines + x tick labels
+            label.textAlign = android.graphics.Paint.Align.CENTER
+            xTicks.forEach { t ->
+                val x = px(t)
+                drawLine(BorderCol.copy(alpha = 0.3f), Offset(x, padT),
+                    Offset(x, padT + plotH), 1f)
+                drawContext.canvas.nativeCanvas.drawText(
+                    "%.0f".format(t), x, size.height - 6f, label)
+            }
+            label.textAlign = android.graphics.Paint.Align.LEFT
+
+            // Smoothed efficient frontier (Catmull-Rom → cubic Bezier)
             if (eff.size >= 2) {
-                val path = Path()
-                eff.forEachIndexed { i, (x, y) ->
-                    if (i == 0) path.moveTo(px(x), py(y)) else path.lineTo(px(x), py(y))
+                val pts = eff.map { Offset(px(it.first), py(it.second)) }
+                val path = Path().apply {
+                    moveTo(pts[0].x, pts[0].y)
+                    for (i in 0 until pts.size - 1) {
+                        val p0 = pts[if (i - 1 >= 0) i - 1 else 0]
+                        val p1 = pts[i]; val p2 = pts[i + 1]
+                        val p3 = pts[if (i + 2 <= pts.size - 1) i + 2 else pts.size - 1]
+                        cubicTo(
+                            p1.x + (p2.x - p0.x) / 6f, p1.y + (p2.y - p0.y) / 6f,
+                            p2.x - (p3.x - p1.x) / 6f, p2.y - (p3.y - p1.y) / 6f,
+                            p2.x, p2.y,
+                        )
+                    }
                 }
-                drawPath(path, AccentHi, style = Stroke(width = 3f))
+                drawPath(path, AccentHi, style = Stroke(width = 3.5f))
             }
-            holdings.forEach { (x, y) -> drawCircle(Muted, 4f, Offset(px(x), py(y))) }
-            current?.let { drawCircle(Bear, 7f, Offset(px(it.first), py(it.second))) }
-            optimal?.let { drawCircle(Bull, 7f, Offset(px(it.first), py(it.second))) }
+
+            // Holdings
+            holdings.forEach { (x, y) ->
+                drawCircle(Muted.copy(alpha = 0.75f), 4f, Offset(px(x), py(y)))
+            }
+            // Current — hollow ring so it reads differently from Optimal
+            current?.let {
+                val c = Offset(px(it.first), py(it.second))
+                drawCircle(Bear, 7.5f, c, style = Stroke(width = 3f))
+            }
+            // Optimal — filled dot with a soft halo
+            optimal?.let {
+                val c = Offset(px(it.first), py(it.second))
+                drawCircle(Bull.copy(alpha = 0.25f), 12f, c)
+                drawCircle(Bull, 6f, c)
+            }
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text("vol %", color = Muted, fontSize = 10.sp)
-            Text("return % (↑)", color = Muted, fontSize = 10.sp)
+            Text("↑ expected return %", color = Muted, fontSize = 10.sp)
+            Text("volatility % →", color = Muted, fontSize = 10.sp)
         }
     }
+}
+
+/** Human-friendly tick values spanning [lo, hi], padded outward by ~8%. */
+private fun niceTicks(lo: Float, hi: Float, target: Int = 5): List<Float> {
+    if (!lo.isFinite() || !hi.isFinite()) return listOf(0f, 1f)
+    var a = lo.toDouble(); var b = hi.toDouble()
+    if (b - a < 1e-6) { a -= 1.0; b += 1.0 }
+    val pad = (b - a) * 0.08
+    a -= pad; b += pad
+    val raw = (b - a) / target
+    val exp = kotlin.math.floor(kotlin.math.log10(raw))
+    val base = Math.pow(10.0, exp)
+    val frac = raw / base
+    val step = base * when {
+        frac <= 1.0 -> 1.0
+        frac <= 2.0 -> 2.0
+        frac <= 5.0 -> 5.0
+        else -> 10.0
+    }
+    val start = kotlin.math.floor(a / step) * step
+    val end = kotlin.math.ceil(b / step) * step
+    val out = ArrayList<Float>()
+    var v = start
+    var guard = 0
+    while (v <= end + step * 0.5 && guard++ < 40) { out.add(v.toFloat()); v += step }
+    return if (out.size >= 2) out else listOf(lo, hi)
 }
 
 /** Generic scatter — used for the Universe Map (tech vs fundamental score). */

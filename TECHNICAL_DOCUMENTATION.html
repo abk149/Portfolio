@@ -1,0 +1,1131 @@
+<title>Portfolio Quant Engine</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Spectral:ital,wght@0,400;0,500;0,600;1,400&family=Karla:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+
+<style>
+/* ─────────────────────────────────────────────────────────────
+   Portfolio Quant Engine
+   Palette: cool ledger paper, deep indigo as the structural accent,
+   saffron reserved for measured/empirical marks only. Neutrals carry
+   a blue bias so they sit inside the indigo family.
+   ───────────────────────────────────────────────────────────── */
+:root {
+  --ground:     #F1F3F7;
+  --surface:    #FFFFFF;
+  --surface-2:  #E6EAF1;
+  --ink:        #121924;
+  --ink-soft:   #4A5568;
+  --ink-faint:  #7C8798;
+  --line:       #C7CFDC;
+  --line-soft:  #DDE3EC;
+  --accent:     #2A3E6E;
+  --accent-lit: #3D5798;
+  --accent-bg:  #E2E8F4;
+  --gold:       #9A6A12;
+  --gold-bg:    #F4EBD9;
+  --pos:        #1E6B4E;
+  --neg:        #9A342C;
+  --font-display: "Spectral", Georgia, serif;
+  --font-body:    "Karla", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono:    "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --measure: 70ch;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --ground:     #0C1017;
+    --surface:    #141A25;
+    --surface-2:  #1C2431;
+    --ink:        #E2E7EF;
+    --ink-soft:   #A3AEC0;
+    --ink-faint:  #748093;
+    --line:       #2A3446;
+    --line-soft:  #222B3A;
+    --accent:     #8AA3DC;
+    --accent-lit: #A9BEEC;
+    --accent-bg:  #19223A;
+    --gold:       #D3A44E;
+    --gold-bg:    #2A2313;
+    --pos:        #5FBF93;
+    --neg:        #DE7C73;
+  }
+}
+:root[data-theme="dark"] {
+  --ground:     #0C1017;
+  --surface:    #141A25;
+  --surface-2:  #1C2431;
+  --ink:        #E2E7EF;
+  --ink-soft:   #A3AEC0;
+  --ink-faint:  #748093;
+  --line:       #2A3446;
+  --line-soft:  #222B3A;
+  --accent:     #8AA3DC;
+  --accent-lit: #A9BEEC;
+  --accent-bg:  #19223A;
+  --gold:       #D3A44E;
+  --gold-bg:    #2A2313;
+  --pos:        #5FBF93;
+  --neg:        #DE7C73;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--ground);
+  color: var(--ink);
+  font-family: var(--font-body);
+  font-size: 16.5px;
+  line-height: 1.64;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ── Sticky section bar ──────────────────────────────────── */
+.navbar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  background: var(--ground);
+  border-bottom: 1px solid var(--line);
+  overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+}
+.navbar ol {
+  display: flex;
+  gap: 0;
+  list-style: none;
+  margin: 0 auto;
+  padding: 0 20px;
+  max-width: 1180px;
+  counter-reset: nv;
+  white-space: nowrap;
+}
+.navbar li { counter-increment: nv; }
+.navbar a {
+  display: inline-block;
+  padding: 11px 13px;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  letter-spacing: .04em;
+  color: var(--ink-faint);
+  text-decoration: none;
+  border-bottom: 2px solid transparent;
+}
+.navbar a::before { content: counter(nv, decimal-leading-zero) " "; color: var(--accent); }
+.navbar a:hover { color: var(--ink); border-bottom-color: var(--accent); }
+.navbar a:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+.wrap { max-width: 1180px; margin: 0 auto; padding: 0 20px 120px; }
+
+/* ── Masthead ────────────────────────────────────────────── */
+.masthead { padding: 68px 0 44px; border-bottom: 2px solid var(--ink); margin-bottom: 8px; }
+.kicker {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  letter-spacing: .16em;
+  text-transform: uppercase;
+  color: var(--gold);
+  margin: 0 0 16px;
+}
+.masthead h1 {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: clamp(2.5rem, 6.5vw, 4.4rem);
+  line-height: 1;
+  letter-spacing: -.025em;
+  margin: 0 0 22px;
+  text-wrap: balance;
+}
+.dek {
+  font-family: var(--font-display);
+  font-size: clamp(1.06rem, 2vw, 1.3rem);
+  line-height: 1.55;
+  color: var(--ink-soft);
+  max-width: 64ch;
+  margin: 0 0 34px;
+}
+.specs { display: grid; grid-template-columns: repeat(auto-fit, minmax(152px, 1fr)); gap: 18px 30px; }
+.specs > div { display: flex; flex-direction: column; gap: 3px; }
+.spec-k {
+  font-family: var(--font-mono); font-size: 10.5px; letter-spacing: .11em;
+  text-transform: uppercase; color: var(--ink-faint);
+}
+.spec-v { font-size: 14.5px; font-weight: 600; }
+
+.disclaimer {
+  margin-top: 30px;
+  padding: 12px 16px;
+  border: 1px solid var(--line);
+  background: var(--gold-bg);
+  font-size: 13.5px;
+  color: var(--ink-soft);
+  border-radius: 2px;
+}
+
+/* ── Sections with margin numerals ───────────────────────── */
+section { padding: 62px 0 0; scroll-margin-top: 52px; }
+@media (min-width: 1000px) {
+  section {
+    display: grid;
+    grid-template-columns: 84px minmax(0, 1fr);
+    column-gap: 40px;
+  }
+  section > * { grid-column: 2; }
+  section > .num { grid-column: 1; grid-row: 1 / 3; }
+}
+.num {
+  font-family: var(--font-display);
+  font-size: 2.9rem;
+  font-weight: 400;
+  line-height: 1;
+  color: var(--accent);
+  opacity: .35;
+  font-variant-numeric: tabular-nums;
+  margin: 0;
+  padding-top: 6px;
+}
+@media (max-width: 999px) {
+  .num { font-size: 1.4rem; opacity: .5; margin-bottom: 4px; }
+}
+
+h2 {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: clamp(1.7rem, 3.3vw, 2.3rem);
+  line-height: 1.14;
+  letter-spacing: -.018em;
+  margin: 0 0 18px;
+  max-width: var(--measure);
+  text-wrap: balance;
+}
+h3 {
+  font-family: var(--font-body);
+  font-weight: 700;
+  font-size: 1.04rem;
+  margin: 40px 0 10px;
+  max-width: var(--measure);
+}
+h4 {
+  font-family: var(--font-mono);
+  font-weight: 500; font-size: 11.5px; letter-spacing: .1em;
+  text-transform: uppercase; color: var(--ink-faint);
+  margin: 28px 0 8px;
+}
+p, ul, ol, dl { max-width: var(--measure); }
+p { margin: 0 0 18px; }
+ul, ol { margin: 0 0 18px; padding-left: 1.3em; }
+li { margin-bottom: 7px; }
+li::marker { color: var(--ink-faint); }
+a { color: var(--accent-lit); text-underline-offset: 2px; text-decoration-color: var(--line); }
+a:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+strong { font-weight: 700; }
+code {
+  font-family: var(--font-mono); font-size: .85em;
+  background: var(--surface-2); padding: .12em .36em; border-radius: 2px;
+}
+.standout {
+  font-family: var(--font-display);
+  font-size: 1.1rem;
+  line-height: 1.55;
+  color: var(--ink-soft);
+  border-left: 3px solid var(--gold);
+  padding-left: 18px;
+  margin: 0 0 28px;
+  max-width: 62ch;
+}
+
+/* ── Callouts ────────────────────────────────────────────── */
+.box {
+  background: var(--surface);
+  border: 1px solid var(--line-soft);
+  border-top: 3px solid var(--accent);
+  padding: 18px 20px;
+  margin: 26px 0;
+  font-size: 15.3px;
+  max-width: var(--measure);
+  border-radius: 2px;
+}
+.box.emp { border-top-color: var(--gold); }
+.box.warn { border-top-color: var(--neg); }
+.box > :last-child { margin-bottom: 0; }
+.box-k {
+  display: block; font-family: var(--font-mono); font-size: 10.5px;
+  letter-spacing: .11em; text-transform: uppercase;
+  color: var(--accent); margin-bottom: 7px;
+}
+.box.emp .box-k { color: var(--gold); }
+.box.warn .box-k { color: var(--neg); }
+
+/* ── Math block ──────────────────────────────────────────── */
+.math {
+  font-family: var(--font-mono);
+  font-size: 13.5px;
+  line-height: 1.85;
+  background: var(--surface);
+  border: 1px solid var(--line-soft);
+  border-left: 3px solid var(--ink-faint);
+  padding: 16px 20px;
+  margin: 22px 0;
+  max-width: var(--measure);
+  overflow-x: auto;
+  border-radius: 2px;
+}
+.math .an { color: var(--ink-faint); }
+
+pre {
+  background: var(--surface-2);
+  border: 1px solid var(--line-soft);
+  padding: 15px 18px;
+  overflow-x: auto;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.6;
+  margin: 22px 0;
+  max-width: var(--measure);
+  border-radius: 2px;
+}
+pre code { background: none; padding: 0; font-size: inherit; }
+
+/* ── Figures ─────────────────────────────────────────────── */
+figure { margin: 34px 0; max-width: 100%; }
+figure svg {
+  display: block; width: 100%; height: auto;
+  color: var(--ink-soft);
+  background: var(--surface);
+  border: 1px solid var(--line-soft);
+  border-radius: 2px;
+}
+figcaption {
+  font-size: 13.5px; line-height: 1.5; color: var(--ink-faint);
+  margin-top: 11px; max-width: 68ch;
+}
+figcaption b { color: var(--ink-soft); font-weight: 700; }
+
+/* ── Tables ──────────────────────────────────────────────── */
+.tw { overflow-x: auto; margin: 26px 0; border: 1px solid var(--line-soft); background: var(--surface); border-radius: 2px; }
+table { border-collapse: collapse; width: 100%; font-size: 14.3px; }
+caption { caption-side: bottom; text-align: left; font-size: 13px; color: var(--ink-faint); padding: 10px 15px; }
+th, td { padding: 10px 15px; text-align: left; border-bottom: 1px solid var(--line-soft); vertical-align: top; }
+thead th {
+  font-family: var(--font-mono); font-size: 10.5px; letter-spacing: .07em;
+  text-transform: uppercase; color: var(--ink-faint); font-weight: 500;
+  background: var(--surface-2); white-space: nowrap;
+}
+tbody tr:last-child td { border-bottom: none; }
+.num-c { text-align: right; font-family: var(--font-mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+td code { background: none; padding: 0; }
+
+dl.kv { display: grid; gap: 14px; margin: 22px 0; max-width: var(--measure); }
+dl.kv dt { font-family: var(--font-mono); font-size: 12.5px; color: var(--accent-lit); margin-bottom: 2px; }
+dl.kv dd { margin: 0; color: var(--ink-soft); font-size: 15.2px; }
+
+.foot {
+  margin-top: 80px; padding-top: 22px;
+  border-top: 1px solid var(--line);
+  font-size: 13.5px; color: var(--ink-faint);
+  max-width: 74ch;
+}
+@media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+</style>
+
+<nav class="navbar" aria-label="Sections">
+  <ol>
+    <li><a href="#s1">Thesis</a></li>
+    <li><a href="#s2">Architecture</a></li>
+    <li><a href="#s3">Brokers &amp; data</a></li>
+    <li><a href="#s4">Performance</a></li>
+    <li><a href="#s5">Optimiser</a></li>
+    <li><a href="#s6">Screener</a></li>
+    <li><a href="#s7">Universe map</a></li>
+    <li><a href="#s8">Knowledge base</a></li>
+    <li><a href="#s9">LLM layer</a></li>
+    <li><a href="#s10">DR-Quant</a></li>
+    <li><a href="#s11">Macro &amp; deep dive</a></li>
+    <li><a href="#s12">Scheduling</a></li>
+    <li><a href="#s13">On-device</a></li>
+    <li><a href="#s14">Where the ML is</a></li>
+  </ol>
+</nav>
+
+<div class="wrap">
+
+  <header class="masthead">
+    <p class="kicker">Engineering documentation · Indian equities</p>
+    <h1>Portfolio Quant Engine</h1>
+    <p class="dek">A broker-agnostic quant and portfolio-intelligence platform: mean-variance optimisation over a live holdings book, a two-stage screener across the whole NSE universe, a multi-stage LLM research funnel, and the same Python backend running inside an Android app.</p>
+    <div class="specs">
+      <div><span class="spec-k">Core</span><span class="spec-v">Python 3.11/3.12 · pandas · SciPy</span></div>
+      <div><span class="spec-k">Surfaces</span><span class="spec-v">FastAPI web · Typer CLI · Compose app</span></div>
+      <div><span class="spec-k">Brokers</span><span class="spec-v">Upstox · Groww, either/or</span></div>
+      <div><span class="spec-k">Store</span><span class="spec-v">SQLite + FTS5 · optional TimescaleDB</span></div>
+      <div><span class="spec-k">Reasoning</span><span class="spec-v">NVIDIA NIM → local fallback chain</span></div>
+      <div><span class="spec-k">Size</span><span class="spec-v">≈ 14,500 lines across src/ and main.py</span></div>
+    </div>
+    <p class="disclaimer"><strong>Research project.</strong> Not investment advice. No credentials, keys or personal data live in the repository — everything sensitive is in a git-ignored <code>.env</code> or on the device.</p>
+  </header>
+
+  <!-- ═══════════════════════════════════════════════════ 1 -->
+  <section id="s1">
+    <p class="num">01</p>
+    <h2>One engine, three surfaces, no server</h2>
+
+    <p class="standout">The organising decision is that every module is independently importable and none of them know about the UI. The CLI, the FastAPI dashboard and the Android app are three thin callers over the same functions.</p>
+
+    <p>That is easy to claim and hard to hold. It holds here because of a rule applied consistently: <strong>compute modules take DataFrames and dicts in and return dicts out</strong>. No module opens a database connection at import time, none configures logging on the root logger, and none reads the UI's state. The seams where I/O happens — brokers, market data, the knowledge base — are explicit and few.</p>
+
+    <p>The payoff is the Android build. A Gradle task copies <code>src/</code>, <code>config/</code> and the <code>.env</code> into the APK, Chaquopy provides a CPython runtime, and the phone runs the identical FastAPI backend against the identical analytics code. There is no mobile fork, no reduced feature set, and no second implementation to keep in sync — which is the failure mode that kills most "and it works on mobile too" projects.</p>
+
+    <p>The second organising decision is <em>graceful degradation everywhere</em>. A missing broker entitlement, an absent TA-Lib install, an unreachable LLM, a fundamentals page that fails to parse — each has a defined fallback, and the fallback is reported rather than hidden. Section&nbsp;<a href="#s3">03</a> covers the most developed instance of this, the market-data circuit breaker.</p>
+  </section>
+
+  <!-- ═══════════════════════════════════════════════════ 2 -->
+  <section id="s2">
+    <p class="num">02</p>
+    <h2>Architecture</h2>
+
+    <figure>
+      <svg viewBox="0 0 920 470" role="img" aria-label="Architecture: a Typer CLI, a FastAPI dashboard and an Android Compose app all call the same Python engine, which is layered into brokers and data, portfolio analytics, screener, knowledge base, LLM providers and agents.">
+        <defs>
+          <marker id="pq-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"/>
+          </marker>
+          <marker id="pq-ag" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="#9A6A12"/>
+          </marker>
+        </defs>
+
+        <!-- surfaces -->
+        <text x="26" y="28" font-family="JetBrains Mono, monospace" font-size="10.5" letter-spacing="1.4" fill="currentColor">SURFACES</text>
+        <rect x="26" y="38" width="176" height="44" rx="2" fill="none" stroke="currentColor" stroke-width="1"/>
+        <text x="114" y="57" font-size="12.5" text-anchor="middle" fill="currentColor">Typer CLI</text>
+        <text x="114" y="72" font-size="10.5" text-anchor="middle" fill="currentColor" opacity=".7">python main.py …</text>
+
+        <rect x="216" y="38" width="196" height="44" rx="2" fill="none" stroke="currentColor" stroke-width="1"/>
+        <text x="314" y="57" font-size="12.5" text-anchor="middle" fill="currentColor">FastAPI dashboard</text>
+        <text x="314" y="72" font-size="10.5" text-anchor="middle" fill="currentColor" opacity=".7">127.0.0.1:8000 · Chart.js</text>
+
+        <rect x="426" y="38" width="216" height="44" rx="2" fill="none" stroke="#9A6A12" stroke-width="1.4"/>
+        <text x="534" y="57" font-size="12.5" text-anchor="middle" fill="currentColor">Android · Jetpack Compose</text>
+        <text x="534" y="72" font-size="10.5" text-anchor="middle" fill="currentColor" opacity=".8">same backend, on-device</text>
+
+        <rect x="656" y="38" width="238" height="44" rx="2" fill="none" stroke="currentColor" stroke-width="1" stroke-dasharray="4 3"/>
+        <text x="775" y="57" font-size="12.5" text-anchor="middle" fill="currentColor">Telegram bot</text>
+        <text x="775" y="72" font-size="10.5" text-anchor="middle" fill="currentColor" opacity=".7">reports · alerts · Excel</text>
+
+        <line x1="114" y1="82" x2="240" y2="112" stroke="currentColor" stroke-width="1.1" marker-end="url(#pq-a)"/>
+        <line x1="314" y1="82" x2="360" y2="112" stroke="currentColor" stroke-width="1.1" marker-end="url(#pq-a)"/>
+        <line x1="534" y1="82" x2="500" y2="112" stroke="#9A6A12" stroke-width="1.4" marker-end="url(#pq-ag)"/>
+        <line x1="775" y1="82" x2="640" y2="112" stroke="currentColor" stroke-width="1.1" marker-end="url(#pq-a)"/>
+
+        <!-- engine band -->
+        <rect x="26" y="116" width="868" height="230" rx="2" fill="#2A3E6E" fill-opacity=".05" stroke="#2A3E6E" stroke-width="1.2"/>
+        <text x="40" y="136" font-family="JetBrains Mono, monospace" font-size="10.5" letter-spacing="1.4" fill="currentColor">PYTHON ENGINE — src/</text>
+
+        <!-- row A -->
+        <rect x="42" y="148" width="200" height="62" rx="2" fill="var(--surface)" stroke="currentColor" stroke-width="1"/>
+        <text x="142" y="168" font-size="12.5" text-anchor="middle" fill="currentColor">portfolio/</text>
+        <text x="142" y="184" font-size="10.5" text-anchor="middle" fill="currentColor" opacity=".75">holdings · P&amp;L · XIRR</text>
+        <text x="142" y="197" font-size="10.5" text-anchor="middle" fill="currentColor" opacity=".75">MPT optimiser · attribution</text>
+
+        <rect x="256" y="148" width="200" height="62" rx="2" fill="var(--surface)" stroke="currentColor" stroke-width="1"/>
+        <text x="356" y="168" font-size="12.5" text-anchor="middle" fill="currentColor">screener/ · intraday/</text>
+        <text x="356" y="184" font-size="10.5" text-anchor="middle" fill="currentColor" opacity=".75">technical + fundamental</text>
+        <text x="356" y="197" font-size="10.5" text-anchor="middle" fill="currentColor" opacity=".75">scoring · TA-Lib optional</text>
+
+        <rect x="470" y="148" width="200" height="62" rx="2" fill="var(--surface)" stroke="currentColor" stroke-width="1"/>
+        <text x="570" y="168" font-size="12.5" text-anchor="middle" fill="currentColor">agents/ + tools/</text>
+        <text x="570" y="184" font-size="10.5" text-anchor="middle" fill="currentColor" opacity=".75">DR-Quant funnel · macro</text>
+        <text x="570" y="197" font-size="10.5" text-anchor="middle" fill="currentColor" opacity=".75">deep dive · news · filings</text>
+
+        <rect x="684" y="148" width="194" height="62" rx="2" fill="var(--surface)" stroke="currentColor" stroke-width="1"/>
+        <text x="781" y="168" font-size="12.5" text-anchor="middle" fill="currentColor">kb/ · vector/</text>
+        <text x="781" y="184" font-size="10.5" text-anchor="middle" fill="currentColor" opacity=".75">SQLite + FTS5, optional</text>
+        <text x="781" y="197" font-size="10.5" text-anchor="middle" fill="currentColor" opacity=".75">embeddings · decisions</text>
+
+        <!-- row B -->
+        <rect x="42" y="228" width="298" height="62" rx="2" fill="var(--surface)" stroke="currentColor" stroke-width="1.3"/>
+        <text x="191" y="248" font-size="12.5" text-anchor="middle" fill="currentColor">data/ — MarketData facade</text>
+        <text x="191" y="264" font-size="10.5" text-anchor="middle" fill="currentColor" opacity=".75">candles · LTP · quotes · caching</text>
+        <text x="191" y="277" font-size="10.5" text-anchor="middle" fill="currentColor" opacity=".75">circuit breaker · instrument blacklist</text>
+
+        <rect x="354" y="228" width="230" height="62" rx="2" fill="var(--surface)" stroke="currentColor" stroke-width="1.3"/>
+        <text x="469" y="248" font-size="12.5" text-anchor="middle" fill="currentColor">brokers/ — one interface</text>
+        <text x="469" y="264" font-size="10.5" text-anchor="middle" fill="currentColor" opacity=".75">Upstox OAuth (daily token)</text>
+        <text x="469" y="277" font-size="10.5" text-anchor="middle" fill="currentColor" opacity=".75">Groww TOTP (self-minting)</text>
+
+        <rect x="598" y="228" width="280" height="62" rx="2" fill="var(--surface)" stroke="currentColor" stroke-width="1.3"/>
+        <text x="738" y="248" font-size="12.5" text-anchor="middle" fill="currentColor">llm/ — provider abstraction</text>
+        <text x="738" y="264" font-size="10.5" text-anchor="middle" fill="currentColor" opacity=".75">complete() · tool_loop()</text>
+        <text x="738" y="277" font-size="10.5" text-anchor="middle" fill="currentColor" opacity=".75">NVIDIA chain → Ollama fallback</text>
+
+        <text x="42" y="316" font-size="11" fill="currentColor" opacity=".75">Every box above is importable on its own. Nothing here opens a connection or configures logging at import time.</text>
+        <text x="42" y="333" font-size="11" fill="currentColor" opacity=".75">That property is what lets the same code run under Uvicorn on a Mac and under Chaquopy on a phone.</text>
+
+        <!-- externals -->
+        <text x="26" y="378" font-family="JetBrains Mono, monospace" font-size="10.5" letter-spacing="1.4" fill="currentColor">EXTERNAL</text>
+        <rect x="26" y="388" width="152" height="38" rx="2" fill="none" stroke="currentColor" stroke-width="1" stroke-dasharray="4 3"/>
+        <text x="102" y="412" font-size="12" text-anchor="middle" fill="currentColor">Upstox / Groww API</text>
+        <rect x="192" y="388" width="152" height="38" rx="2" fill="none" stroke="currentColor" stroke-width="1" stroke-dasharray="4 3"/>
+        <text x="268" y="412" font-size="12" text-anchor="middle" fill="currentColor">Yahoo (free fallback)</text>
+        <rect x="358" y="388" width="216" height="38" rx="2" fill="none" stroke="currentColor" stroke-width="1" stroke-dasharray="4 3"/>
+        <text x="466" y="412" font-size="12" text-anchor="middle" fill="currentColor">screener.in · NSE · Yahoo fundamentals</text>
+        <rect x="588" y="388" width="164" height="38" rx="2" fill="none" stroke="currentColor" stroke-width="1" stroke-dasharray="4 3"/>
+        <text x="670" y="412" font-size="12" text-anchor="middle" fill="currentColor">news RSS · Reddit</text>
+        <rect x="766" y="388" width="128" height="38" rx="2" fill="none" stroke="currentColor" stroke-width="1" stroke-dasharray="4 3"/>
+        <text x="830" y="412" font-size="12" text-anchor="middle" fill="currentColor">NVIDIA NIM</text>
+
+        <line x1="191" y1="290" x2="120" y2="384" stroke="currentColor" stroke-width="1" marker-end="url(#pq-a)" opacity=".7"/>
+        <line x1="230" y1="290" x2="262" y2="384" stroke="currentColor" stroke-width="1" marker-end="url(#pq-a)" opacity=".7"/>
+        <line x1="570" y1="210" x2="500" y2="384" stroke="currentColor" stroke-width="1" marker-end="url(#pq-a)" opacity=".7"/>
+        <line x1="600" y1="210" x2="668" y2="384" stroke="currentColor" stroke-width="1" marker-end="url(#pq-a)" opacity=".7"/>
+        <line x1="800" y1="290" x2="826" y2="384" stroke="currentColor" stroke-width="1" marker-end="url(#pq-a)" opacity=".7"/>
+        <line x1="469" y1="290" x2="140" y2="386" stroke="currentColor" stroke-width="1" marker-end="url(#pq-a)" opacity=".55"/>
+
+        <text x="26" y="452" font-size="11" fill="currentColor" opacity=".7">Broker data requires a funded, API-enabled account. Everything below it degrades to a free public price source rather than failing.</text>
+      </svg>
+      <figcaption><b>Layering, not a monolith.</b> The two heavy boxes on the second row — <code>data/</code> and <code>brokers/</code> — are the only places that talk to a broker, so the entitlement problems that dominate Indian retail APIs are handled once rather than at every call site.</figcaption>
+    </figure>
+  </section>
+
+  <!-- ═══════════════════════════════════════════════════ 3 -->
+  <section id="s3">
+    <p class="num">03</p>
+    <h2>Brokers, market data, and failing over gracefully</h2>
+
+    <p>Indian broker APIs share two traits that shape this layer: <strong>tokens expire daily</strong>, and <strong>market-data access is a separate paid entitlement</strong> that a perfectly valid account may not have. Both are routine, not exceptional, so the code treats them as normal states.</p>
+
+    <h3>Two authentication models behind one interface</h3>
+
+    <dl class="kv">
+      <dt>Upstox — OAuth 2, daily reissue</dt>
+      <dd>A browser flow with automatic code capture at <code>/callback</code>. The redirect URI must match the developer-app registration exactly; the dashboard exposes an <em>auth URL</em> endpoint and an <em>exchange code</em> endpoint so the round trip works identically from the desktop browser and from the phone's WebView.</dd>
+      <dt>Groww — TOTP, self-minting</dt>
+      <dd>Store the base-32 TOTP seed once and the client mints its own daily token, which matters because Groww resets at 06:00 IST. A pasted daily token is also supported for users who would rather not store a seed.</dd>
+    </dl>
+
+    <p>A factory resolves <code>BROKER=upstox|groww</code> into an object satisfying one interface, so nothing above this layer branches on which broker is active.</p>
+
+    <h3>The market-data circuit breaker</h3>
+
+    <p>A long run — a whole-universe crawl, a DR-Quant funnel — makes thousands of candle requests. If the broker cannot serve historical data (Groww without a data subscription returns 403), the naive behaviour is to try the broker, fail, fall back to Yahoo, and repeat that <em>for every single symbol</em>. That is thousands of pointless requests to a service that has already told you no.</p>
+
+    <figure>
+      <svg viewBox="0 0 880 250" role="img" aria-label="Circuit breaker state machine: closed state tries the broker first and falls back to Yahoo on error; after three consecutive broker failures the breaker opens and skips the broker entirely; any broker success closes it again.">
+        <defs>
+          <marker id="pq-b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"/>
+          </marker>
+          <marker id="pq-bg" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="#9A6A12"/>
+          </marker>
+        </defs>
+
+        <!-- CLOSED -->
+        <rect x="34" y="60" width="188" height="112" rx="2" fill="none" stroke="currentColor" stroke-width="1.4"/>
+        <text x="128" y="46" font-family="JetBrains Mono, monospace" font-size="11" text-anchor="middle" fill="currentColor" letter-spacing="1.2">CLOSED</text>
+        <text x="128" y="86" font-size="12.5" text-anchor="middle" fill="currentColor">ask the broker</text>
+        <line x1="128" y1="96" x2="128" y2="110" stroke="currentColor" stroke-width="1" marker-end="url(#pq-b)"/>
+        <text x="128" y="126" font-size="12" text-anchor="middle" fill="currentColor">empty or error?</text>
+        <text x="128" y="146" font-size="11.5" text-anchor="middle" fill="currentColor" opacity=".78">→ Yahoo fallback,</text>
+        <text x="128" y="160" font-size="11.5" text-anchor="middle" fill="currentColor" opacity=".78">fails += 1</text>
+
+        <!-- transition -->
+        <path d="M 222 100 L 330 100" fill="none" stroke="#9A6A12" stroke-width="1.6" marker-end="url(#pq-bg)"/>
+        <text x="276" y="92" font-size="11.5" text-anchor="middle" fill="currentColor" font-weight="700">fails = 3</text>
+        <text x="276" y="116" font-size="10.5" text-anchor="middle" fill="currentColor" opacity=".75">logged once, by name</text>
+
+        <!-- OPEN -->
+        <rect x="332" y="60" width="200" height="112" rx="2" fill="#9A6A12" fill-opacity=".08" stroke="#9A6A12" stroke-width="1.6"/>
+        <text x="432" y="46" font-family="JetBrains Mono, monospace" font-size="11" text-anchor="middle" fill="currentColor" letter-spacing="1.2">OPEN</text>
+        <text x="432" y="90" font-size="12.5" text-anchor="middle" fill="currentColor" font-weight="700">skip the broker entirely</text>
+        <text x="432" y="112" font-size="11.5" text-anchor="middle" fill="currentColor" opacity=".82">every price and candle request</text>
+        <text x="432" y="126" font-size="11.5" text-anchor="middle" fill="currentColor" opacity=".82">goes straight to Yahoo</text>
+        <text x="432" y="150" font-size="11" text-anchor="middle" fill="currentColor" opacity=".7">process-wide, module-level</text>
+
+        <!-- back -->
+        <path d="M 432 172 C 432 214 128 214 128 176" fill="none" stroke="currentColor" stroke-width="1.3" marker-end="url(#pq-b)"/>
+        <text x="280" y="212" font-size="11.5" text-anchor="middle" fill="currentColor">any broker success → fails = 0</text>
+
+        <!-- annotation -->
+        <text x="566" y="72" font-size="12" fill="currentColor" font-weight="700">Why process-wide</text>
+        <text x="566" y="92" font-size="11.5" fill="currentColor" opacity=".8">A new MarketData() is constructed all over</text>
+        <text x="566" y="107" font-size="11.5" fill="currentColor" opacity=".8">the codebase. An instance-level counter would</text>
+        <text x="566" y="122" font-size="11.5" fill="currentColor" opacity=".8">reset on every construction and the breaker</text>
+        <text x="566" y="137" font-size="11.5" fill="currentColor" opacity=".8">would never trip during the run it exists for.</text>
+        <text x="566" y="164" font-size="11.5" fill="currentColor" opacity=".8">Symbols that never return data are separately</text>
+        <text x="566" y="179" font-size="11.5" fill="currentColor" opacity=".8">blacklisted, so later runs skip them outright.</text>
+      </svg>
+      <figcaption><b>Three strikes, then stop asking.</b> The breaker converts a per-symbol failure into a per-run decision. Crucially it is opened by <em>consecutive</em> failures and closed by any success, so a couple of genuinely illiquid symbols do not trip it while a missing entitlement does.</figcaption>
+    </figure>
+
+    <p>Two smaller mechanisms sit alongside it. Historical requests are cached through a <code>get_or_set</code> helper backed by pickled files under <code>.cache/</code>, keyed by symbol and window. And an <strong>instrument blacklist</strong> records tickers that return nothing at all, so a 3,000-symbol crawl does not re-attempt the same dead names on every pass.</p>
+
+    <p>Concurrency is deliberately low — two worker threads for the screener. Upstox rate-limits hard on a bulk scan; anything that still returns 429 is skipped and picked up on the next incremental run rather than blocking the current one.</p>
+  </section>
+
+  <!-- ═══════════════════════════════════════════════════ 4 -->
+  <section id="s4">
+    <p class="num">04</p>
+    <h2>Performance: reconstructing what actually happened</h2>
+
+    <p class="standout">A broker tells you what you hold today. It does not tell you what your portfolio was worth last March, what your money-weighted return has been, or which position you sold too early. All three are reconstructed here from the executed-order history.</p>
+
+    <h3>The equity curve</h3>
+
+    <figure>
+      <svg viewBox="0 0 880 320" role="img" aria-label="Equity curve reconstruction: trade history is repaired and replayed into a daily position ledger, joined against per-instrument daily closes, and sampled weekly into a portfolio value series alongside invested capital.">
+        <defs>
+          <marker id="pq-c" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"/>
+          </marker>
+        </defs>
+
+        <rect x="24" y="40" width="150" height="56" rx="2" fill="none" stroke="currentColor" stroke-width="1.2"/>
+        <text x="99" y="62" font-size="12.5" text-anchor="middle" fill="currentColor">trade history</text>
+        <text x="99" y="78" font-size="10.5" text-anchor="middle" fill="currentColor" opacity=".75">3 FYs max, fetched</text>
+        <text x="99" y="90" font-size="10.5" text-anchor="middle" fill="currentColor" opacity=".75">in 350-day chunks</text>
+
+        <line x1="174" y1="68" x2="208" y2="68" stroke="currentColor" stroke-width="1.2" marker-end="url(#pq-c)"/>
+
+        <rect x="210" y="28" width="182" height="80" rx="2" fill="#9A6A12" fill-opacity=".08" stroke="#9A6A12" stroke-width="1.3"/>
+        <text x="301" y="49" font-size="12.5" text-anchor="middle" fill="currentColor" font-weight="700">reconcile against holdings</text>
+        <text x="301" y="67" font-size="10.5" text-anchor="middle" fill="currentColor" opacity=".85">calc_final ≠ actual → the API</text>
+        <text x="301" y="79" font-size="10.5" text-anchor="middle" fill="currentColor" opacity=".85">lost SELL legs. Drop the symbol</text>
+        <text x="301" y="91" font-size="10.5" text-anchor="middle" fill="currentColor" opacity=".85">or trim the excess BUYs.</text>
+        <text x="301" y="103" font-size="10.5" text-anchor="middle" fill="currentColor" opacity=".85">Inject synthetic pre-window entries.</text>
+
+        <line x1="392" y1="68" x2="426" y2="68" stroke="currentColor" stroke-width="1.2" marker-end="url(#pq-c)"/>
+
+        <rect x="428" y="40" width="166" height="56" rx="2" fill="none" stroke="currentColor" stroke-width="1.2"/>
+        <text x="511" y="62" font-size="12.5" text-anchor="middle" fill="currentColor">replay chronologically</text>
+        <text x="511" y="78" font-size="10.5" text-anchor="middle" fill="currentColor" opacity=".75">running position + cost basis</text>
+        <text x="511" y="90" font-size="10.5" text-anchor="middle" fill="currentColor" opacity=".75">per symbol, per day</text>
+
+        <line x1="511" y1="96" x2="511" y2="132" stroke="currentColor" stroke-width="1.2" marker-end="url(#pq-c)"/>
+
+        <rect x="428" y="134" width="166" height="56" rx="2" fill="none" stroke="currentColor" stroke-width="1.2"/>
+        <text x="511" y="156" font-size="12.5" text-anchor="middle" fill="currentColor">join daily closes</text>
+        <text x="511" y="172" font-size="10.5" text-anchor="middle" fill="currentColor" opacity=".75">one candles() call per unique</text>
+        <text x="511" y="184" font-size="10.5" text-anchor="middle" fill="currentColor" opacity=".75">instrument, Yahoo if empty</text>
+
+        <line x1="594" y1="162" x2="628" y2="162" stroke="currentColor" stroke-width="1.2" marker-end="url(#pq-c)"/>
+
+        <rect x="630" y="122" width="226" height="80" rx="2" fill="none" stroke="currentColor" stroke-width="1.4"/>
+        <text x="743" y="144" font-size="12.5" text-anchor="middle" fill="currentColor" font-weight="700">equity curve</text>
+        <text x="743" y="162" font-size="10.5" text-anchor="middle" fill="currentColor" opacity=".8">date · portfolio_value · invested_capital</text>
+        <text x="743" y="178" font-size="10.5" text-anchor="middle" fill="currentColor" opacity=".8">sampled every ~5 trading days to keep</text>
+        <text x="743" y="190" font-size="10.5" text-anchor="middle" fill="currentColor" opacity=".8">the API-call count manageable</text>
+
+        <!-- derived -->
+        <line x1="743" y1="202" x2="743" y2="232" stroke="currentColor" stroke-width="1.2" marker-end="url(#pq-c)"/>
+        <rect x="630" y="234" width="106" height="34" rx="2" fill="none" stroke="currentColor" stroke-width="1"/>
+        <text x="683" y="255" font-size="11.5" text-anchor="middle" fill="currentColor">period returns</text>
+        <rect x="750" y="234" width="106" height="34" rx="2" fill="none" stroke="currentColor" stroke-width="1"/>
+        <text x="803" y="255" font-size="11.5" text-anchor="middle" fill="currentColor">drawdown</text>
+
+        <line x1="99" y1="96" x2="99" y2="234" stroke="currentColor" stroke-width="1.2" marker-end="url(#pq-c)"/>
+        <rect x="24" y="236" width="150" height="56" rx="2" fill="none" stroke="currentColor" stroke-width="1.2"/>
+        <text x="99" y="258" font-size="12.5" text-anchor="middle" fill="currentColor">XIRR cashflows</text>
+        <text x="99" y="274" font-size="10.5" text-anchor="middle" fill="currentColor" opacity=".75">buys negative, sells positive,</text>
+        <text x="99" y="286" font-size="10.5" text-anchor="middle" fill="currentColor" opacity=".75">current value as final inflow</text>
+
+        <rect x="210" y="236" width="182" height="56" rx="2" fill="none" stroke="currentColor" stroke-width="1.2"/>
+        <text x="301" y="258" font-size="12.5" text-anchor="middle" fill="currentColor">opportunity misses</text>
+        <text x="301" y="274" font-size="10.5" text-anchor="middle" fill="currentColor" opacity=".75">fully-exited names now trading</text>
+        <text x="301" y="286" font-size="10.5" text-anchor="middle" fill="currentColor" opacity=".75">&gt; 20% above the avg sell price</text>
+      </svg>
+      <figcaption><b>The repair step is not optional.</b> Reconstruction is arithmetic; the hard part is that the input is wrong in a specific, recoverable way. Everything downstream — returns, XIRR, attribution — inherits whatever that step gets right.</figcaption>
+    </figure>
+
+    <h3>The MTF reconciliation problem</h3>
+
+    <div class="box warn">
+      <span class="box-k">Bad input, quietly</span>
+      <p>For margin-funded (MTF) positions the Upstox trade history sometimes returns the BUY legs and omits the corresponding SELLs. Replayed naively, the ledger says you still hold a stock you exited months ago — so the equity curve marks a phantom position to market forever and every return figure derived from it is wrong.</p>
+      <p>The reconciler compares each symbol's <em>calculated</em> final quantity against the <em>actual</em> holding. A negative gap means missing sells. If the real holding is zero, the entire symbol is dropped as unrecoverable; if it is partially wrong, excess BUY quantity is trimmed from the most recent trades backwards, with the trade's <code>amount</code> scaled proportionally so cost basis stays consistent. Positions opened before the API's three-financial-year window get a synthetic entry at estimated historical cost, so the curve does not begin with a cliff.</p>
+    </div>
+
+    <h3>XIRR</h3>
+
+    <p>Time-weighted return measures the manager; money-weighted return measures the investor. For a personal book where deposits are irregular, the second is the honest number. XIRR is the rate that zeroes the net present value of the actual, irregularly spaced cashflows:</p>
+
+    <div class="math">
+      NPV(r) = Σᵢ Aᵢ / (1 + r)^((dᵢ − d₀)/365.25) = 0<br>
+      <span class="an">Aᵢ &lt; 0 for purchases, &gt; 0 for sales; the current portfolio value is appended as a final inflow at today's date.</span>
+    </div>
+
+    <p>Solved with Brent's method over <code>[−0.999, 100.0]</code>, which is robust and bracket-guaranteed <em>when</em> the interval contains a sign change. It does not always — a book that has only ever received money and never returned any has no root in that range — so a Newton fallback runs from a 0.10 guess, and the function returns <code>None</code> rather than a fabricated number if both fail. A missing XIRR displayed as "not computable" is honest; a Newton iterate that wandered somewhere is not.</p>
+
+    <h3>Opportunity misses</h3>
+
+    <p>The most useful output in this module is also the simplest: fully-exited symbols whose current price is more than a threshold above the volume-weighted average sell price. It answers "what did I sell too early", which is the question a holdings screen structurally cannot ask, because the position is gone. Current prices are batched in groups of twenty through the LTP endpoint, since Upstox accepts comma-separated instrument keys.</p>
+  </section>
+
+  <!-- ═══════════════════════════════════════════════════ 5 -->
+  <section id="s5">
+    <p class="num">05</p>
+    <h2>The optimiser: mean-variance, and one variant that is actually useful</h2>
+
+    <h3>The standard machinery</h3>
+
+    <p>Daily returns over a lookback window are annualised at 252 trading days:</p>
+
+    <div class="math">
+      μ = mean(r) × 252 &nbsp;&nbsp;<span class="an">annualised expected return vector</span><br>
+      Σ = cov(r) × 252 &nbsp;&nbsp;<span class="an">annualised covariance matrix</span><br><br>
+      portfolio return &nbsp;= wᵀμ<br>
+      portfolio vol &nbsp;&nbsp;&nbsp;&nbsp;= √(wᵀΣw)<br>
+      Sharpe &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;= (wᵀμ − r<sub>f</sub>) / √(wᵀΣw) &nbsp;&nbsp;<span class="an">r<sub>f</sub> default 7%, an Indian-market rate</span>
+    </div>
+
+    <p>Three objectives are solved with SLSQP under long-only (<code>w ≥ 0</code>), fully-invested (<code>Σw = 1</code>) constraints plus a per-name cap defaulting to 25%: <strong>max Sharpe</strong> (minimise negative Sharpe), <strong>min variance</strong>, and <strong>target return</strong> (minimise variance subject to <code>wᵀμ = target</code>). Sampling the third across a range of targets traces the efficient frontier.</p>
+
+    <h3>Two robustness fixes worth copying</h3>
+
+    <dl class="kv">
+      <dt>Feasibility auto-relax</dt>
+      <dd>With three assets and a 25% cap the weights <em>cannot</em> sum to 1 — the problem is infeasible before the solver starts. The code detects <code>max_weight &lt; 1/n</code> and relaxes the cap to just past feasible rather than returning a confusing convergence failure.</dd>
+      <dt>Multi-start</dt>
+      <dd>SLSQP is notorious for reporting <em>"Positive directional derivative for linesearch"</em> — a false negative on a problem that has a perfectly good solution. So each objective is attempted from several starting points: equal weights, a seed biased toward the highest-μ third of the assets, and three Dirichlet random seeds from a fixed-seed generator. The first success wins; if none converges, the best non-converged iterate is returned with a debug log rather than an exception.</dd>
+    </dl>
+
+    <p>The fixed RNG seed matters more than it looks: it makes the optimiser <em>reproducible</em>. Two runs on the same data return the same weights, which is the difference between a tool you can reason about and one that argues with itself.</p>
+
+    <h3>The deploy-cash optimiser</h3>
+
+    <p>This is the variant that earns its place. Textbook MPT tells you the optimal weights and implies you should trade to them — which for a real book means selling winners, realising tax, and paying spreads to reach a theoretical point. The question an investor actually has is narrower and better posed:</p>
+
+    <p><em>"I have ₹X to invest. Given what I already hold, where should it go?"</em></p>
+
+    <div class="math">
+      maximise&nbsp;&nbsp; Sharpe( (v + a) / T )<br>
+      over&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; a ∈ ℝⁿ<br><br>
+      subject to&nbsp; aᵢ ≥ 0 &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="an">buy-only — never sell, so the tax basis is preserved</span><br>
+      &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; Σ aᵢ = cash &nbsp;&nbsp;&nbsp;&nbsp;<span class="an">the whole budget is deployed</span><br>
+      &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; (vᵢ + aᵢ)/T ≤ cap &nbsp;<span class="an">no name exceeds the concentration limit afterwards</span><br><br>
+      <span class="an">where v = current value per holding, T = Σv + cash, and the per-name upper bound is
+      derived directly as max(0, cap·T − vᵢ) so an already-overweight name simply cannot receive more.</span>
+    </div>
+
+    <figure>
+      <svg viewBox="0 0 880 340" role="img" aria-label="Risk-return chart showing an efficient frontier curve, the current portfolio positioned below and to the right of it, and the post-deployment portfolio moved up toward the frontier along a buy-only path.">
+        <defs>
+          <marker id="pq-d" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="#9A6A12"/>
+          </marker>
+        </defs>
+
+        <!-- axes -->
+        <line x1="90" y1="286" x2="800" y2="286" stroke="currentColor" stroke-width="1"/>
+        <line x1="90" y1="286" x2="90" y2="36" stroke="currentColor" stroke-width="1"/>
+        <text x="445" y="316" font-size="12" text-anchor="middle" fill="currentColor">annualised volatility →</text>
+            <text x="30" y="160" font-size="12" fill="currentColor" transform="rotate(-90 30 160)" text-anchor="middle">annualised return →</text>
+
+        <!-- frontier -->
+        <path d="M 190 250 C 260 190 340 130 470 92 C 570 64 660 56 760 52"
+              fill="none" stroke="currentColor" stroke-width="2"/>
+        <text x="700" y="42" font-size="12" text-anchor="middle" fill="currentColor" font-weight="700">efficient frontier</text>
+
+        <!-- min variance marker -->
+        <circle cx="190" cy="250" r="4.5" fill="none" stroke="currentColor" stroke-width="1.6"/>
+        <text x="196" y="268" font-size="11" fill="currentColor" opacity=".85">min variance</text>
+
+        <!-- max sharpe marker -->
+        <circle cx="470" cy="92" r="5" fill="currentColor"/>
+        <text x="470" y="78" font-size="11.5" text-anchor="middle" fill="currentColor">max Sharpe</text>
+
+        <!-- current portfolio -->
+        <circle cx="546" cy="222" r="6" fill="none" stroke="currentColor" stroke-width="2"/>
+        <text x="558" y="238" font-size="12" fill="currentColor">your book today</text>
+        <text x="558" y="253" font-family="JetBrains Mono, monospace" font-size="10.5" fill="currentColor" opacity=".75">Sharpe 0.62</text>
+
+        <!-- after -->
+        <path d="M 546 222 C 522 190 508 168 492 146" fill="none" stroke="#9A6A12" stroke-width="2.2" marker-end="url(#pq-d)" stroke-dasharray="6 4"/>
+        <circle cx="488" cy="140" r="6" fill="#9A6A12" fill-opacity=".9" stroke="#9A6A12" stroke-width="2"/>
+        <text x="360" y="136" font-size="12" fill="currentColor" font-weight="700">after deploying the cash</text>
+        <text x="360" y="152" font-family="JetBrains Mono, monospace" font-size="10.5" fill="currentColor" opacity=".8">Sharpe 0.81 · uplift +0.19</text>
+
+        <!-- constraint annotation -->
+        <text x="600" y="120" font-size="11.5" fill="currentColor" opacity=".85">The buy-only constraint is why the</text>
+        <text x="600" y="136" font-size="11.5" fill="currentColor" opacity=".85">move stops short of the frontier.</text>
+        <text x="600" y="152" font-size="11.5" fill="currentColor" opacity=".85">Reaching it would require selling —</text>
+        <text x="600" y="168" font-size="11.5" fill="currentColor" opacity=".85">realising tax and paying spreads for</text>
+        <text x="600" y="184" font-size="11.5" fill="currentColor" opacity=".85">a theoretical point.</text>
+
+        <text x="90" y="34" font-family="JetBrains Mono, monospace" font-size="10.5" fill="currentColor" letter-spacing="1.2">RISK / RETURN SPACE</text>
+      </svg>
+      <figcaption><b>The output is a shopping list, not a target allocation.</b> Every buy is reported in rupees with its resulting weight and whether it opens a new position; the response also carries before/after return, volatility and Sharpe so the uplift is visible rather than asserted. Sub-₹1 allocations are dropped as numerical noise, and the surviving allocations are rescaled so the budget is spent exactly.</figcaption>
+    </figure>
+
+    <p><code>candidates_extra</code> lets the candidate set include names not yet owned — typically the <code>STRONG_BUY</code> rows from the Universe Map (<a href="#s7">§07</a>), which is how the screener's output becomes an actual portfolio action rather than a list to admire.</p>
+
+    <p>The conventional <code>rebalance_suggestion</code> also exists — current versus target weight, with a BUY/SELL/HOLD action and a rupee delta per name, sorted by absolute size — for when a real rebalance is intended.</p>
+  </section>
+
+  <!-- ═══════════════════════════════════════════════════ 6 -->
+  <section id="s6">
+    <p class="num">06</p>
+    <h2>The screener: a funnel shaped by what each stage costs</h2>
+
+    <p>Screening the whole NSE universe naively means one fundamentals fetch per symbol — roughly 3,000 scrapes of third-party pages, most of them for stocks that fail on price action alone. So the funnel is ordered by cost, not by importance.</p>
+
+    <figure>
+      <svg viewBox="0 0 880 300" role="img" aria-label="Two-stage screener funnel: technical scan runs on every instrument using cached daily candles, survivors above the technical threshold go to a fundamental scan using multi-source scraping, and the combined score maps to a recommendation band.">
+        <defs>
+          <marker id="pq-e" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"/>
+          </marker>
+        </defs>
+
+        <!-- stage 1 -->
+        <rect x="26" y="44" width="250" height="112" rx="2" fill="none" stroke="currentColor" stroke-width="1.4"/>
+        <text x="151" y="34" font-family="JetBrains Mono, monospace" font-size="10.5" text-anchor="middle" fill="currentColor" letter-spacing="1.2">STAGE 1 — CHEAP</text>
+        <text x="151" y="68" font-size="13" text-anchor="middle" fill="currentColor" font-weight="700">technical scan · every symbol</text>
+        <text x="151" y="90" font-size="11" text-anchor="middle" fill="currentColor" opacity=".8">400 daily candles from cache</text>
+        <text x="151" y="106" font-size="11" text-anchor="middle" fill="currentColor" opacity=".8">EMA 20/50/200 · RSI(14) · MACD</text>
+        <text x="151" y="122" font-size="11" text-anchor="middle" fill="currentColor" opacity=".8">ATR% · 1m/3m/6m returns · 52w position</text>
+        <text x="151" y="142" font-size="11" text-anchor="middle" fill="currentColor" opacity=".7">needs ≥ 60 bars, else skipped</text>
+
+        <path d="M 276 100 L 330 100" fill="none" stroke="currentColor" stroke-width="1.4" marker-end="url(#pq-e)"/>
+        <text x="303" y="90" font-size="11" text-anchor="middle" fill="currentColor">≥ tech_min</text>
+
+        <!-- stage 2 -->
+        <rect x="332" y="44" width="250" height="112" rx="2" fill="none" stroke="currentColor" stroke-width="1.4"/>
+        <text x="457" y="34" font-family="JetBrains Mono, monospace" font-size="10.5" text-anchor="middle" fill="currentColor" letter-spacing="1.2">STAGE 2 — EXPENSIVE</text>
+        <text x="457" y="68" font-size="13" text-anchor="middle" fill="currentColor" font-weight="700">fundamentals · survivors only</text>
+        <text x="457" y="90" font-size="11" text-anchor="middle" fill="currentColor" opacity=".8">screener.in → Yahoo, per symbol</text>
+        <text x="457" y="106" font-size="11" text-anchor="middle" fill="currentColor" opacity=".8">P/E · P/B · ROE · D/E · growth · margins</text>
+        <text x="457" y="122" font-size="11" text-anchor="middle" fill="currentColor" opacity=".8">coverage-weighted score (see below)</text>
+        <text x="457" y="142" font-size="11" text-anchor="middle" fill="currentColor" opacity=".7">2 threads — API quota, not CPU</text>
+
+        <path d="M 582 100 L 636 100" fill="none" stroke="currentColor" stroke-width="1.4" marker-end="url(#pq-e)"/>
+        <text x="609" y="90" font-size="11" text-anchor="middle" fill="currentColor">≥ fund_min</text>
+
+        <!-- bands -->
+        <rect x="638" y="44" width="216" height="112" rx="2" fill="#2A3E6E" fill-opacity=".06" stroke="#2A3E6E" stroke-width="1.4"/>
+        <text x="746" y="34" font-family="JetBrains Mono, monospace" font-size="10.5" text-anchor="middle" fill="currentColor" letter-spacing="1.2">COMBINED = .6T + .4F</text>
+        <g font-family="JetBrains Mono, monospace" font-size="11" fill="currentColor">
+          <text x="654" y="66">≥ 70</text><text x="710" y="66" font-family="Karla, sans-serif" font-size="11.5">STRONG_BUY</text>
+          <text x="654" y="84">≥ 55</text><text x="710" y="84" font-family="Karla, sans-serif" font-size="11.5">BUY</text>
+          <text x="654" y="102">≥ 40</text><text x="710" y="102" font-family="Karla, sans-serif" font-size="11.5">HOLD</text>
+          <text x="654" y="120">≥ 25</text><text x="710" y="120" font-family="Karla, sans-serif" font-size="11.5">AVOID</text>
+          <text x="654" y="138">&lt; 25</text><text x="710" y="138" font-family="Karla, sans-serif" font-size="11.5">SELL</text>
+        </g>
+
+        <!-- no-fundamentals path -->
+        <path d="M 457 156 C 457 196 746 196 746 166" fill="none" stroke="currentColor" stroke-width="1.2" stroke-dasharray="5 3" marker-end="url(#pq-e)"/>
+        <text x="600" y="212" font-size="11.5" text-anchor="middle" fill="currentColor" opacity=".85">no fundamentals available → TECH_BUY / TECH_WATCH / AVOID on the technical score alone,</text>
+        <text x="600" y="228" font-size="11.5" text-anchor="middle" fill="currentColor" opacity=".85">never a combined score that pretends the missing half was measured</text>
+
+        <!-- weights -->
+        <text x="26" y="262" font-size="11.5" fill="currentColor" opacity=".85">Technical score is a 0–100 additive rubric: 15 above EMA200 · 10 above EMA50 · 10 EMA20&gt;EMA50 · 10 recent golden cross ·</text>
+        <text x="26" y="278" font-size="11.5" fill="currentColor" opacity=".85">10 RSI in 40–70 · 10 MACD histogram rising above zero · up to 15 for 3-month return · up to 10 for 1-month · 10 within 10% of the 52-week high.</text>
+      </svg>
+      <figcaption><b>Stage order is an economics decision.</b> Stage 1 touches cached candles and runs on everything; stage 2 makes a network request per symbol and runs only on what survived. The dashed path matters as much as the main one: a stock with no obtainable fundamentals is labelled honestly rather than scored as though the missing data were neutral.</figcaption>
+    </figure>
+
+    <h3>Partial-data fundamental scoring</h3>
+
+    <p class="standout">Indian fundamental data is patchy by nature. NSE reliably gives P/E and sector; Yahoo and screener.in add ROE, D/E and margins <em>when reachable</em>. A fixed-point rubric caps a P/E-only stock at roughly 15/100 and makes the whole universe look terrible.</p>
+
+    <p>So each available signal is normalised to <code>[0,1]</code> on its own scale, using one of two shapes:</p>
+
+    <div class="math">
+      band(x, lo, hi) &nbsp;&nbsp;&nbsp;&nbsp;= 1 inside [lo, hi], linear taper to 0 over one band-width outside<br>
+      higher(x, floor, target) = 0 at floor, 1 at target, linear between<br><br>
+      <span class="an">P/E → band(8, 35) · P/B → band(0.5, 8) · ROE → higher(5%, 20%)<br>
+      D/E → max(0, 1 − D/E ÷ 2) · earnings growth → higher(−5%, 20%)<br>
+      revenue growth → higher(−5%, 15%) · margins → higher(0, 20%) · FCF → binary</span>
+    </div>
+
+    <p>The weighted average is taken over <em>whatever is present</em>, then — and this is the part that makes the number usable — scaled by the square root of coverage:</p>
+
+    <div class="math">
+      raw&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;= Σ(sᵢ·wᵢ) / Σwᵢ × 100 &nbsp;&nbsp;&nbsp;<span class="an">quality across the signals we have</span><br>
+      coverage = Σwᵢ(present) / Σwᵢ(all) &nbsp;&nbsp;<span class="an">how much we actually know</span><br>
+      <strong>score&nbsp;&nbsp;&nbsp;= raw × √coverage</strong>
+    </div>
+
+    <div class="box emp">
+      <span class="box-k">Why the square root</span>
+      <p>Without it, every stock that exposed a single reasonable P/E scored 100 and the ranking became meaningless — an artefact that made the screener confidently promote companies about which almost nothing was known. Scaling by <code>√coverage</code> caps a one-signal score near <strong>35</strong>, two signals near <strong>50</strong>, and only full coverage reaches 100. The square root rather than a linear factor is a deliberate middle: linear punishes partial data so hard that a genuinely good company with two strong signals disappears, while no penalty at all is the bug. The <code>coverage</code> value is returned alongside the score, so the caller can always see how much the number rests on.</p>
+    </div>
+
+    <h3>The setup-based variant</h3>
+
+    <p>Alongside the additive rubric, <code>talib_screener.py</code> detects named <em>setups</em> rather than scoring continuously: RSI bullish divergence (price makes a lower low, RSI a higher low), volume breakout (close above the 20-day high on 1.5× average volume), Wyckoff Phase-C re-accumulation (price wicks below the 30-day low and recovers), and trend-momentum alignment (EMA20 &gt; EMA50 &gt; EMA200 with RSI between 50 and 70). It uses TA-Lib when installed and falls back to pure-pandas implementations otherwise, so a native-library install is an optimisation rather than a dependency. This is what feeds Stage&nbsp;1 of the research funnel, because a named setup is something an LLM can reason about; a score of 68 is not.</p>
+  </section>
+
+  <!-- ═══════════════════════════════════════════════════ 7 -->
+  <section id="s7">
+    <p class="num">07</p>
+    <h2>The Universe Map: a knowledge base used as a cache</h2>
+
+    <p>The Universe Map is not a scan you run and read — it is the crawler that fills the knowledge base. Three stages: technical scan over every symbol, multi-source fundamentals for everything technically valid (NSE → Yahoo → screener.in), and a write of each stock into the KB's <code>universe</code> store.</p>
+
+    <p>It is <strong>incremental by construction</strong>. A stock whose stored entry is younger than <code>max_age_days</code> is skipped and its stored data reused. The first build is long; every build after it only refreshes stale names. Run weekly from the scheduler and the KB stays current for free.</p>
+
+    <p>The research funnel then reads fundamentals from the KB instead of re-fetching — but with a guard that is easy to get wrong and matters a lot: <em>a KB entry that is fresh but stores only nulls is worthless</em>. The read requires at least one real ratio (P/E, ROE or D/E) present before trusting the cached row; otherwise it falls through to a live fetch and logs which path it took. Cache freshness and cache usefulness are different properties, and only checking the first is how a system ends up confidently reasoning over empty rows.</p>
+
+    <p>Output is written twice: a JSON cache under <code>.cache/universe_map/&lt;universe&gt;.json</code> for the dashboard's technical-versus-fundamental scatter plot, and the persistent KB store for the funnel and for search.</p>
+  </section>
+
+  <!-- ═══════════════════════════════════════════════════ 8 -->
+  <section id="s8">
+    <p class="num">08</p>
+    <h2>The knowledge base: three stores, zero native dependencies</h2>
+
+    <div class="box warn">
+      <span class="box-k">Why not a vector database</span>
+      <p>This started on ChromaDB. Its Rust core caused repeated install and version breakage on an M-series Mac — <code>'RustBindingsAPI' object has no attribute 'bindings'</code> — and a research tool that cannot be installed is worth nothing. SQLite's FTS5 full-text index ships <em>inside</em> Python's stdlib <code>sqlite3</code>: nothing to pip-install, nothing to compile, nothing to version-mismatch. On a phone, where the packaging surface is even narrower, that is not a preference but a requirement.</p>
+    </div>
+
+    <p>Three logical stores live in one <code>.sqlite</code> file:</p>
+
+    <dl class="kv">
+      <dt><code>doc_chunks</code></dt>
+      <dd>Uploaded books, journals, research notes and downloaded filings — chunked and full-text indexed. EPUB and PDF ingestion included.</dd>
+      <dt><code>decisions</code></dt>
+      <dd>Every agent verdict, stored with the full prompt, the full response, the verdict, and metadata (run id, macro mode, VIX, technical score, setups, health score). This is a self-accumulating training corpus: <code>export_decisions()</code> writes it out for fine-tuning, and <code>search_decisions()</code> makes past reasoning retrievable — "why did we reject high-P/E names last quarter" is an answerable question.</dd>
+      <dt><code>universe</code></dt>
+      <dd>Per-stock technical and fundamental snapshots with a timestamp, which is what <a href="#s7">§07</a> populates and the funnel reads.</dd>
+    </dl>
+
+    <h3>Hybrid retrieval, degrading cleanly</h3>
+
+    <p>Search is a four-step hybrid that works with or without embeddings:</p>
+
+    <ol>
+      <li>Embed the query — via Ollama locally, or NVIDIA NIM's OpenAI-compatible <code>/embeddings</code> endpoint when that provider is active. If neither is available, skip to step&nbsp;4.</li>
+      <li>Build a candidate pool with an FTS5 <code>MATCH</code> pre-filter (up to 80 rows). If that returns fewer than <code>4k</code> rows the keyword filter was too narrow, so widen to every embedded chunk.</li>
+      <li>Re-rank the pool by cosine similarity, stored as float32 blobs and compared with plain NumPy.</li>
+      <li>Drop everything below <code>kb_min_similarity</code>. Because results are ranked descending, this is a <code>break</code>, not a filter — and if nothing clears the bar, fall through to pure keyword search rather than returning padding.</li>
+    </ol>
+
+    <p>That last rule is the important one. The LLM should only ever see genuinely relevant context; handing it the five least-bad chunks from an unrelated corpus is how a grounded system starts confabulating with citations.</p>
+
+    <p>User queries are sanitised before reaching <code>MATCH</code> — FTS5 operators are stripped and surviving alphanumeric terms are OR-ed and quoted — so a query containing a stray <code>NEAR</code> or quote character cannot become a syntax error or an injection.</p>
+  </section>
+
+  <!-- ═══════════════════════════════════════════════════ 9 -->
+  <section id="s9">
+    <p class="num">09</p>
+    <h2>The LLM layer</h2>
+
+    <p>The provider abstraction is two methods. <code>complete(system, user)</code> returns text. <code>tool_loop(system, user, tools, dispatch, max_turns)</code> orchestrates an agentic loop — the model requests tools, the host dispatches them, the result goes back — and returns a final answer. Four providers implement it: NVIDIA NIM, Ollama, llama.cpp and Anthropic. Claude's native tool use and Ollama's ReAct-style JSON loop are both hidden behind the same signature.</p>
+
+    <h3>A chain, not a single provider</h3>
+
+    <p>With <code>LLM_PROVIDER=nvidia</code>, the factory builds a fallback ladder rather than one client: each configured NVIDIA model becomes a rung, and a <strong>local model is appended as the final rung</strong>. The cloud model is the main brain; the local one is the safety net that keeps a research run alive through a rate limit or an outage.</p>
+
+    <p>On Android the local rung is skipped — detected by the presence of <code>APP_FILES_DIR</code>, which the Kotlin layer sets — because there is no Ollama on the phone. That is a one-line environment check standing in for what would otherwise be a platform branch threaded through the whole layer.</p>
+
+    <h3>The shared KB tool</h3>
+
+    <p>Every agent inherits <code>kb_search</code> from <code>BaseAgent</code>, but with a conditional that is worth noting: <strong>the tool is only exposed if the KB actually has indexed chunks.</strong> An empty knowledge base means the tool is not advertised at all, saving the model a wasted turn discovering there is nothing there. When it is exposed, the system prompt is augmented with the chunk count and an instruction to cite the result's title — so a retrieved claim arrives with a source attached.</p>
+  </section>
+
+  <!-- ═══════════════════════════════════════════════════ 10 -->
+  <section id="s10">
+    <p class="num">10</p>
+    <h2>DR-Quant: a five-stage research funnel</h2>
+
+    <p>The funnel is a small state machine — each stage is a node reading and writing a shared <code>QuantState</code> dataclass, and every decision emits an <code>agent_logs</code> row (TimescaleDB, or JSONL when no database is configured). The docstring is explicit that this is the LangGraph model without the dependency: a stateful graph of nodes, hand-rolled because the abstraction is smaller than the library.</p>
+
+    <figure>
+      <svg viewBox="0 0 880 320" role="img" aria-label="DR-Quant five-stage funnel: macro mode sets bias, technical bulk screen yields twenty candidates, per-stock analysis validates roughly ten, MPT optimisation produces weights, and the intraday advisor produces entry alerts. Every stage writes to the agent log and the decision corpus.">
+        <defs>
+          <marker id="pq-f" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"/>
+          </marker>
+        </defs>
+
+        <g font-size="12">
+          <!-- stage 0 -->
+          <rect x="20" y="60" width="140" height="88" rx="2" fill="none" stroke="currentColor" stroke-width="1.2"/>
+          <text x="90" y="50" font-family="JetBrains Mono, monospace" font-size="10.5" text-anchor="middle" fill="currentColor">STAGE 0</text>
+          <text x="90" y="84" font-size="12.5" text-anchor="middle" fill="currentColor" font-weight="700">macro mode</text>
+          <text x="90" y="104" font-size="10.5" text-anchor="middle" fill="currentColor" opacity=".8">India VIX · PCR</text>
+          <text x="90" y="117" font-size="10.5" text-anchor="middle" fill="currentColor" opacity=".8">USD/INR</text>
+          <text x="90" y="136" font-size="10.5" text-anchor="middle" fill="currentColor" opacity=".7">biases everything below</text>
+
+          <line x1="160" y1="104" x2="188" y2="104" stroke="currentColor" stroke-width="1.2" marker-end="url(#pq-f)"/>
+
+          <!-- stage 1 -->
+          <rect x="190" y="60" width="140" height="88" rx="2" fill="none" stroke="currentColor" stroke-width="1.2"/>
+          <text x="260" y="50" font-family="JetBrains Mono, monospace" font-size="10.5" text-anchor="middle" fill="currentColor">STAGE 1</text>
+          <text x="260" y="84" font-size="12.5" text-anchor="middle" fill="currentColor" font-weight="700">technical screen</text>
+          <text x="260" y="104" font-size="10.5" text-anchor="middle" fill="currentColor" opacity=".8">named setups, not scores</text>
+          <text x="260" y="124" font-size="11" text-anchor="middle" fill="currentColor">→ top 20 candidates</text>
+
+          <line x1="330" y1="104" x2="358" y2="104" stroke="currentColor" stroke-width="1.2" marker-end="url(#pq-f)"/>
+
+          <!-- stage 2 -->
+          <rect x="360" y="46" width="176" height="116" rx="2" fill="#2A3E6E" fill-opacity=".07" stroke="#2A3E6E" stroke-width="1.5"/>
+          <text x="448" y="36" font-family="JetBrains Mono, monospace" font-size="10.5" text-anchor="middle" fill="currentColor">STAGE 2</text>
+          <text x="448" y="68" font-size="12.5" text-anchor="middle" fill="currentColor" font-weight="700">per-stock analysis</text>
+          <text x="448" y="88" font-size="10.5" text-anchor="middle" fill="currentColor" opacity=".85">deterministic gather:</text>
+          <text x="448" y="101" font-size="10.5" text-anchor="middle" fill="currentColor" opacity=".85">fundamentals · quote · wiki</text>
+          <text x="448" y="114" font-size="10.5" text-anchor="middle" fill="currentColor" opacity=".85">news bodies · filings PDFs</text>
+          <text x="448" y="134" font-size="11" text-anchor="middle" fill="currentColor" font-weight="700">→ ONE LLM call per stock</text>
+          <text x="448" y="152" font-size="11" text-anchor="middle" fill="currentColor">→ ~10 KEEP verdicts</text>
+
+          <line x1="536" y1="104" x2="564" y2="104" stroke="currentColor" stroke-width="1.2" marker-end="url(#pq-f)"/>
+
+          <!-- stage 3 -->
+          <rect x="566" y="60" width="140" height="88" rx="2" fill="none" stroke="currentColor" stroke-width="1.2"/>
+          <text x="636" y="50" font-family="JetBrains Mono, monospace" font-size="10.5" text-anchor="middle" fill="currentColor">STAGE 3</text>
+          <text x="636" y="84" font-size="12.5" text-anchor="middle" fill="currentColor" font-weight="700">MPT max-Sharpe</text>
+          <text x="636" y="104" font-size="10.5" text-anchor="middle" fill="currentColor" opacity=".8">needs ≥ 2 KEEP names</text>
+          <text x="636" y="124" font-size="11" text-anchor="middle" fill="currentColor">→ target weights</text>
+
+          <line x1="706" y1="104" x2="734" y2="104" stroke="currentColor" stroke-width="1.2" marker-end="url(#pq-f)"/>
+
+          <!-- stage 4 -->
+          <rect x="736" y="60" width="124" height="88" rx="2" fill="none" stroke="currentColor" stroke-width="1.2"/>
+          <text x="798" y="50" font-family="JetBrains Mono, monospace" font-size="10.5" text-anchor="middle" fill="currentColor">STAGE 4</text>
+          <text x="798" y="84" font-size="12.5" text-anchor="middle" fill="currentColor" font-weight="700">intraday</text>
+          <text x="798" y="104" font-size="10.5" text-anchor="middle" fill="currentColor" opacity=".8">VWAP · OI · ATR</text>
+          <text x="798" y="124" font-size="11" text-anchor="middle" fill="currentColor">→ entry alerts</text>
+        </g>
+
+        <!-- persistence rail -->
+        <line x1="90" y1="172" x2="90" y2="206" stroke="currentColor" stroke-width="1" marker-end="url(#pq-f)" opacity=".6"/>
+        <line x1="260" y1="172" x2="260" y2="206" stroke="currentColor" stroke-width="1" marker-end="url(#pq-f)" opacity=".6"/>
+        <line x1="448" y1="172" x2="448" y2="206" stroke="currentColor" stroke-width="1" marker-end="url(#pq-f)" opacity=".6"/>
+        <line x1="636" y1="172" x2="636" y2="206" stroke="currentColor" stroke-width="1" marker-end="url(#pq-f)" opacity=".6"/>
+        <line x1="798" y1="172" x2="798" y2="206" stroke="currentColor" stroke-width="1" marker-end="url(#pq-f)" opacity=".6"/>
+
+        <rect x="20" y="208" width="840" height="48" rx="2" fill="none" stroke="currentColor" stroke-width="1.2" stroke-dasharray="5 3"/>
+        <text x="440" y="228" font-size="12.5" text-anchor="middle" fill="currentColor">agent_logs — one row per decision · KB decisions corpus — full prompt + response + verdict + macro context</text>
+        <text x="440" y="246" font-size="11" text-anchor="middle" fill="currentColor" opacity=".8">TraceRecorder writes reasoning traces to JSONL, exportable as LoRA fine-tuning data</text>
+
+        <text x="20" y="288" font-size="11.5" fill="currentColor" opacity=".85">The funnel narrows by roughly 150× from universe to portfolio, and every narrowing step is recorded with the reasoning that produced it —</text>
+        <text x="20" y="304" font-size="11.5" fill="currentColor" opacity=".85">so a bad pick can be traced to the stage that let it through rather than argued about after the fact.</text>
+      </svg>
+      <figcaption><b>Recording the reasoning is a design goal, not instrumentation.</b> Because every verdict is stored with its full prompt and the macro conditions at the time, the system accumulates its own evaluation set — which is the prerequisite for ever fine-tuning a model on it.</figcaption>
+    </figure>
+
+    <h3>The shift that matters: agentic → deterministic gather</h3>
+
+    <p>Stage&nbsp;2 originally ran as a genuine tool-using agent — an <code>IntelligenceAgent</code> with <code>fundamentals</code>, <code>news</code> and <code>market_snapshot</code> tools, reasoning about which to call. That class still exists and its system prompt is a good example of the pattern: explicit REJECT rules (D/E &gt; 1.5 with banks excepted, ROE &lt; 8% <em>and</em> negative sales growth, news mentioning fraud or regulatory action, multi-year low with no catalyst), an explicit output schema, and a hard turn budget with "do not call the same tool twice".</p>
+
+    <p>The production path does something different: <strong>gather everything deterministically in Python, then make exactly one LLM call.</strong> The gather is fixed — KB-cached fundamentals with a live-fetch fallback, an Upstox quote, a Wikipedia company description, multi-source news with article bodies, and up to two primary-source filings downloaded, text-extracted and ingested into the KB — and the model's entire job is judgement over an assembled dossier.</p>
+
+    <div class="box">
+      <span class="box-k">Why the rewrite</span>
+      <p>Three reasons, in order of weight. <strong>Cost and latency are bounded:</strong> twenty stocks is twenty calls, not twenty times an unpredictable tool loop. <strong>The gather is auditable:</strong> when a verdict is wrong you can inspect exactly what the model saw, because the same code produced it every time. <strong>Tool loops fail in the least useful way:</strong> a model that decides not to call <code>fundamentals</code> produces a confident verdict with no fundamentals in it, and nothing in the output says so. Agentic tool use is the right shape when the next action genuinely depends on the previous result; here it never did — the data needed for an equity verdict is known in advance.</p>
+    </div>
+
+    <p>One prompt-engineering detail survived from that debugging: the key metrics are surfaced as an explicit aligned key-value block <em>above</em> the JSON dossier. When the numbers were only inside the JSON, the model frequently returned <code>null</code> for fields that were plainly present — parsing lazily. Spelled out as <code>P/E : 24.1</code> it copies them through. That is a real and repeatable property of instruct models handling nested structures, and it costs twelve lines to work around.</p>
+  </section>
+
+  <!-- ═══════════════════════════════════════════════════ 11 -->
+  <section id="s11">
+    <p class="num">11</p>
+    <h2>Macro ideas and the deep dive</h2>
+
+    <h3>Freshness as a hard filter</h3>
+
+    <p>The macro engine ingests from three source families — around a dozen financial-news RSS feeds, Google News over twelve curated macro queries that move Indian equities, and six Indian market subreddits — plus the live VIX / PCR / USDINR snapshot. Every item is <strong>date-parsed and dropped if older than the requested window</strong>. That filter is the feature: an LLM handed a mix of yesterday's and last quarter's headlines will weight them equally, and stale information biasing a current call is worse than having less of it.</p>
+
+    <p>The LLM's job is then to distil those signals into a small number of investable <em>themes</em>, each mapped to sectors and then to specific stocks drawn <strong>only from the user's own Universe Map</strong>. That constraint keeps the output actionable: a theme that resolves to a stock you cannot screen, price or optimise is a magazine article, not a position. Each pick carries a sector, a quant-derived entry price and a multi-factor thesis.</p>
+
+    <h3>Deep dive: primary sources over commentary</h3>
+
+    <p>For a single stock, the deep dive pulls the last two quarters' results and earnings-call PDFs, extracts their text, and produces a deliberately <em>skeptical</em> equity-research read — financial-health issues, valuation concerns, red flags — alongside a technical entry zone derived from DMAs, support levels, RSI and ATR. Fetched filings are ingested into the knowledge base as they arrive, so the same document is available to every later question without being downloaded again.</p>
+
+    <p>The skeptical framing is a prompt choice with a reason behind it. A model asked to "analyse" a company produces balanced, unfalsifiable prose. A model asked to find what is wrong with it produces a checklist you can verify against the filing — which is the only kind of output worth reading when the alternative is reading the filing yourself.</p>
+  </section>
+
+  <!-- ═══════════════════════════════════════════════════ 12 -->
+  <section id="s12">
+    <p class="num">12</p>
+    <h2>Scheduling and delivery</h2>
+
+    <p>APScheduler runs the funnel on Indian market hours, all jobs pinned to <code>Asia/Kolkata</code>:</p>
+
+    <div class="tw">
+      <table>
+        <caption>Every job is wrapped so a single failure logs a traceback and leaves the scheduler running. A scheduler that dies on one bad job is worse than no scheduler, because you stop noticing it is gone.</caption>
+        <thead><tr><th class="num-c">IST</th><th>Job</th><th>Output</th></tr></thead>
+        <tbody>
+          <tr><td class="num-c">09:00</td><td>Pre-open macro check</td><td>Market Mode broadcast to Telegram</td></tr>
+          <tr><td class="num-c">09:30</td><td>Full funnel, stages 1–3</td><td>The day's candidate portfolio</td></tr>
+          <tr><td class="num-c">10:00 · 12:00 · 14:30</td><td>Intraday advisor</td><td>Fresh entry/exit alerts</td></tr>
+          <tr><td class="num-c">15:15</td><td>End-of-day summary</td><td>Portfolio Excel via Telegram</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>The Telegram surface is authorised per chat id and can push reports, alerts and generated Excel workbooks. It is a delivery channel over the same engine — not a separate feature set — which is why an EOD report and a CLI <code>portfolio report</code> produce the same numbers.</p>
+  </section>
+
+  <!-- ═══════════════════════════════════════════════════ 13 -->
+  <section id="s13">
+    <p class="num">13</p>
+    <h2>Running the backend on the phone</h2>
+
+    <p>The Android app is not a client for a remote server. Chaquopy embeds a CPython runtime in the APK, a Gradle task (<code>syncPythonSource</code>) copies <code>src/</code>, <code>config/</code> and the project <code>.env</code> in at build time, and <code>android_runner.py</code> starts the same FastAPI application on-device. The Compose UI then talks to <code>127.0.0.1</code> over OkHttp.</p>
+
+    <p>What makes this practical rather than a stunt is what the engine <em>does not</em> require. No native vector database (<a href="#s8">§08</a>), no TA-Lib (<a href="#s6">§06</a> falls back to pandas), no local model runtime (<a href="#s9">§09</a> skips the local rung on-device), and no server process to reach. The dependency choices that look conservative on a desktop are precisely what allow the phone build to exist.</p>
+
+    <p>The runner sets environment variables <em>before</em> any import, loads the bundled <code>.env</code> without overriding what Kotlin already injected, and warns explicitly when an API key is missing rather than failing later inside an LLM call. The app also ships an in-app system terminal, which is the right affordance for a mobile build: when the backend is a real process rather than a remote service, the user needs to be able to see it start.</p>
+  </section>
+
+  <!-- ═══════════════════════════════════════════════════ 14 -->
+  <section id="s14">
+    <p class="num">14</p>
+    <h2>Where the machine learning is — and where it deliberately is not</h2>
+
+    <p class="standout">There is no trained model in this repository. No <code>.pkl</code>, no fitted weights, no training loop. That is a decision, not a gap, and it is worth stating plainly because "quant platform" invites the opposite assumption.</p>
+
+    <h3>What is used instead</h3>
+
+    <div class="tw">
+      <table>
+        <caption>The four techniques doing the work that a supervised model might be assumed to be doing.</caption>
+        <thead><tr><th>Technique</th><th>Where</th><th>Why it is the right tool here</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><strong>Constrained convex-style optimisation</strong><br><span style="color:var(--ink-faint);font-size:13px">SLSQP over μ and Σ</span></td>
+            <td>MPT weights, efficient frontier, deploy-cash allocation</td>
+            <td>The objective is specified exactly, so there is nothing to learn. Sharpe maximisation under linear constraints is a solved problem; the engineering effort belongs in robustness (multi-start, feasibility relaxation) rather than in modelling.</td>
+          </tr>
+          <tr>
+            <td><strong>Weighted rule scoring</strong><br><span style="color:var(--ink-faint);font-size:13px">normalised signals, coverage-scaled</span></td>
+            <td>Technical score, fundamental score, combined recommendation</td>
+            <td>No labels exist. Nobody has annotated 3,000 NSE stocks with "was this a good buy in hindsight", and generating that label from forward returns bakes in one regime. A rubric is also auditable: a user can disagree with the 15 points for trading above the 200-day EMA, which they cannot do with a coefficient.</td>
+          </tr>
+          <tr>
+            <td><strong>Zero-shot embeddings + FTS5</strong><br><span style="color:var(--ink-faint);font-size:13px">nomic-embed-text or NIM, cosine</span></td>
+            <td>Knowledge-base retrieval, decision search, news store</td>
+            <td>Pretrained encoders used off the shelf. A personal finance library is hundreds of documents, not a corpus you fine-tune a retriever on — and the hybrid keyword pre-filter means retrieval still works when no embedding backend is reachable at all.</td>
+          </tr>
+          <tr>
+            <td><strong>Instruction-following LLMs</strong><br><span style="color:var(--ink-faint);font-size:13px">NIM primary, local fallback</span></td>
+            <td>Stock verdicts, macro themes, deep dives, the grounded chat</td>
+            <td>Genuinely fuzzy work: reading a filing's prose, deciding what counts as a red flag, weighing a dozen macro signals against each other. All of it is constrained to a JSON schema and grounded in retrieved data, so the model exercises judgement over facts it was handed rather than recalling facts of its own.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>The case against a fitted model, stated honestly</h3>
+
+    <ul>
+      <li><strong>Non-stationarity.</strong> A classifier fitted on the last two years of Indian equity data learns the last two years' regime. Out-of-sample it is not merely less accurate — it is confidently wrong in the specific way the regime shifted.</li>
+      <li><strong>Label construction is the entire problem.</strong> "Good buy" has to be defined as some forward return over some horizon under some drawdown tolerance, and every one of those choices <em>is</em> the strategy. The rubric at least states its choices in the open.</li>
+      <li><strong>Explainability is not optional here.</strong> This tool advises a real person about real money. "Score 68 because it trades above its 200-day EMA, a golden cross formed in the last twenty sessions, and ROE is 19%" is something a user can act on or reject. "Score 68" from a model with a validation AUC of 0.61 is not.</li>
+      <li><strong>Sample size.</strong> A personal book has dozens of positions and hundreds of trades. That is enough to compute performance attribution honestly and nowhere near enough to fit anything without overfitting it.</li>
+    </ul>
+
+    <h3>What is being built toward one</h3>
+
+    <p>The decisions corpus in <a href="#s8">§08</a> is the interesting exception. Every verdict is stored with its full prompt, full response, the macro conditions, and the technical setup that produced the candidate — and <code>TraceRecorder</code> keeps the reasoning traces as JSONL exportable in LoRA fine-tuning format. That is the deliberate order of operations: <em>accumulate a real, timestamped, decision-linked dataset first; consider fitting something to it second.</em> It is the opposite of the usual sequence, and it is the only version that produces a training set worth having.</p>
+  </section>
+
+  <p class="foot">Generated from the Portfolio source tree — <code>src/portfolio/</code>, <code>src/screener/</code>, <code>src/agents/</code>, <code>src/kb/</code>, <code>src/brokers/</code>, <code>src/data/</code>, <code>src/dashboard/</code>, <code>android/</code>. A research and educational project; not investment advice. Market data and LLM calls require internet, and broker data requires a funded, API-enabled account.</p>
+
+</div>

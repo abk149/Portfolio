@@ -25,19 +25,6 @@ import org.json.JSONObject
 
 private val UNIVERSES = listOf("nifty50", "nifty100", "all_nse")
 
-// Poll a backend job until it leaves "running". Returns the final job object.
-private suspend fun pollJob(jobId: String, maxSecs: Int = 600): JSONObject {
-    val deadline = System.currentTimeMillis() + maxSecs * 1000L
-    while (System.currentTimeMillis() < deadline) {
-        val r = Api.job(jobId)
-        val o = r.objOrNull()
-        val status = o?.optString("status")
-        if (o != null && status != "running") return o
-        delay(2000)
-    }
-    return JSONObject().put("status", "error").put("error", "timed out")
-}
-
 private fun arr(o: JSONObject?, key: String): JSONArray? =
     o?.optJSONArray(key) ?: o?.optJSONObject(key)?.optJSONArray("array")
 
@@ -161,18 +148,15 @@ fun HomeScreen() {
 @Composable
 fun QuantScreen() {
     var universe by remember { mutableStateOf("nifty50") }
-    var running by remember { mutableStateOf(false) }
-    var result by remember { mutableStateOf<JSONObject?>(null) }
-    var status by remember { mutableStateOf<String?>(null) }
+    val job = JobBus.state("quant")
     var macro by remember { mutableStateOf<JSONObject?>(null) }
     var deepSym by remember { mutableStateOf<String?>(null) }
     var symInput by remember { mutableStateOf("") }
-    val scope = rememberCoroutineScope()
 
     LaunchedEffect(Unit) { if (BackendBus.running) macro = Api.macro().objOrNull() }
     deepSym?.let { DeepDiveDialog(it) { deepSym = null } }
 
-    ScreenScaffold(title = "DR-Quant", loading = running, onRefresh = null) {
+    ScreenScaffold(title = "DR-Quant", loading = job.running, onRefresh = null) {
         if (!BackendBus.running) { BackendOfflineHint(); return@ScreenScaffold }
         SectionCard("Deep dive a stock", AccentHi) {
             Text("Drill into last-2-quarter results, valuation issues, and a quant " +
@@ -193,24 +177,15 @@ fun QuantScreen() {
             Spacer(Modifier.height(10.dp))
             Button(
                 onClick = {
-                    scope.launch {
-                        running = true; result = null
-                        status = "Submitting funnel run…"
-                        val sub = Api.quantRun(universe).objOrNull()
-                        val jobId = sub?.optString("job_id")
-                        if (jobId.isNullOrBlank()) { status = "Failed to start: ${sub}"; running = false; return@launch }
-                        status = "Running on-device · watch the Terminal for live progress…"
-                        val fin = pollJob(jobId)
-                        if (fin.optString("status") == "done") {
-                            result = fin.optJSONObject("result"); status = null
-                        } else status = "Run failed: ${fin.optString("error")}"
-                        running = false
+                    JobBus.run("quant",
+                        "Running on-device · watch the Terminal for live progress…") {
+                        Api.quantRun(universe)
                     }
                 },
-                enabled = !running, modifier = Modifier.fillMaxWidth(),
+                enabled = !job.running, modifier = Modifier.fillMaxWidth(),
                 colors = ButtonDefaults.buttonColors(containerColor = Bull),
-            ) { Text(if (running) "Running…" else "▶ Run funnel") }
-            status?.let { Spacer(Modifier.height(8.dp)); StatusBanner(it, if (running) Warn else Bear) }
+            ) { Text(if (job.running) "Running…" else "▶ Run funnel") }
+            job.status?.let { Spacer(Modifier.height(8.dp)); StatusBanner(it, if (job.running) Warn else Bear) }
         }
         macro?.let { m ->
             val kpis = listOf(
@@ -221,7 +196,7 @@ fun QuantScreen() {
             )
             SectionCard("Macro", Warn) { KpiGrid(kpis) }
         }
-        result?.let { res ->
+        job.result?.let { res ->
             val p = res.optJSONObject("portfolio")
             SectionCard("Result", Bull) {
                 KpiGrid(listOf(
@@ -244,19 +219,15 @@ fun QuantScreen() {
 @Composable
 fun ThemesScreen() {
     var days by remember { mutableStateOf(14) }
-    var running by remember { mutableStateOf(false) }
-    var status by remember { mutableStateOf<String?>(null) }
-    var res by remember { mutableStateOf<JSONObject?>(null) }
+    val job = JobBus.state("themes")
     var cash by remember { mutableStateOf("25000") }
-    var allocBusy by remember { mutableStateOf(false) }
-    var alloc by remember { mutableStateOf<JSONObject?>(null) }
-    var allocMsg by remember { mutableStateOf<String?>(null) }
+    val allocJob = JobBus.state("alloc_themes")
     var deepSym by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
 
     deepSym?.let { DeepDiveDialog(it) { deepSym = null } }
 
-    ScreenScaffold(title = "Macro Ideas", loading = running, onRefresh = null) {
+    ScreenScaffold(title = "Macro Ideas", loading = job.running, onRefresh = null) {
         if (!BackendBus.running) { BackendOfflineHint(); return@ScreenScaffold }
         SectionCard("Generate ideas", AccentHi) {
             Text("Pulls recent macro, news (domestic + global), and Reddit chatter, " +
@@ -273,28 +244,18 @@ fun ThemesScreen() {
             Spacer(Modifier.height(10.dp))
             Button(
                 onClick = {
-                    scope.launch {
-                        running = true; res = null; alloc = null
-                        status = "Ingesting macro/news/Reddit + reasoning over your universe…"
-                        val sub = Api.themes(days).objOrNull()
-                        val jobId = sub?.optString("job_id")
-                        if (jobId.isNullOrBlank()) { status = "Failed to start."; running = false; return@launch }
-                        val fin = pollJob(jobId, maxSecs = 300)
-                        if (fin.optString("status") == "done") {
-                            val r = fin.optJSONObject("result")
-                            if (r != null && r.has("error")) status = r.optString("error")
-                            else { res = r; status = null }
-                        } else status = "Failed: ${fin.optString("error")}"
-                        running = false
-                    }
+                    JobBus.clear("alloc_themes")
+                    JobBus.run("themes",
+                        "Ingesting macro/news/Reddit + reasoning over your universe…",
+                        maxSecs = 300) { Api.themes(days) }
                 },
-                enabled = !running, modifier = Modifier.fillMaxWidth(),
+                enabled = !job.running, modifier = Modifier.fillMaxWidth(),
                 colors = ButtonDefaults.buttonColors(containerColor = Bull),
-            ) { Text(if (running) "Thinking…" else "✨ Generate macro ideas") }
-            status?.let { Spacer(Modifier.height(8.dp)); StatusBanner(it, if (running) Warn else Bear) }
+            ) { Text(if (job.running) "Thinking…" else "✨ Generate macro ideas") }
+            job.status?.let { Spacer(Modifier.height(8.dp)); StatusBanner(it, if (job.running) Warn else Bear) }
         }
 
-        res?.let { r ->
+        job.result?.let { r ->
             val macro = r.optJSONObject("macro")
             val counts = r.optJSONObject("counts")
             SectionCard("As of ${r.optString("as_of")} · last ${r.optInt("window_days")}d", AccentHi) {
@@ -360,19 +321,15 @@ fun ThemesScreen() {
                         Spacer(Modifier.width(8.dp))
                         Button(onClick = {
                             val amt = cash.toDoubleOrNull() ?: 0.0
-                            if (amt <= 0 || tickers.isEmpty()) { allocMsg = "Enter an amount."; return@Button }
-                            scope.launch {
-                                allocBusy = true; alloc = null; allocMsg = "Optimising allocation…"
-                                val a = Api.deployCashTickers(amt, tickers).objOrNull()
-                                if (a == null) allocMsg = "Backend error."
-                                else if (a.has("error")) allocMsg = a.optString("error")
-                                else { alloc = a; allocMsg = null }
-                                allocBusy = false
+                            if (amt > 0 && tickers.isNotEmpty()) {
+                                JobBus.runSync("alloc_themes", "Optimising allocation…") {
+                                    Api.deployCashTickers(amt, tickers)
+                                }
                             }
-                        }, enabled = !allocBusy) { Text(if (allocBusy) "…" else "Allocate") }
+                        }, enabled = !allocJob.running) { Text(if (allocJob.running) "…" else "Allocate") }
                     }
-                    allocMsg?.let { Spacer(Modifier.height(8.dp)); StatusBanner(it, if (allocBusy) Warn else Bear) }
-                    alloc?.let { a ->
+                    allocJob.status?.let { Spacer(Modifier.height(8.dp)); StatusBanner(it, if (allocJob.running) Warn else Bear) }
+                    allocJob.result?.let { a ->
                         val before = a.optJSONObject("before"); val after = a.optJSONObject("after")
                         Spacer(Modifier.height(10.dp))
                         KpiGrid(listOf(
@@ -394,8 +351,7 @@ fun ThemesScreen() {
 @Composable
 fun MapScreen() {
     var universe by remember { mutableStateOf("nifty50") }
-    var building by remember { mutableStateOf(false) }
-    var status by remember { mutableStateOf<String?>(null) }
+    val job = JobBus.state("umap")
     var report by remember { mutableStateOf<JSONObject?>(null) }
     var data by remember { mutableStateOf<JSONObject?>(null) }
     val scope = rememberCoroutineScope()
@@ -407,30 +363,23 @@ fun MapScreen() {
         }
     }
     LaunchedEffect(Unit) { if (BackendBus.running) loadCached() }
+    // When a build completes, pull the freshly written map data.
+    LaunchedEffect(job.finishedAt) { if (job.finishedAt > 0L && BackendBus.running) loadCached() }
 
-    ScreenScaffold(title = "Universe Map", loading = building, onRefresh = ::loadCached) {
+    ScreenScaffold(title = "Universe Map", loading = job.running, onRefresh = ::loadCached) {
         if (!BackendBus.running) { BackendOfflineHint(); return@ScreenScaffold }
         SectionCard("Build", AccentHi) {
             UniversePicker(universe) { universe = it }
             Spacer(Modifier.height(10.dp))
             Button(
                 onClick = {
-                    scope.launch {
-                        building = true
-                        status = "Crawling universe — this is long; watch the Terminal…"
-                        val sub = Api.umapBuild(universe).objOrNull()
-                        val jobId = sub?.optString("job_id")
-                        if (!jobId.isNullOrBlank()) {
-                            val fin = pollJob(jobId, maxSecs = 1800)
-                            status = if (fin.optString("status") == "done") "Build complete."
-                                     else "Build failed: ${fin.optString("error")}"
-                        } else status = "Started — refresh report when the Terminal shows done."
-                        loadCached(); building = false
-                    }
+                    JobBus.run("umap",
+                        "Crawling universe — this is long; watch the Terminal…",
+                        maxSecs = 1800) { Api.umapBuild(universe) }
                 },
-                enabled = !building, modifier = Modifier.fillMaxWidth(),
-            ) { Text(if (building) "Building…" else "▶ Build / refresh map") }
-            status?.let { Spacer(Modifier.height(8.dp)); StatusBanner(it, Warn) }
+                enabled = !job.running, modifier = Modifier.fillMaxWidth(),
+            ) { Text(if (job.running) "Building…" else "▶ Build / refresh map") }
+            job.status?.let { Spacer(Modifier.height(8.dp)); StatusBanner(it, if (job.running) Warn else Bear) }
         }
         report?.let { rep ->
             SectionCard("Stats", AccentHi) {
@@ -521,9 +470,7 @@ fun AnalysisScreen() {
 @Composable private fun ScreenerTab() {
     var universe by remember { mutableStateOf("nifty50") }
     var minScore by remember { mutableStateOf(60) }
-    var res by remember { mutableStateOf<JSONObject?>(null) }
-    var loading by remember { mutableStateOf(false) }
-    val scope = rememberCoroutineScope()
+    val job = JobBus.state("screener")
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
         if (!BackendBus.running) { BackendOfflineHint(); return@Column }
         SectionCard("Screener funnel", AccentHi) {
@@ -533,32 +480,32 @@ fun AnalysisScreen() {
             Slider(value = minScore.toFloat(), onValueChange = { minScore = it.toInt() },
                 valueRange = 0f..100f)
             Button(onClick = {
-                scope.launch { loading = true; res = Api.screener(universe, minScore).objOrNull(); loading = false }
-            }, enabled = !loading, modifier = Modifier.fillMaxWidth()) {
-                Text(if (loading) "Scanning…" else "▶ Run screener")
+                JobBus.run("screener", "Scanning universe…") { Api.screener(universe, minScore) }
+            }, enabled = !job.running, modifier = Modifier.fillMaxWidth()) {
+                Text(if (job.running) "Scanning…" else "\u25b6 Run screener")
             }
+            job.status?.let { Spacer(Modifier.height(8.dp)); StatusBanner(it, if (job.running) Warn else Bear) }
         }
-        arr(res, "results")?.let { SectionCard("Results", Bull) { DataTable(it) } }
+        arr(job.result, "results")?.let { SectionCard("Results", Bull) { DataTable(it) } }
     }
 }
 
 @Composable private fun IntradayTab() {
     var days by remember { mutableStateOf(90) }
-    var res by remember { mutableStateOf<JSONObject?>(null) }
-    var loading by remember { mutableStateOf(false) }
-    val scope = rememberCoroutineScope()
+    val job = JobBus.state("intraday")
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
         if (!BackendBus.running) { BackendOfflineHint(); return@Column }
         SectionCard("Trade analysis", AccentHi) {
             Text("Lookback: $days days", color = Muted, fontSize = 12.sp)
             Slider(value = days.toFloat(), onValueChange = { days = it.toInt() }, valueRange = 30f..365f)
             Button(onClick = {
-                scope.launch { loading = true; res = Api.intradayAnalyze(days).objOrNull(); loading = false }
-            }, enabled = !loading, modifier = Modifier.fillMaxWidth()) {
-                Text(if (loading) "Analyzing…" else "▶ Analyze my trades")
+                JobBus.run("intraday", "Analysing your trades…") { Api.intradayAnalyze(days) }
+            }, enabled = !job.running, modifier = Modifier.fillMaxWidth()) {
+                Text(if (job.running) "Analyzing…" else "▶ Analyze my trades")
             }
+            job.status?.let { Spacer(Modifier.height(8.dp)); StatusBanner(it, if (job.running) Warn else Bear) }
         }
-        res?.let { r ->
+        job.result?.let { r ->
             if (r.has("error")) { SectionCard("No data", Muted) { StatusBanner(r.optString("error"), Muted) } }
             else {
                 SectionCard("Stats", AccentHi) {
@@ -583,12 +530,12 @@ fun AnalysisScreen() {
 }
 
 @Composable private fun PerformanceTab() {
-    var res by remember { mutableStateOf<JSONObject?>(null) }
-    var loading by remember { mutableStateOf(false) }
-    var status by remember { mutableStateOf<String?>(null) }
-    val scope = rememberCoroutineScope()
+    val job = JobBus.state("performance")
+    // Seed from the backend cache once, so returning to the tab shows the last run.
     LaunchedEffect(Unit) {
-        if (BackendBus.running) res = Api.performanceCached().objOrNull()?.optJSONObject("data")
+        if (BackendBus.running && job.result == null && !job.running) {
+            Api.performanceCached().objOrNull()?.optJSONObject("data")?.let { JobBus.seed("performance", it) }
+        }
     }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
         if (!BackendBus.running) { BackendOfflineHint(); return@Column }
@@ -598,22 +545,14 @@ fun AnalysisScreen() {
                 "winners and losers.", color = Muted, fontSize = 12.sp)
             Spacer(Modifier.height(10.dp))
             Button(onClick = {
-                scope.launch {
-                    loading = true; status = "Analysing — fetching trade history & building the curve…"
-                    val sub = Api.performance().objOrNull()       // job-based
-                    val jobId = sub?.optString("job_id")
-                    if (jobId.isNullOrBlank()) { status = "Failed to start."; loading = false; return@launch }
-                    val fin = pollJob(jobId)
-                    if (fin.optString("status") == "done") { res = fin.optJSONObject("result"); status = null }
-                    else status = "Failed: ${fin.optString("error")}"
-                    loading = false
-                }
-            }, enabled = !loading, modifier = Modifier.fillMaxWidth()) {
-                Text(if (loading) "Analysing…" else "▶ Analyse performance")
+                JobBus.run("performance",
+                    "Analysing — fetching trade history & building the curve…") { Api.performance() }
+            }, enabled = !job.running, modifier = Modifier.fillMaxWidth()) {
+                Text(if (job.running) "Analysing…" else "▶ Analyse performance")
             }
-            status?.let { Spacer(Modifier.height(8.dp)); StatusBanner(it, if (loading) Warn else Bear) }
+            job.status?.let { Spacer(Modifier.height(8.dp)); StatusBanner(it, if (job.running) Warn else Bear) }
         }
-        res?.let { r ->
+        job.result?.let { r ->
             val s = r.optJSONObject("summary") ?: JSONObject()
             fun n(k: String) = (s.opt(k) as? Number)?.toDouble() ?: 0.0
             SectionCard("Returns", AccentHi) {
@@ -624,7 +563,7 @@ fun AnalysisScreen() {
                         if (n("total_pnl") >= 0) Bull else Bear),
                     Triple("Return", "%.2f%%".format(n("total_pnl_pct")),
                         if (n("total_pnl_pct") >= 0) Bull else Bear),
-                    Triple("XIRR", if (r.opt("xirr") is Number) "%.2f%%".format(n("xirr").let { if (it < 1) it * 100 else it }) else "—", AccentHi),
+                    Triple("XIRR", (r.opt("xirr") as? Number)?.let { "%.2f%%".format(it.toDouble()) } ?: "—", AccentHi),
                     Triple("Trades", fmtNum(s.opt("total_trades")), OnBg),
                 ))
             }
@@ -657,14 +596,10 @@ private fun xyPct(o: JSONObject?): Pair<Float, Float>? {
 @Composable private fun OptimizeTab() {
     var mode by remember { mutableStateOf("max_sharpe") }
     var maxW by remember { mutableStateOf(25) }
-    var running by remember { mutableStateOf(false) }
-    var res by remember { mutableStateOf<JSONObject?>(null) }
-    var status by remember { mutableStateOf<String?>(null) }
+    val job = JobBus.state("optimize")
     // Deploy-cash (reallocation by amount)
     var cash by remember { mutableStateOf("15000") }
-    var deployBusy by remember { mutableStateOf(false) }
-    var deploy by remember { mutableStateOf<JSONObject?>(null) }
-    var deployMsg by remember { mutableStateOf<String?>(null) }
+    val deployJob = JobBus.state("deploy_cash")
     val scope = rememberCoroutineScope()
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
         if (!BackendBus.running) { BackendOfflineHint(); return@Column }
@@ -681,21 +616,17 @@ private fun xyPct(o: JSONObject?): Pair<Float, Float>? {
                 Button(
                     onClick = {
                         val amt = cash.toDoubleOrNull() ?: 0.0
-                        if (amt <= 0) { deployMsg = "Enter an amount."; return@Button }
-                        scope.launch {
-                            deployBusy = true; deploy = null; deployMsg = "Computing allocation…"
-                            val r = Api.deployCash(amt).objOrNull()
-                            if (r == null) deployMsg = "Backend error."
-                            else if (r.has("error")) deployMsg = r.optString("error")
-                            else { deploy = r; deployMsg = null }
-                            deployBusy = false
+                        if (amt > 0) {
+                            JobBus.runSync("deploy_cash", "Computing allocation…") {
+                                Api.deployCash(amt)
+                            }
                         }
                     },
-                    enabled = !deployBusy,
-                ) { Text(if (deployBusy) "…" else "Suggest") }
+                    enabled = !deployJob.running,
+                ) { Text(if (deployJob.running) "…" else "Suggest") }
             }
-            deployMsg?.let { Spacer(Modifier.height(8.dp)); StatusBanner(it, if (deployBusy) Warn else Bear) }
-            deploy?.let { d ->
+            deployJob.status?.let { Spacer(Modifier.height(8.dp)); StatusBanner(it, if (deployJob.running) Warn else Bear) }
+            deployJob.result?.let { d ->
                 val before = d.optJSONObject("before"); val after = d.optJSONObject("after")
                 Spacer(Modifier.height(10.dp))
                 KpiGrid(listOf(
@@ -720,25 +651,16 @@ private fun xyPct(o: JSONObject?): Pair<Float, Float>? {
             Slider(value = maxW.toFloat(), onValueChange = { maxW = it.toInt() }, valueRange = 5f..100f)
             Button(
                 onClick = {
-                    scope.launch {
-                        running = true; res = null; status = "Optimising… (prices via broker or Yahoo fallback)"
-                        val sub = Api.optimize(mode, maxW / 100.0).objOrNull()
-                        val jobId = sub?.optString("job_id")
-                        if (jobId.isNullOrBlank()) { status = "Failed: $sub"; running = false; return@launch }
-                        val fin = pollJob(jobId)
-                        if (fin.optString("status") == "done") {
-                            val r = fin.optJSONObject("result")
-                            if (r != null && r.has("error")) status = r.optString("error")
-                            else { res = r; status = null }
-                        } else status = "Failed: ${fin.optString("error")}"
-                        running = false
+                    JobBus.run("optimize",
+                        "Optimising… (prices via broker or Yahoo fallback)") {
+                        Api.optimize(mode, maxW / 100.0)
                     }
                 },
-                enabled = !running, modifier = Modifier.fillMaxWidth(),
-            ) { Text(if (running) "Optimising…" else "▶ Optimise portfolio") }
-            status?.let { Spacer(Modifier.height(8.dp)); StatusBanner(it, if (running) Warn else Bear) }
+                enabled = !job.running, modifier = Modifier.fillMaxWidth(),
+            ) { Text(if (job.running) "Optimising…" else "▶ Optimise portfolio") }
+            job.status?.let { Spacer(Modifier.height(8.dp)); StatusBanner(it, if (job.running) Warn else Bear) }
         }
-        res?.let { r ->
+        job.result?.let { r ->
             SectionCard("Optimal", Bull) {
                 KpiGrid(listOf(
                     Triple("Exp. return", fmtNum(r.opt("expected_return_pct")) + "%", Bull),
@@ -926,19 +848,17 @@ fun ChatScreen() {
 // ─────────────────────────────────────────────────────────────────────────────
 @Composable
 fun DeepDiveDialog(symbol: String, onDismiss: () -> Unit) {
-    var loading by remember { mutableStateOf(true) }
-    var res by remember { mutableStateOf<JSONObject?>(null) }
-    var error by remember { mutableStateOf<String?>(null) }
+    // Keyed per symbol so a dive survives closing/reopening the dialog and
+    // navigating away; reopening the same symbol shows the finished result.
+    val job = JobBus.state("deepdive:$symbol")
     LaunchedEffect(symbol) {
-        loading = true; error = null; res = null
-        val sub = Api.deepDive(symbol).objOrNull()
-        val jobId = sub?.optString("job_id")
-        if (jobId.isNullOrBlank()) { error = "Failed to start."; loading = false; return@LaunchedEffect }
-        val fin = pollJob(jobId, maxSecs = 240)
-        if (fin.optString("status") == "done") res = fin.optJSONObject("result")
-        else error = "Failed: ${fin.optString("error")}"
-        loading = false
+        if (job.result == null && !job.running) {
+            JobBus.run("deepdive:$symbol", "Analysing…", maxSecs = 240) { Api.deepDive(symbol) }
+        }
     }
+    val loading = job.running
+    val res = job.result
+    val error = job.status
     AlertDialog(
         onDismissRequest = onDismiss,
         confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } },
