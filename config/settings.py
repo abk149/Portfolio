@@ -111,6 +111,12 @@ class Settings:
         return int(self._get("NVIDIA_MAX_TOKENS", "16384"))
 
     @property
+    def nvidia_timeout(self) -> int:
+        """Seconds to wait for an NVIDIA completion. Reasoning-heavy models can
+        be very slow to first token, so this is generous by default."""
+        return int(self._get("NVIDIA_TIMEOUT", "300"))
+
+    @property
     def nvidia_embed_model(self) -> str:
         return self._get("NVIDIA_EMBED_MODEL", "nvidia/nv-embedqa-e5-v5")
 

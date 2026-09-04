@@ -44,6 +44,9 @@ class NvidiaProvider(LLMProvider):
         self.url = (base_url or settings.nvidia_base_url).rstrip("/") + "/chat/completions"
         self.temperature = settings.nvidia_temperature
         self.max_tokens = settings.nvidia_max_tokens
+        # Slow reasoning models (e.g. moonshotai/kimi-k3) can take minutes to
+        # produce a first token — configurable via NVIDIA_TIMEOUT.
+        self.timeout = settings.nvidia_timeout
         self.headers = {
             "Authorization": f"Bearer {key}",
             "Accept": "application/json",
@@ -51,6 +54,38 @@ class NvidiaProvider(LLMProvider):
         }
 
     # ---------- low-level chat ----------
+    def _stream(self, body: dict, timeout: int) -> tuple[str, str]:
+        """SSE streaming call → (content, reasoning).
+
+        Streaming matters for slow reasoning models: a non-streamed request sits
+        on the gateway until the whole answer is ready and gets killed with a
+        504, while a stream keeps the connection alive token by token.
+        """
+        content, reasoning = [], []
+        with requests.post(self.url, headers={**self.headers, "Accept": "text/event-stream"},
+                           json={**body, "stream": True},
+                           stream=True, timeout=timeout) as r:
+            if r.status_code != 200:
+                raise RuntimeError(f"HTTP {r.status_code}: {r.text[:300]}")
+            for raw in r.iter_lines():
+                if not raw:
+                    continue
+                line = raw.decode("utf-8", "replace").strip()
+                if not line.startswith("data:"):
+                    continue
+                chunk = line[5:].strip()
+                if chunk == "[DONE]":
+                    break
+                try:
+                    delta = (json.loads(chunk).get("choices") or [{}])[0].get("delta") or {}
+                except Exception:
+                    continue
+                if delta.get("content"):
+                    content.append(delta["content"])
+                if delta.get("reasoning_content"):
+                    reasoning.append(delta["reasoning_content"])
+        return "".join(content).strip(), "".join(reasoning).strip()
+
     def _chat(self, messages: list[dict]) -> str:
         base_body = {
             "model": self.model,
@@ -58,7 +93,6 @@ class NvidiaProvider(LLMProvider):
             "temperature": self.temperature,
             "top_p": 0.95,
             "max_tokens": self.max_tokens,
-            "stream": False,
         }
         # Reasoning models (Nemotron) accept these; non-reasoning models 400 on
         # them — so we retry without the extras if the first call is rejected.
@@ -71,24 +105,17 @@ class NvidiaProvider(LLMProvider):
         last_err = ""
         for body in attempts:
             try:
-                r = requests.post(self.url, headers=self.headers,
-                                  json=body, timeout=240)
+                content, reasoning = self._stream(body, self.timeout)
             except Exception as e:
                 last_err = f"{type(e).__name__}: {e}"
-                continue
-            if r.status_code == 200:
-                try:
-                    msg = r.json()["choices"][0]["message"]
-                except Exception as e:
-                    return f"[nvidia parse error: {e}]"
-                content = (msg.get("content") or "").strip()
-                reasoning = (msg.get("reasoning_content") or "").strip()
+                msg = str(e)
+                if "HTTP 400" in msg or "HTTP 422" in msg:
+                    continue       # retry without reasoning extras
+                break              # 401/403/429/5xx/network — extras aren't the issue
+            if content or reasoning:
                 # Wrap reasoning in <think> so the existing strip/log path works
                 return f"<think>{reasoning}</think>\n{content}" if reasoning else content
-            last_err = f"HTTP {r.status_code}: {r.text[:300]}"
-            if r.status_code in (400, 422):
-                continue       # retry without reasoning extras
-            break              # 401/403/429/5xx — don't bother retrying extras
+            last_err = "empty response"
         log.warning(f"nvidia request failed: {last_err}")
         return f"[nvidia error: {last_err}]"
 
