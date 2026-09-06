@@ -50,17 +50,28 @@ private fun allocationSlices(arr: JSONArray?): List<Pair<String, Float>> {
     return out
 }
 
-// equity_curve [{date, portfolio_value, invested_capital}] → (values, invested).
-private fun equitySeries(arr: JSONArray?): Pair<List<Float>, List<Float>> {
+// equity_curve [{date, portfolio_value, invested_capital, hold_value}]
+// → (portfolio, invested, if-never-sold).
+private class EquityCurve(
+    val portfolio: List<Float>,
+    val invested: List<Float>,
+    val hold: List<Float>,
+    val proceeds: List<Float>,
+)
+
+private fun equitySeries(arr: JSONArray?): EquityCurve {
     val pv = ArrayList<Float>(); val inv = ArrayList<Float>()
+    val hold = ArrayList<Float>(); val proc = ArrayList<Float>()
     if (arr != null) for (i in 0 until arr.length()) {
         val o = arr.optJSONObject(i) ?: continue
         val p = (o.opt("portfolio_value") as? Number)?.toFloat() ?: continue
         pv.add(p)
         inv.add((o.opt("invested_capital") as? Number)?.toFloat()
             ?: (o.opt("invested") as? Number)?.toFloat() ?: Float.NaN)
+        hold.add((o.opt("hold_value") as? Number)?.toFloat() ?: Float.NaN)
+        proc.add((o.opt("proceeds") as? Number)?.toFloat() ?: 0f)
     }
-    return pv to inv
+    return EquityCurve(pv, inv, hold, proc)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -568,12 +579,55 @@ fun AnalysisScreen() {
                 ))
             }
             val curve = arr(r, "equity_curve")
-            val (pv, inv) = equitySeries(curve)
-            SectionCard("Portfolio value vs invested", Bull) {
-                if (pv.size >= 2) LineChart(primary = pv, secondary = inv.takeIf { it.size == pv.size })
-                else StatusBanner("No time series yet. This needs your executed order " +
+            val ec = equitySeries(curve)
+            val pv = ec.portfolio
+            SectionCard("Portfolio value vs invested vs if-held", Bull) {
+                if (pv.size >= 2) {
+                    LineChart(listOf(
+                        ChartSeries(pv, "Portfolio", AccentHi, filled = true),
+                        ChartSeries(ec.invested, "Invested", Muted, dashed = true),
+                        ChartSeries(ec.hold, "If never sold", Warn),
+                    ))
+                    // Fair comparison: after selling you hold stock AND the cash
+                    // you received, so compare (portfolio + proceeds) to if-held.
+                    val heldNow = ec.hold.lastOrNull { it.isFinite() }
+                    val nowVal = pv.lastOrNull { it.isFinite() }
+                    val cash = ec.proceeds.lastOrNull { it.isFinite() } ?: 0f
+                    if (heldNow != null && nowVal != null) {
+                        val gap = heldNow - (nowVal + cash)
+                        if (kotlin.math.abs(gap) > 1f) {
+                            Spacer(Modifier.height(10.dp))
+                            StatusBanner(
+                                (if (gap > 0)
+                                    "Selling cost you ₹${fmtCompact(gap)}."
+                                else
+                                    "Selling saved you ₹${fmtCompact(-gap)}.") +
+                                "\nHolding everything: ₹${fmtCompact(heldNow)}  vs  " +
+                                "what you have now: ₹${fmtCompact(nowVal)} in stock" +
+                                (if (cash > 1f) " + ₹${fmtCompact(cash)} cash from sales" else "") + ".",
+                                if (gap > 0) Bear else Bull)
+                        }
+                    }
+                } else StatusBanner("No time series yet. This needs your executed order " +
                     "history — on Groww with limited API access it may be unavailable; " +
                     "Upstox provides full history.", Warn)
+            }
+            arr(r, "opportunity_misses")?.takeIf { it.length() > 0 }?.let { misses ->
+                var missed = 0.0
+                for (i in 0 until misses.length())
+                    missed += (misses.optJSONObject(i)?.opt("missed_value") as? Number)?.toDouble() ?: 0.0
+                SectionCard("Lost opportunity — sold too early", Warn) {
+                    Text("Stocks you fully exited that are worth more now. " +
+                        "\"Missed\" = (price now − your avg sell) × qty sold.",
+                        color = Muted, fontSize = 11.sp)
+                    Spacer(Modifier.height(10.dp))
+                    KpiGrid(listOf(
+                        Triple("Total left on table", "₹" + fmtCompact(missed), Bear),
+                        Triple("Positions", fmtNum(misses.length()), OnBg),
+                    ))
+                    Spacer(Modifier.height(10.dp))
+                    DataTable(misses)
+                }
             }
             arr(r, "winners")?.takeIf { it.length() > 0 }?.let { SectionCard("Winners", Bull) { DataTable(it) } }
             arr(r, "losers")?.takeIf { it.length() > 0 }?.let { SectionCard("Losers", Bear) { DataTable(it) } }

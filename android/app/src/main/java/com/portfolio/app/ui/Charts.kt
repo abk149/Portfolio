@@ -77,77 +77,80 @@ fun DonutChart(slices: List<Pair<String, Float>>, modifier: Modifier = Modifier)
     }
 }
 
+/** One line on a [LineChart]. */
+data class ChartSeries(
+    val values: List<Float>,
+    val label: String,
+    val color: Color,
+    val dashed: Boolean = false,
+    val filled: Boolean = false,
+)
+
 /**
- * Two-series line chart (portfolio value vs invested) — mirrors the web
- * dashboard's equity curve. [primary] is drawn filled; [secondary] dashed.
+ * Multi-series line chart with a real y-axis (gridlines + ₹ tick labels).
+ * Used for portfolio value vs invested capital vs the buy-and-hold
+ * counterfactual. All series are NaN-tolerant and share one y-scale.
  */
 @Composable
-fun LineChart(
-    primary: List<Float>,
-    secondary: List<Float>? = null,
-    primaryLabel: String = "Portfolio",
-    secondaryLabel: String = "Invested",
-    modifier: Modifier = Modifier,
-) {
-    val pts = primary.filter { it.isFinite() }
-    val sec = secondary?.filter { it.isFinite() }
-    if (pts.size < 2) {
+fun LineChart(series: List<ChartSeries>, modifier: Modifier = Modifier) {
+    val live = series.filter { it.values.count { v -> v.isFinite() } >= 2 }
+    if (live.isEmpty()) {
         Text("No equity curve yet.", color = Muted, fontSize = 12.sp); return
     }
-    // Range from FINITE values only — a single NaN in the invested series would
-    // otherwise make min/max NaN and blank the whole chart.
-    val all = pts + (sec ?: emptyList())
-    val lo = all.min()
-    val hi = all.max()
+    val finite = live.flatMap { it.values }.filter { it.isFinite() }
+    val ticks = niceTicks(finite.min(), finite.max())
+    val lo = ticks.first(); val hi = ticks.last()
     val range = (hi - lo).takeIf { it.isFinite() && it > 0f } ?: 1f
+    // x is indexed by the longest series so they stay aligned in time.
+    val n = live.maxOf { it.values.size }
 
     Column(modifier.fillMaxWidth()) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-            LegendDot(AccentHi, primaryLabel)
-            if (secondary != null) LegendDot(Muted, secondaryLabel)
-            Spacer(Modifier.weight(1f))
-            Text(fmtINR(hi), color = Muted, fontSize = 11.sp)
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+            live.forEach { LegendDot(it.color, it.label) }
         }
-        Spacer(Modifier.height(6.dp))
-        Canvas(Modifier.fillMaxWidth().height(200.dp)) {
-            val w = size.width; val h = size.height
-            fun x(i: Int, n: Int) = if (n <= 1) 0f else i / (n - 1f) * w
-            fun y(v: Float) = h - ((v - lo) / range) * h
+        Spacer(Modifier.height(8.dp))
+        Canvas(Modifier.fillMaxWidth().height(220.dp)) {
+            val padL = 54.dp.toPx(); val padR = 6.dp.toPx()
+            val padT = 8.dp.toPx(); val padB = 8.dp.toPx()
+            val w = size.width - padL - padR
+            val h = size.height - padT - padB
+            fun px(i: Int) = padL + if (n <= 1) 0f else i / (n - 1f) * w
+            fun py(v: Float) = padT + h - ((v - lo) / range) * h
 
-            // grid baseline
-            drawLine(BorderCol, Offset(0f, h - 1), Offset(w, h - 1), 1f)
-
-            // primary: gradient fill + line
-            val fill = Path().apply {
-                moveTo(0f, h)
-                pts.forEachIndexed { i, v -> lineTo(x(i, pts.size), y(v)) }
-                lineTo(w, h); close()
+            val label = android.graphics.Paint().apply {
+                color = android.graphics.Color.argb(190, 139, 148, 158)
+                textSize = 9.sp.toPx(); isAntiAlias = true
             }
-            drawPath(fill, Brush.verticalGradient(
-                listOf(AccentHi.copy(alpha = 0.30f), AccentHi.copy(alpha = 0.02f))))
-            val line = Path().apply {
-                pts.forEachIndexed { i, v ->
-                    val px = x(i, pts.size); val py = y(v)
-                    if (i == 0) moveTo(px, py) else lineTo(px, py)
+            ticks.forEach { t ->
+                val y = py(t)
+                drawLine(BorderCol.copy(alpha = 0.4f), Offset(padL, y), Offset(padL + w, y), 1f)
+                drawContext.canvas.nativeCanvas.drawText(fmtINR(t), 2f, y + label.textSize / 3f, label)
+            }
+
+            live.forEach { s ->
+                val pts = s.values.mapIndexedNotNull { i, v -> if (v.isFinite()) i to v else null }
+                if (pts.size < 2) return@forEach
+                if (s.filled) {
+                    val fill = Path().apply {
+                        moveTo(px(pts.first().first), padT + h)
+                        pts.forEach { (i, v) -> lineTo(px(i), py(v)) }
+                        lineTo(px(pts.last().first), padT + h); close()
+                    }
+                    drawPath(fill, Brush.verticalGradient(
+                        listOf(s.color.copy(alpha = 0.28f), s.color.copy(alpha = 0.02f))))
                 }
-            }
-            drawPath(line, AccentHi, style = Stroke(width = 3f))
-
-            // secondary: dashed muted line (already NaN-filtered into `sec`)
-            if (sec != null && sec.size >= 2) {
-                val p2 = Path().apply {
-                    sec.forEachIndexed { i, v ->
-                        val px = x(i, sec.size); val py = y(v)
-                        if (i == 0) moveTo(px, py) else lineTo(px, py)
+                val line = Path().apply {
+                    pts.forEachIndexed { k, (i, v) ->
+                        if (k == 0) moveTo(px(i), py(v)) else lineTo(px(i), py(v))
                     }
                 }
-                drawPath(p2, Muted, style = Stroke(
-                    width = 2f,
-                    pathEffect = androidx.compose.ui.graphics.PathEffect.dashPathEffect(
-                        floatArrayOf(10f, 8f))))
+                drawPath(line, s.color, style = Stroke(
+                    width = if (s.filled) 3f else 2.5f,
+                    pathEffect = if (s.dashed)
+                        androidx.compose.ui.graphics.PathEffect.dashPathEffect(floatArrayOf(10f, 8f))
+                    else null))
             }
         }
-        Text(fmtINR(lo), color = Muted, fontSize = 11.sp)
     }
 }
 

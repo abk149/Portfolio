@@ -541,7 +541,16 @@ class PerformanceAnalyzer:
         calls manageable — one ``candles()`` call per unique instrument.
 
         Returns DataFrame with columns: ``date``, ``portfolio_value``,
-        ``invested_capital``.
+        ``invested_capital``, ``hold_value``.
+
+        ``hold_value`` is the buy-and-hold counterfactual: what the portfolio
+        would be worth today if every share ever BOUGHT had simply been held
+        (i.e. the sells never happened).
+
+        ``proceeds`` is the cumulative cash received from sells. The FAIR
+        comparison is ``hold_value`` vs ``portfolio_value + proceeds`` — after
+        selling you hold both stock AND cash, so comparing against
+        ``portfolio_value`` alone overstates the cost of selling.
         """
         if trades.empty and not holdings:
             return pd.DataFrame()
@@ -594,6 +603,9 @@ class PerformanceAnalyzer:
         # positions_on_date[d] = {sym: qty_held}
         # We only track at daily granularity.
         positions: dict[str, int] = {}  # running position
+        # Counterfactual ledger: accumulates BUYs and is NEVER reduced by a
+        # sell, so we can price "what if I had just held everything".
+        held_positions: dict[str, int] = {}
         cost_basis: dict[str, float] = {}  # running invested capital per sym
         total_invested = 0.0
         total_withdrawn = 0.0
@@ -633,6 +645,7 @@ class PerformanceAnalyzer:
                 _, sym, signed_qty, amount = trade_events[event_idx]
                 positions[sym] = positions.get(sym, 0) + signed_qty
                 if signed_qty > 0:
+                    held_positions[sym] = held_positions.get(sym, 0) + signed_qty
                     cost_basis[sym] = cost_basis.get(sym, 0) + amount
                     total_invested += amount
                 else:
@@ -647,25 +660,33 @@ class PerformanceAnalyzer:
                         total_withdrawn += abs(amount)
                 event_idx += 1
 
-            # Compute portfolio value
-            port_value = 0.0
-            for sym, qty in positions.items():
-                if qty <= 0:
-                    continue
-                prices = price_cache.get(sym)
-                if prices is None or prices.empty:
-                    continue
-                # Get closest price on or before date d
-                valid = prices[prices.index <= d]
-                if valid.empty:
-                    continue
-                port_value += qty * float(valid.iloc[-1])
+            # Mark a position book to market at (or before) date d.
+            def _value(book: dict) -> float:
+                total = 0.0
+                for sym, qty in book.items():
+                    if qty <= 0:
+                        continue
+                    prices = price_cache.get(sym)
+                    if prices is None or prices.empty:
+                        continue
+                    valid = prices[prices.index <= d]   # closest close on/before d
+                    if valid.empty:
+                        continue
+                    total += qty * float(valid.iloc[-1])
+                return total
+
+            port_value = _value(positions)          # what you actually hold
+            hold_value = _value(held_positions)     # if you had never sold
 
             invested_net = sum(cost_basis.values())
             curve_rows.append({
                 "date": d.isoformat() if isinstance(d, date) else str(d),
                 "portfolio_value": round(port_value, 2),
                 "invested_capital": round(max(invested_net, 0), 2),
+                "hold_value": round(hold_value, 2),
+                # Cash realised from sells so far — needed for a fair
+                # comparison against hold_value (see docstring).
+                "proceeds": round(total_withdrawn, 2),
             })
 
         return pd.DataFrame(curve_rows)
