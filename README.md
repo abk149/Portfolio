@@ -20,6 +20,20 @@ the desktop and the phone.
 - **Performance & attribution** — reconstructs your portfolio value **over time**
   from executed orders, money‑weighted return (**XIRR**), winners/losers, and
   "sold‑too‑early" opportunity misses.
+- **Benchmark vs the index** — **time‑weighted** return (deposits and
+  withdrawals are stripped out, so new money is never mistaken for performance)
+  against NIFTY 50 / SENSEX / NIFTY BANK / NIFTY 100: rebased growth curve,
+  **rolling trailing‑12‑month return**, month‑by‑month bars, and the full risk
+  picture — alpha, beta, correlation, tracking error, up/down capture and max
+  drawdown on both legs.
+- **Market calendar** — the events that move the book, ahead of time: FOMC dates
+  scraped from **the Fed's own calendar**, RBI MPC decisions from **RBI press
+  releases**, and the recurring macro prints (CPI, payrolls, PCE, IIP, GDP, PMI,
+  results season, F&O expiry) generated from each agency's published schedule.
+  Every row is labelled **confirmed** (from the issuing body) or **expected**
+  (pattern‑derived), so a guess is never dressed up as a fact. Alongside it, a
+  market‑filtered news bulletin round‑robins ~20 feeds so no single source
+  floods it.
 - **Screener** — a two‑stage funnel: technical (RSI/MACD/EMA/ATR/volume) →
   fundamental (P/E, ROE, D/E, growth) scoring with buy/hold/avoid calls.
 - **DR‑Quant funnel** — a multi‑stage, LLM‑assisted research pipeline over a
@@ -39,7 +53,19 @@ the desktop and the phone.
 - **Knowledge base** — SQLite + FTS5 full‑text search (zero native deps),
   optional embeddings.
 - **AI assistant** — a chat grounded in *your* loaded data (portfolio, latest
-  DR‑Quant run, Universe Map).
+  DR‑Quant run, Universe Map, benchmark stats and upcoming events).
+- **AI applications over your own numbers** — four grounded LLM features that
+  turn computed data into decisions, each told to use only what it is given and
+  to say when something is missing:
+  - **Morning brief** — the calendar and the news read *through your holdings*:
+    which events touch which of your names, and what to watch this week.
+  - **Performance review** — why you are beating or trailing the index, whether
+    the extra return justified the extra risk, and which habits (sell discipline,
+    concentration) are costing you.
+  - **Risk pre‑mortem** — largest concentration, which holdings would fall
+    together on a shared driver, and which events would hit several at once.
+  - **Event impact** — tap any calendar row: what it is, your exposure, and the
+    transmission both ways if it surprises.
 
 ## Highlights (engineering)
 
@@ -47,8 +73,13 @@ the desktop and the phone.
   desktop web dashboard and runs **inside the Android app** via Chaquopy —
   Gradle syncs `src/` + `config/` into the APK at build time.
 - **Native Android UI** in Jetpack Compose (Material 3): portfolio, ideas,
-  DR‑Quant, universe map, analysis, settings, an in‑app system terminal, and
-  native charts (donut / equity‑curve line / efficient‑frontier / scatter).
+  calendar, DR‑Quant, universe map, analysis, settings, an in‑app system
+  terminal, and native charts drawn on Canvas (donut / multi‑series line with a
+  real ₹ axis / paired bars / efficient‑frontier / scatter).
+- **Correct return maths.** Portfolio value is not a return series — it moves
+  when you deposit. Everything comparative is chain‑linked **time‑weighted
+  return**, with external cash flow removed period by period, which is the only
+  basis on which "me vs NIFTY" means anything.
 - **Broker‑agnostic** — pluggable brokers (**Upstox** + **Groww**, either/or)
   behind one interface; Upstox OAuth (browser + auto‑capture) and Groww **TOTP**
   daily‑token login that self‑heals across the 6 AM reset.
@@ -93,14 +124,14 @@ NVIDIA NIM (OpenAI‑compatible) · Upstox & Groww trading APIs.
 | `src/brokers/` | Broker abstraction + factory (Upstox / Groww), Groww auth (TOTP/checksum) |
 | `src/upstox/` | Upstox OAuth, REST client, data models |
 | `src/data/` | Market data (broker + Yahoo fallback), circuit breaker, caching |
-| `src/portfolio/` | Holdings/positions, P&L, MPT optimizer, performance/XIRR |
+| `src/portfolio/` | Holdings/positions, P&L, MPT optimizer, performance/XIRR, time‑weighted benchmark |
 | `src/screener/` | Technical + fundamental scoring engine |
 | `src/intraday/` | Historical trade analyzer + live scanner |
 | `src/universe_map/` | Whole‑universe crawler → knowledge base |
 | `src/kb/` | SQLite + FTS5 knowledge base, optional embeddings |
 | `src/agents/` | LLM‑orchestrated agents (portfolio / screener / intraday / quant) |
-| `src/llm/` | Provider abstraction (NVIDIA / fallback chain) |
-| `src/tools/` | Fundamentals, news/RSS, Reddit, macro snapshot, deep‑dive, PDF |
+| `src/llm/` | Provider abstraction (NVIDIA / fallback chain) + grounded insight applications |
+| `src/tools/` | Fundamentals, news/RSS, Reddit, macro snapshot, market calendar, deep‑dive, PDF |
 | `src/dashboard/` | FastAPI app + web UI |
 | `android/` | Native Jetpack Compose app (runs the Python backend on‑device) |
 | `main.py` | Typer CLI entrypoint |

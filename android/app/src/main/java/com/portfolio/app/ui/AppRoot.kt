@@ -13,6 +13,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Chat
+import androidx.compose.material.icons.filled.Event
 import androidx.compose.material.icons.filled.Insights
 import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.Lock
@@ -28,19 +29,23 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 
+// Settings lives in the top bar rather than the bottom nav: adding Calendar to
+// a six-item bar would have squeezed every label, and Settings is the one
+// destination you visit rarely.
 private enum class Dest(val label: String, val icon: ImageVector) {
     HOME("Portfolio", Icons.Filled.PieChart),
     IDEAS("Ideas", Icons.Filled.AutoAwesome),
+    CALENDAR("Calendar", Icons.Filled.Event),
     QUANT("DR-Quant", Icons.Filled.Insights),
     MAP("U-Map", Icons.Filled.Map),
     ANALYSIS("Analysis", Icons.Filled.ShowChart),
-    SETTINGS("Settings", Icons.Filled.Settings),
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AppRoot() {
     var dest by remember { mutableStateOf(Dest.HOME) }
+    var showSettings by remember { mutableStateOf(false) }
     var showLogin by remember { mutableStateOf(false) }
     var showTerminal by remember { mutableStateOf(false) }
     var showChat by remember { mutableStateOf(false) }
@@ -67,6 +72,9 @@ fun AppRoot() {
                     }
                 },
                 actions = {
+                    IconButton(onClick = { showSettings = true }) {
+                        Icon(Icons.Filled.Settings, contentDescription = "Settings", tint = Muted)
+                    }
                     IconButton(onClick = { showChat = true }) {
                         Icon(Icons.Filled.Chat, contentDescription = "AI Assistant", tint = AccentHi)
                     }
@@ -100,15 +108,35 @@ fun AppRoot() {
             when (dest) {
                 Dest.HOME -> HomeScreen()
                 Dest.IDEAS -> ThemesScreen()
+                Dest.CALENDAR -> CalendarScreen()
                 Dest.QUANT -> QuantScreen()
                 Dest.MAP -> MapScreen()
                 Dest.ANALYSIS -> AnalysisScreen()
-                Dest.SETTINGS -> SettingsScreen(openLogin = { showLogin = true })
             }
         }
     }
 
     if (showLogin) LoginDialog(onDismiss = { showLogin = false })
+
+    if (showSettings) {
+        Dialog(onDismissRequest = { showSettings = false },
+            properties = DialogProperties(usePlatformDefaultWidth = false)) {
+            Surface(color = Bg, modifier = Modifier.fillMaxSize()) {
+                Column(Modifier.fillMaxSize()) {
+                    Row(Modifier.fillMaxWidth().padding(8.dp),
+                        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                        Text("Settings", fontSize = 16.sp, fontWeight = FontWeight.Bold,
+                            color = OnBg, modifier = Modifier.padding(start = 8.dp))
+                        Spacer(Modifier.weight(1f))
+                        TextButton(onClick = { showSettings = false }) { Text("✕ Close") }
+                    }
+                    Box(Modifier.weight(1f)) {
+                        SettingsScreen(openLogin = { showSettings = false; showLogin = true })
+                    }
+                }
+            }
+        }
+    }
 
     if (showTerminal) {
         Dialog(onDismissRequest = { showTerminal = false },

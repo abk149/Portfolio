@@ -187,3 +187,46 @@ tr:hover td { background: rgba(47,129,247,.04); }
 .perf-card--winners h3 { color: var(--pos); }
 .perf-card--losers  h3 { color: var(--neg); }
 .perf-card--misses  h3 { color: #d29922; }
+
+/* ── AI output blocks (brief, reviews, event impact) ─────────────────────── */
+.ai-out { margin-top: 14px; line-height: 1.62; font-size: 13.5px; }
+.ai-out:empty { margin-top: 0; }
+.ai-out h4 {
+  margin: 18px 0 6px; font-size: 12px; letter-spacing: .06em;
+  text-transform: uppercase; color: var(--accent);
+}
+.ai-out h4:first-child { margin-top: 0; }
+.ai-out p { margin: 6px 0; color: var(--text); }
+.ai-out ul { margin: 6px 0 6px 18px; padding: 0; }
+.ai-out li { margin: 4px 0; }
+.ai-out .ai-meta { color: var(--muted); font-size: 11px; margin-top: 12px; }
+
+/* ── Calendar ────────────────────────────────────────────────────────────── */
+.cal-day {
+  color: var(--accent); font-size: 12px; font-weight: 700;
+  margin: 18px 0 6px; letter-spacing: .03em;
+}
+.cal-day:first-child { margin-top: 0; }
+.cal-event {
+  display: flex; gap: 12px; align-items: flex-start;
+  padding: 10px 0; border-bottom: 1px solid var(--border);
+}
+.cal-event:last-child { border-bottom: none; }
+.cal-bar { width: 4px; align-self: stretch; border-radius: 2px; flex: 0 0 4px; }
+.cal-body { flex: 1; min-width: 0; }
+.cal-title { font-size: 13.5px; font-weight: 500; }
+.cal-why { color: var(--muted); font-size: 11.5px; margin-top: 4px; line-height: 1.5; }
+.cal-tags { margin-top: 6px; display: flex; gap: 6px; flex-wrap: wrap; }
+.cal-tag {
+  font-size: 10px; font-weight: 600; letter-spacing: .04em;
+  padding: 2px 8px; border-radius: 999px; border: 1px solid;
+}
+.cal-ask {
+  background: none; border: 1px solid var(--border); color: var(--muted);
+  border-radius: 6px; padding: 4px 9px; font-size: 11px; cursor: pointer;
+  white-space: nowrap;
+}
+.cal-ask:hover { color: var(--accent); border-color: var(--accent); }
+.cal-news { padding: 9px 0; border-bottom: 1px solid var(--border); }
+.cal-news:last-child { border-bottom: none; }
+.cal-news .src { color: var(--muted); font-size: 10.5px; margin-top: 3px; }

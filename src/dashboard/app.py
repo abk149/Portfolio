@@ -342,6 +342,150 @@ def api_portfolio_performance_cached():
     return {"ok": False, "error": "No cached performance data. Click Analyze first."}
 
 
+# ---------------- benchmark (vs index) ----------------
+@app.post("/api/portfolio/benchmark")
+def api_portfolio_benchmark(body: dict | None = None):
+    """Time-weighted portfolio return vs a market index.
+
+    Runs off the cached performance report's equity curve, so it's cheap and
+    instant once performance has been analysed once.
+    """
+    body = body or {}
+    index = body.get("index") or body.get("benchmark") or "^NSEI"
+    days = int(body.get("window_days") or 365)
+    perf = _PERF_CACHE.get("data")
+    if not perf or not perf.get("equity_curve"):
+        return {"ok": False, "error": "No portfolio history yet. Run "
+                                      "'Analyse performance' first."}
+    try:
+        from src.portfolio.benchmark import compare
+        res = compare(pd.DataFrame(perf["equity_curve"]),
+                      benchmark=index, window_days=days)
+        if res.get("error"):
+            return {"ok": False, **res}
+        # Keep the cached report in step so the AI review sees the same numbers.
+        perf["benchmark"] = res
+        return {"ok": True, **_scrub_for_json(res)}
+    except Exception as e:
+        return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+
+
+# ---------------- market calendar ----------------
+_CAL_CACHE: dict = {"data": None, "at": 0.0}
+
+
+def _calendar(days_ahead: int = 60, days_back: int = 7, max_age_s: int = 1800) -> dict:
+    """Build the calendar, cached briefly — it makes ~20 network calls."""
+    import time
+    now = time.time()
+    cached = _CAL_CACHE.get("data")
+    if cached and (now - _CAL_CACHE.get("at", 0)) < max_age_s:
+        return cached
+    from src.tools.market_calendar import build_calendar
+    data = build_calendar(days_ahead=days_ahead, days_back=days_back)
+    _CAL_CACHE["data"] = data
+    _CAL_CACHE["at"] = now
+    return data
+
+
+@app.post("/api/calendar")
+def api_calendar(body: dict | None = None):
+    """Upcoming market-moving events + a recent news bulletin (background job).
+
+    Job-based because it scrapes the Fed calendar, RBI and ~18 news feeds.
+    """
+    body = body or {}
+    days_ahead = int(body.get("days_ahead") or 60)
+    days_back = int(body.get("days_back") or 7)
+    refresh = bool(body.get("refresh"))
+    job_id = uuid.uuid4().hex[:8]
+
+    def _do():
+        if refresh:
+            _CAL_CACHE["data"] = None
+        return _scrub_for_json(_calendar(days_ahead, days_back))
+
+    _run_job(job_id, _do)
+    return {"job_id": job_id}
+
+
+@app.get("/api/calendar/cached")
+def api_calendar_cached():
+    if _CAL_CACHE.get("data"):
+        return {"ok": True, "data": _scrub_for_json(_CAL_CACHE["data"])}
+    return {"ok": False, "error": "No calendar loaded yet."}
+
+
+# ---------------- AI applications ----------------
+@app.post("/api/ai/brief")
+def api_ai_brief():
+    """Morning brief: the calendar and the news, filtered through YOUR holdings."""
+    job_id = uuid.uuid4().hex[:8]
+
+    def _do():
+        from src.llm.insights import daily_brief
+        return daily_brief(cal=_calendar(days_ahead=21, days_back=4),
+                           perf=_PERF_CACHE.get("data"))
+
+    _run_job(job_id, _do)
+    return {"job_id": job_id}
+
+
+@app.post("/api/ai/performance-review")
+def api_ai_performance_review():
+    """Narrative review of the performance report + benchmark comparison."""
+    perf = _PERF_CACHE.get("data")
+    if not perf:
+        return {"ok": False, "error": "Run 'Analyse performance' first — the "
+                                      "review is built from that report."}
+    job_id = uuid.uuid4().hex[:8]
+
+    def _do():
+        from src.llm.insights import performance_review
+        return performance_review(perf)
+
+    _run_job(job_id, _do)
+    return {"job_id": job_id}
+
+
+@app.post("/api/ai/risk-review")
+def api_ai_risk_review():
+    """Concentration / correlated-bet / event-risk pre-mortem on the book."""
+    job_id = uuid.uuid4().hex[:8]
+
+    def _do():
+        from src.llm.insights import risk_review
+        return risk_review(perf=_PERF_CACHE.get("data"),
+                           cal=_CAL_CACHE.get("data"))
+
+    _run_job(job_id, _do)
+    return {"job_id": job_id}
+
+
+@app.post("/api/ai/event-impact")
+def api_ai_event_impact(body: dict):
+    """What one calendar event means for this specific portfolio."""
+    event = body.get("event") or {}
+    if not event.get("title"):
+        # Allow addressing an event by date+title from the cached calendar.
+        cal = _CAL_CACHE.get("data") or {}
+        want_date, want_title = body.get("date"), body.get("title")
+        for e in (cal.get("events") or []):
+            if e.get("date") == want_date and e.get("title") == want_title:
+                event = e
+                break
+    if not event.get("title"):
+        return {"ok": False, "error": "Event not found. Load the calendar first."}
+    job_id = uuid.uuid4().hex[:8]
+
+    def _do():
+        from src.llm.insights import event_impact
+        return event_impact(event)
+
+    _run_job(job_id, _do)
+    return {"job_id": job_id}
+
+
 # ---------------- screener ----------------
 @app.post("/api/screener/scan")
 def api_screener(body: dict):
@@ -567,6 +711,17 @@ def _chat_context() -> str:
             parts.append(f"DR-QUANT (latest): {res.get('candidates')} candidates, "
                          f"{len(val)} validated. Top: "
                          + ", ".join(str(v.get('symbol') or v.get('ticker')) for v in val[:10]))
+    except Exception:
+        pass
+    # Benchmark + calendar — so the assistant can answer "am I beating the
+    # market?" and "what's coming up?" without the user leaving the chat.
+    try:
+        from src.llm.insights import benchmark_context, calendar_context
+        perf = _PERF_CACHE.get("data")
+        if perf and (perf.get("benchmark") or {}).get("stats"):
+            parts.append(benchmark_context(perf))
+        if _CAL_CACHE.get("data"):
+            parts.append(calendar_context(_CAL_CACHE["data"], limit=10))
     except Exception:
         pass
     # Universe map / KB

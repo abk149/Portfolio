@@ -8,13 +8,18 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -245,5 +250,66 @@ private fun cellWidth(key: String): Dp {
         k.contains("sector") || k.contains("industry") || k.contains("reco") -> 124.dp
         k.contains("date") -> 96.dp
         else -> 78.dp
+    }
+}
+
+/**
+ * Minimal markdown renderer for the AI outputs (brief, reviews, event impact).
+ *
+ * The models reply in markdown; showing the raw `##` and `**` would look
+ * broken. This handles the small subset they actually emit — headings, bullets,
+ * bold spans and paragraphs — and deliberately nothing more. Anything it
+ * doesn't recognise falls through as plain text rather than disappearing.
+ */
+@Composable
+fun MarkdownText(text: String, modifier: Modifier = Modifier) {
+    val blocks = remember(text) { text.trim().lines() }
+    Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        blocks.forEach { raw ->
+            val line = raw.trimEnd()
+            when {
+                line.isBlank() -> Spacer(Modifier.height(2.dp))
+
+                line.startsWith("### ") -> Text(
+                    inline(line.removePrefix("### ")), color = OnBg,
+                    fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+
+                line.startsWith("## ") -> Text(
+                    inline(line.removePrefix("## ")).text.uppercase(), color = AccentHi,
+                    fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.6.sp,
+                    modifier = Modifier.padding(top = 6.dp))
+
+                line.startsWith("# ") -> Text(
+                    inline(line.removePrefix("# ")), color = OnBg,
+                    fontSize = 15.sp, fontWeight = FontWeight.Bold)
+
+                line.trimStart().startsWith("- ") || line.trimStart().startsWith("* ") ->
+                    Row(Modifier.fillMaxWidth().padding(start = 4.dp)) {
+                        Text("•", color = AccentHi, fontSize = 13.sp)
+                        Spacer(Modifier.width(8.dp))
+                        Text(inline(line.trimStart().drop(2)), color = OnBg.copy(alpha = 0.9f),
+                            fontSize = 13.sp, lineHeight = 19.sp)
+                    }
+
+                else -> Text(inline(line), color = OnBg.copy(alpha = 0.9f),
+                    fontSize = 13.sp, lineHeight = 19.sp)
+            }
+        }
+    }
+}
+
+/** Resolve `**bold**` spans inside one line; everything else stays literal. */
+private fun inline(s: String): AnnotatedString = buildAnnotatedString {
+    var i = 0
+    while (i < s.length) {
+        val open = s.indexOf("**", i)
+        if (open < 0) { append(s.substring(i)); break }
+        val close = s.indexOf("**", open + 2)
+        if (close < 0) { append(s.substring(i)); break }
+        append(s.substring(i, open))
+        withStyle(SpanStyle(fontWeight = FontWeight.Bold, color = OnBg)) {
+            append(s.substring(open + 2, close))
+        }
+        i = close + 2
     }
 }

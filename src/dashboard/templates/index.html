@@ -13,6 +13,7 @@
   <nav>
     <button data-tab="portfolio" class="active">Portfolio</button>
     <button data-tab="performance">📈 Performance</button>
+    <button data-tab="calendar">🗓 Calendar</button>
     <button data-tab="optimize">MPT Optimize</button>
     <button data-tab="screener">Screener</button>
     <button data-tab="intraday">Intraday</button>
@@ -63,6 +64,17 @@
     <div class="card"><h3>Allocation</h3><canvas id="alloc-chart" height="220"></canvas><div id="port-alloc"></div></div>
   </div>
   <div class="card"><h3>Risk</h3><div id="risk-out"></div></div>
+
+  <div class="card">
+    <h3>✨ AI risk review</h3>
+    <div style="color:var(--muted); font-size:12px; margin:6px 0 12px; line-height:1.5">
+      A pre-mortem on this book: your biggest concentration, which holdings would fall
+      together and on what shared driver, and which upcoming events would hit several
+      at once.
+    </div>
+    <button class="primary" onclick="runAi('/api/ai/risk-review','ai-risk-out')">Review my risk</button>
+    <div id="ai-risk-out" class="ai-out"></div>
+  </div>
 </section>
 
 <!-- ===== Performance ===== -->
@@ -97,6 +109,7 @@
   </div>
 
   <div id="perf-kpis" class="kpis"></div>
+  <div id="perf-basis" style="color:var(--muted); font-size:11px; margin-top:8px"></div>
 
   <div class="card perf-chart-wrapper">
     <div style="display: flex; justify-content: space-between; align-items: center;">
@@ -116,6 +129,49 @@
     <div style="position:relative; height:340px; margin-top: 10px;">
       <canvas id="perf-equity-chart"></canvas>
     </div>
+  </div>
+
+  <div class="card" id="bench-card" style="margin-top:24px">
+    <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px">
+      <h3>🏁 You vs the market
+        <span style="font-weight:400; font-size:11px; color:var(--muted); margin-left:10px">
+          time-weighted, so deposits don't count as gains
+        </span>
+      </h3>
+      <div class="chart-filters" id="bench-filters">
+        <button class="filter-btn active" data-index="^NSEI">NIFTY 50</button>
+        <button class="filter-btn" data-index="^BSESN">SENSEX</button>
+        <button class="filter-btn" data-index="^NSEBANK">NIFTY BANK</button>
+        <button class="filter-btn" data-index="^CNX100">NIFTY 100</button>
+      </div>
+    </div>
+    <div id="bench-summary" style="margin:10px 0"></div>
+    <div id="bench-kpis" class="kpis"></div>
+    <div style="position:relative; height:300px; margin-top:14px">
+      <canvas id="bench-chart"></canvas>
+    </div>
+    <h3 style="margin-top:22px">📆 Rolling 1-year return</h3>
+    <div style="color:var(--muted); font-size:11px; margin:4px 0 8px">
+      At every point, what you made over the previous 12 months versus the index.
+    </div>
+    <div style="position:relative; height:240px">
+      <canvas id="bench-rolling-chart"></canvas>
+    </div>
+    <h3 style="margin-top:22px">📊 Month by month</h3>
+    <div style="position:relative; height:240px; margin-top:8px">
+      <canvas id="bench-monthly-chart"></canvas>
+    </div>
+    <div id="bench-note" style="color:var(--muted); font-size:11px; margin-top:12px; line-height:1.5"></div>
+  </div>
+
+  <div class="card" style="margin-top:24px">
+    <h3>✨ AI performance review</h3>
+    <div style="color:var(--muted); font-size:12px; margin:6px 0 12px; line-height:1.5">
+      Reads the index comparison, your monthly pattern, winners, losers and what you
+      sold too early — and says where the return came from and what is costing you.
+    </div>
+    <button class="primary" onclick="runAi('/api/ai/performance-review','ai-perf-out')">Review my track record</button>
+    <div id="ai-perf-out" class="ai-out"></div>
   </div>
 
   <div class="card perf-all-stocks" style="margin-top: 24px;">
@@ -159,6 +215,55 @@
 </section>
 
 <!-- ===== Optimize ===== -->
+<section id="tab-calendar" class="tab">
+  <div class="row" style="align-items:center; flex-wrap:wrap; gap:8px">
+    <button class="primary" onclick="loadCalendar(true)">⟳ Refresh calendar</button>
+    <div class="chart-filters" id="cal-horizon">
+      <button class="filter-btn" data-days="30">30d</button>
+      <button class="filter-btn active" data-days="60">60d</button>
+      <button class="filter-btn" data-days="90">90d</button>
+    </div>
+    <label style="color:var(--muted); font-size:12px; display:inline-flex; align-items:center; gap:6px">
+      <input type="checkbox" id="cal-high-only" onchange="renderCalendar()"> High impact only
+    </label>
+    <span id="cal-status" class="status"></span>
+  </div>
+  <div style="color:var(--muted); font-size:12px; margin:8px 0 14px; line-height:1.5">
+    What's scheduled that can move your book — central-bank decisions, inflation and
+    jobs prints, results season, expiry — plus the news bulletin behind it.
+    <b>Confirmed</b> dates come from the issuing body (the Fed's own calendar, an RBI
+    press release); <b>expected</b> dates are derived from each agency's usual release
+    pattern.
+  </div>
+
+  <div id="cal-kpis" class="kpis"></div>
+
+  <div class="card" style="margin-top:18px">
+    <h3>✨ AI morning brief</h3>
+    <div style="color:var(--muted); font-size:12px; margin:6px 0 12px; line-height:1.5">
+      Reads your holdings, the events ahead and the last few days of news together,
+      and tells you what actually matters for your positions.
+    </div>
+    <button class="primary" onclick="runAi('/api/ai/brief','ai-brief-out')">Brief me</button>
+    <div id="ai-brief-out" class="ai-out"></div>
+  </div>
+
+  <div class="card" style="margin-top:18px">
+    <h3>🗓 Scheduled events</h3>
+    <div id="cal-events" style="margin-top:12px"></div>
+  </div>
+
+  <div class="card" style="margin-top:18px">
+    <h3>📰 News bulletin</h3>
+    <div id="cal-bulletin" style="margin-top:12px"></div>
+  </div>
+
+  <div class="card" style="margin-top:18px">
+    <h3>🔎 Sources</h3>
+    <div id="cal-sources" style="margin-top:10px; color:var(--muted); font-size:12px"></div>
+  </div>
+</section>
+
 <section id="tab-optimize" class="tab">
   <div class="row">
     <label>Mode

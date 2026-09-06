@@ -1094,6 +1094,12 @@ function renderPerformance(data) {
   const s = data.summary || {};
   const ret = data.returns || {};
 
+  // The full report already carries the vs-index comparison; render it here so
+  // the benchmark block fills in on the same pass rather than needing a click.
+  if (typeof renderBenchmark === "function") {
+    try { renderBenchmark(data.benchmark); } catch (e) { /* non-fatal */ }
+  }
+
   // ---- KPIs ----
   const xirrVal = data.xirr != null ? `${data.xirr >= 0 ? "+" : ""}${fmt(data.xirr)}%` : "—";
   const xirrCls = data.xirr != null ? (data.xirr >= 0 ? "pos" : "neg") : "";
@@ -1114,6 +1120,12 @@ function renderPerformance(data) {
     kpi("Trades", s.total_trades || 0),
     kpi("Holdings", s.n_holdings || 0),
   ].join("");
+
+  // Say which basis the period returns use — they sit right above the vs-index
+  // block, and a raw-value number there would not be comparable to it.
+  $("perf-basis").textContent = ret.basis === "time_weighted"
+    ? "Period returns are time-weighted — money you paid in isn't counted as a gain, so these compare like-for-like with the index below."
+    : "Period returns are raw value growth (this run predates cash-flow tracking) — re-run the analysis for time-weighted figures.";
 
   // ---- Equity Curve ----
   window.fullEquityCurve = data.equity_curve || [];
@@ -1380,3 +1392,307 @@ loadPortfolio().catch(e => $("port-kpis").innerHTML = `<span class='neg'>Error: 
 // (new cards become visible / measurable).
 _initExpandable();
 document.querySelectorAll("nav button").forEach(b => b.addEventListener("click", () => setTimeout(_initExpandable, 0)));
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Benchmark · Calendar · AI applications
+// ═══════════════════════════════════════════════════════════════════════════
+
+// --- tiny markdown renderer for the AI replies (headings/bullets/bold only) ---
+function mdToHtml(md) {
+  const esc = (t) => t.replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+  const inline = (t) => esc(t).replace(/\*\*(.+?)\*\*/g, "<b>$1</b>");
+  const out = [];
+  let inList = false;
+  const closeList = () => { if (inList) { out.push("</ul>"); inList = false; } };
+  (md || "").split("\n").forEach(raw => {
+    const line = raw.trimEnd();
+    if (!line.trim()) { closeList(); return; }
+    const m = line.match(/^(#{1,4})\s+(.*)$/);
+    if (m) { closeList(); out.push(`<h4>${inline(m[2])}</h4>`); return; }
+    const b = line.match(/^\s*[-*]\s+(.*)$/);
+    if (b) { if (!inList) { out.push("<ul>"); inList = true; } out.push(`<li>${inline(b[1])}</li>`); return; }
+    closeList();
+    out.push(`<p>${inline(line)}</p>`);
+  });
+  closeList();
+  return out.join("");
+}
+
+/** Run a job-based AI endpoint and render its markdown into `targetId`. */
+async function runAi(path, targetId, body) {
+  const el = $(targetId);
+  el.innerHTML = `<div class="ai-meta">Thinking — a slow model can take a minute or two…</div>`;
+  try {
+    const start = await fetch(path, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify(body || {}),
+    }).then(r => r.json());
+    if (!start.job_id) {
+      el.innerHTML = `<div class="neg">${start.error || "Could not start."}</div>`;
+      return;
+    }
+    const res = await pollJob(start.job_id);
+    if (res && res.ok && res.text) {
+      let html = mdToHtml(res.text);
+      const g = res.grounding;
+      if (g) {
+        html += `<div class="ai-meta">Grounded in ${g.events} scheduled events and ` +
+                `${g.news} recent headlines` +
+                (g.has_benchmark ? ", plus your benchmark stats." : ".") + `</div>`;
+      }
+      el.innerHTML = html;
+    } else {
+      el.innerHTML = `<div class="neg">${(res && res.error) || "The model returned nothing."}</div>`;
+    }
+  } catch (e) {
+    el.innerHTML = `<div class="neg">${e.message}</div>`;
+  }
+}
+
+// ---------- benchmark ----------
+let benchChart, benchRollingChart, benchMonthlyChart;
+const AXIS = "#8b949e", GRID = "rgba(139,148,158,.15)";
+
+function _lineCfg(labels, datasets, yLabel) {
+  return {
+    type: "line",
+    data: { labels, datasets },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      interaction: { mode: "index", intersect: false },
+      plugins: { legend: { labels: { color: AXIS, boxWidth: 12 } } },
+      scales: {
+        x: { ticks: { color: AXIS, maxTicksLimit: 8 }, grid: { color: GRID } },
+        y: {
+          ticks: { color: AXIS, callback: v => yLabel === "%" ? v + "%" : v },
+          grid: { color: GRID },
+        },
+      },
+      elements: { point: { radius: 0 }, line: { tension: .25, borderWidth: 2 } },
+    },
+  };
+}
+
+function renderBenchmark(b) {
+  if (!b || !b.stats) {
+    $("bench-summary").innerHTML =
+      `<div style="color:var(--muted)">No comparison yet — it is built from your
+       equity curve, so run <b>Analyze performance</b> first.</div>`;
+    return;
+  }
+  const st = b.stats, name = (b.benchmark && b.benchmark.name) || "index";
+  const ex = st.excess_pct ?? 0;
+  const pc = (v) => v == null ? "—" : fmt(v) + "%";
+
+  $("bench-summary").innerHTML =
+    `<div class="${ex >= 0 ? "pos" : "neg"}" style="font-size:15px; font-weight:600">
+       ${ex >= 0 ? `You beat ${name} by ${fmt(ex)}%` : `You trailed ${name} by ${fmt(-ex)}%`}
+       over the last year
+     </div>
+     <div style="color:var(--muted); font-size:12px; margin-top:4px">
+       you ${pc(st.portfolio_return_pct)} vs ${name} ${pc(st.index_return_pct)} ·
+       ${b.start} → ${b.end}
+     </div>`;
+
+  $("bench-kpis").innerHTML = [
+    kpi("Your 1Y return", pc(st.portfolio_return_pct), cls(st.portfolio_return_pct)),
+    kpi(name + " 1Y", pc(st.index_return_pct), cls(st.index_return_pct)),
+    kpi("Excess", pc(st.excess_pct), cls(st.excess_pct)),
+    kpi("Alpha (annual)", pc(st.alpha_pct), cls(st.alpha_pct)),
+    kpi("Beta", st.beta ?? "—"),
+    kpi("Correlation", st.correlation ?? "—"),
+    kpi("Your volatility", pc(st.portfolio_vol_pct)),
+    kpi(name + " volatility", pc(st.index_vol_pct)),
+    kpi("Up capture", pc(st.up_capture_pct), "pos"),
+    kpi("Down capture", pc(st.down_capture_pct), "neg"),
+    kpi("Your worst fall", pc(st.portfolio_max_drawdown_pct), "neg"),
+    kpi(name + " worst fall", pc(st.index_max_drawdown_pct)),
+  ].join("");
+
+  const s = b.series || [];
+  benchChart?.destroy();
+  benchChart = new Chart($("bench-chart"), _lineCfg(
+    s.map(r => r.date),
+    [
+      { label: "You (₹100 → )", data: s.map(r => r.portfolio), borderColor: "#58a6ff",
+        backgroundColor: "rgba(88,166,255,.12)", fill: true },
+      { label: name, data: s.map(r => r.index), borderColor: "#d29922" },
+    ]));
+
+  const roll = b.rolling || [];
+  benchRollingChart?.destroy();
+  if (roll.length > 1) {
+    benchRollingChart = new Chart($("bench-rolling-chart"), _lineCfg(
+      roll.map(r => r.date),
+      [
+        { label: "You (1Y trailing)", data: roll.map(r => r.portfolio_pct), borderColor: "#58a6ff" },
+        { label: "Index (1Y trailing)", data: roll.map(r => r.index_pct), borderColor: "#d29922",
+          borderDash: [6, 4] },
+      ], "%"));
+  }
+
+  const mo = b.monthly || [];
+  benchMonthlyChart?.destroy();
+  if (mo.length) {
+    const cfg = _lineCfg(mo.map(r => r.month), [], "%");
+    cfg.type = "bar";
+    cfg.data.datasets = [
+      { label: "You", data: mo.map(r => r.portfolio_pct), backgroundColor: "#58a6ff" },
+      { label: "Index", data: mo.map(r => r.index_pct), backgroundColor: "rgba(139,148,158,.65)" },
+    ];
+    benchMonthlyChart = new Chart($("bench-monthly-chart"), cfg);
+  }
+
+  $("bench-note").textContent = b.note || "";
+}
+
+async function loadBenchmark(index) {
+  $("bench-summary").innerHTML = `<div style="color:var(--muted)">Fetching index prices…</div>`;
+  try {
+    const r = await fetch("/api/portfolio/benchmark", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ index: index || "^NSEI", window_days: 365 }),
+    }).then(r => r.json());
+    if (!r.ok) {
+      $("bench-summary").innerHTML = `<div class="neg">${r.error || "Unavailable."}</div>`;
+      return;
+    }
+    renderBenchmark(r);
+  } catch (e) {
+    $("bench-summary").innerHTML = `<div class="neg">${e.message}</div>`;
+  }
+}
+
+document.querySelectorAll("#bench-filters .filter-btn").forEach(b => {
+  b.onclick = () => {
+    document.querySelectorAll("#bench-filters .filter-btn").forEach(x => x.classList.remove("active"));
+    b.classList.add("active");
+    loadBenchmark(b.dataset.index);
+  };
+});
+
+// ---------- calendar ----------
+window._calData = null;
+window._calHorizon = 60;
+
+const CAL_COLOR = { HIGH: "#f85149", MEDIUM: "#d29922", LOW: "#8b949e" };
+const CAL_ICON = {
+  MONETARY: "🏦", INFLATION: "📈", GROWTH: "🏗", JOBS: "👷",
+  EARNINGS: "📊", EXPIRY: "⏱", POLICY: "🏛",
+};
+
+function _prettyDate(iso, weekday) {
+  const p = (iso || "").split("-");
+  if (p.length !== 3) return iso;
+  const M = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  return `${weekday} ${+p[2]} ${M[+p[1] - 1] || p[1]}`;
+}
+
+function _isoPlusDays(n) {
+  const d = new Date(); d.setDate(d.getDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+
+function renderCalendar() {
+  const d = window._calData;
+  if (!d) return;
+  const highOnly = $("cal-high-only").checked;
+  const cutoff = _isoPlusDays(window._calHorizon);
+  const fetchedTo = (d.window && d.window.to) || cutoff;
+
+  const rows = (d.events || []).filter(e =>
+    e.date >= d.today && e.date <= cutoff &&
+    (!highOnly || e.importance === "HIGH"));
+
+  $("cal-kpis").innerHTML = [
+    kpi("Upcoming", rows.length),
+    kpi("Confirmed dates", (d.counts && d.counts.confirmed) || 0, "pos"),
+    kpi("Headlines", (d.counts && d.counts.bulletin) || 0),
+    kpi("Window", window._calHorizon + "d"),
+  ].join("");
+
+  let html = "", lastDate = "";
+  rows.forEach((e, i) => {
+    if (e.date !== lastDate) {
+      lastDate = e.date;
+      html += `<div class="cal-day">${_prettyDate(e.date, e.weekday)}</div>`;
+    }
+    const col = CAL_COLOR[e.importance] || CAL_COLOR.LOW;
+    const confirmed = e.certainty === "confirmed";
+    html += `
+      <div class="cal-event">
+        <div class="cal-bar" style="background:${col}"></div>
+        <div class="cal-body">
+          <div class="cal-title">${CAL_ICON[e.category] || "•"} ${e.title}</div>
+          <div class="cal-why">${e.why || ""}</div>
+          <div class="cal-tags">
+            <span class="cal-tag" style="color:${col}; border-color:${col}">${e.importance}</span>
+            <span class="cal-tag" style="color:var(--muted); border-color:var(--border)">${e.region}</span>
+            <span class="cal-tag" style="color:${confirmed ? "#3fb950" : "var(--muted)"};
+                  border-color:${confirmed ? "#3fb950" : "var(--border)"}">
+              ${confirmed ? "confirmed" : "expected"}</span>
+          </div>
+          <div id="cal-ai-${i}" class="ai-out"></div>
+        </div>
+        <button class="cal-ask" onclick="askEvent(${i})">✨ What this means for me</button>
+      </div>`;
+  });
+  $("cal-events").innerHTML = html ||
+    `<div style="color:var(--muted)">Nothing in this window. Widen it, or turn off "High impact only".</div>`;
+
+  if (cutoff > fetchedTo) {
+    $("cal-events").innerHTML +=
+      `<div style="color:var(--muted); font-size:12px; margin-top:14px">
+         Loaded up to ${fetchedTo}. Hit <b>Refresh calendar</b> to pull further ahead.
+       </div>`;
+  }
+  window._calRows = rows;
+
+  $("cal-bulletin").innerHTML = (d.bulletin || []).slice(0, 30).map(n =>
+    `<div class="cal-news"><div>${n.title}</div>
+       <div class="src">${n.source || ""}${n.published ? " · " + String(n.published).slice(0, 22) : ""}</div>
+     </div>`).join("") || `<div style="color:var(--muted)">No headlines loaded.</div>`;
+
+  $("cal-sources").innerHTML = (d.sources || []).map(x => `• ${x}`).join("<br>");
+}
+
+function askEvent(i) {
+  const ev = (window._calRows || [])[i];
+  if (ev) runAi("/api/ai/event-impact", `cal-ai-${i}`, { event: ev });
+}
+
+async function loadCalendar(refresh) {
+  $("cal-status").textContent = "Reading the Fed calendar, RBI and 18 news feeds…";
+  try {
+    if (!refresh) {
+      const c = await fetch("/api/calendar/cached").then(r => r.json());
+      if (c.ok && c.data) {
+        window._calData = c.data; renderCalendar();
+        $("cal-status").textContent = "(cached — hit Refresh for the latest)";
+        return;
+      }
+    }
+    const start = await fetch("/api/calendar", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ days_ahead: Math.max(window._calHorizon, 60), days_back: 7, refresh: !!refresh }),
+    }).then(r => r.json());
+    window._calData = await pollJob(start.job_id);
+    renderCalendar();
+    $("cal-status").textContent = "";
+  } catch (e) {
+    $("cal-status").textContent = "Failed: " + e.message;
+  }
+}
+
+document.querySelectorAll("#cal-horizon .filter-btn").forEach(b => {
+  b.onclick = () => {
+    document.querySelectorAll("#cal-horizon .filter-btn").forEach(x => x.classList.remove("active"));
+    b.classList.add("active");
+    window._calHorizon = +b.dataset.days;
+    renderCalendar();
+  };
+});
+
+document.querySelector('[data-tab="calendar"]')?.addEventListener("click", () => {
+  if (!window._calInited) { window._calInited = true; loadCalendar(false); }
+});

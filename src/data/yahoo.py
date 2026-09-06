@@ -28,11 +28,43 @@ _HOSTS = ("https://query1.finance.yahoo.com", "https://query2.finance.yahoo.com"
 _HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; PortfolioQuant/1.0)"}
 
 
+# Yahoo tickers for the indices we benchmark against. Indices are NOT suffixed
+# with .NS/.BO — they carry a leading caret — so they need their own path
+# through _candidates(), or every index lookup would 404.
+INDEX_TICKERS: dict[str, str] = {
+    "NIFTY": "^NSEI",
+    "NIFTY50": "^NSEI",
+    "SENSEX": "^BSESN",
+    "BSESENSEX": "^BSESN",
+    "BANKNIFTY": "^NSEBANK",
+    "NIFTYBANK": "^NSEBANK",
+    "NIFTY100": "^CNX100",
+    "NIFTYIT": "^CNXIT",
+}
+
+
+def resolve_index(name: str) -> str:
+    """Map a friendly index name to its Yahoo ticker ('NIFTY 50' -> '^NSEI').
+
+    Anything already in Yahoo form (leading '^') passes through unchanged.
+    """
+    t = (name or "").strip().upper()
+    if t.startswith("^"):
+        return t
+    return INDEX_TICKERS.get(t.replace(" ", ""), t)
+
+
 def _candidates(ticker: str) -> list[str]:
     """NSE first, then BSE, accepting bare symbols or already-suffixed ones."""
     t = (ticker or "").strip().upper()
     if not t:
         return []
+    # An index (^NSEI) or an alias for one — never append an exchange suffix.
+    if t.startswith("^"):
+        return [t]
+    mapped = INDEX_TICKERS.get(t.replace(" ", ""))
+    if mapped:
+        return [mapped]
     if t.endswith(".NS") or t.endswith(".BO"):
         return [t]
     base = t.replace(".NS", "").replace(".BO", "")

@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
@@ -72,6 +73,30 @@ private fun equitySeries(arr: JSONArray?): EquityCurve {
         proc.add((o.opt("proceeds") as? Number)?.toFloat() ?: 0f)
     }
     return EquityCurve(pv, inv, hold, proc)
+}
+
+// benchmark.series [{date, portfolio, index}] → two rebased (base-100) lines.
+private fun rebasedSeries(arr: JSONArray?): Pair<List<Float>, List<Float>> {
+    val p = ArrayList<Float>(); val i = ArrayList<Float>()
+    if (arr != null) for (k in 0 until arr.length()) {
+        val o = arr.optJSONObject(k) ?: continue
+        p.add((o.opt("portfolio") as? Number)?.toFloat() ?: Float.NaN)
+        i.add((o.opt("index") as? Number)?.toFloat() ?: Float.NaN)
+    }
+    return p to i
+}
+
+// benchmark.rolling / .monthly → (labels, portfolio%, index%)
+private fun pairedPct(arr: JSONArray?, labelKey: String)
+        : Triple<List<String>, List<Float>, List<Float>> {
+    val l = ArrayList<String>(); val a = ArrayList<Float>(); val b = ArrayList<Float>()
+    if (arr != null) for (k in 0 until arr.length()) {
+        val o = arr.optJSONObject(k) ?: continue
+        l.add(o.optString(labelKey))
+        a.add((o.opt("portfolio_pct") as? Number)?.toFloat() ?: Float.NaN)
+        b.add((o.opt("index_pct") as? Number)?.toFloat() ?: Float.NaN)
+    }
+    return Triple(l, a, b)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -149,6 +174,18 @@ fun HomeScreen() {
         risk?.let { rk ->
             SectionCard("Concentration risk", Warn) { DataTable(arr(rk, "concentration"), 20) }
             SectionCard("Underperformers", Bear) { DataTable(arr(rk, "underperformers"), 20) }
+        }
+        if (data != null) {
+            AiInsightCard(
+                jobKey = "ai_risk_review",
+                title = "AI risk review",
+                blurb = "A pre-mortem on this book: your biggest concentration, which " +
+                    "holdings would fall together and on what shared driver, and which " +
+                    "upcoming events would hit several at once.",
+                cta = "✨ Review my risk",
+                accent = Warn,
+            ) { Api.aiRiskReview() }
+            Spacer(Modifier.height(24.dp))
         }
     }
 }
@@ -577,6 +614,19 @@ fun AnalysisScreen() {
                     Triple("XIRR", (r.opt("xirr") as? Number)?.let { "%.2f%%".format(it.toDouble()) } ?: "—", AccentHi),
                     Triple("Trades", fmtNum(s.opt("total_trades")), OnBg),
                 ))
+                // Period returns sit above the vs-index block; say which basis
+                // they use so the two numbers can be read against each other.
+                r.optJSONObject("returns")?.let { ret ->
+                    Spacer(Modifier.height(10.dp))
+                    Text(
+                        if (ret.optString("basis") == "time_weighted")
+                            "Period returns are time-weighted — money you paid in isn't counted " +
+                            "as a gain, so they compare like-for-like with the index below."
+                        else
+                            "Period returns are raw value growth (this run predates cash-flow " +
+                            "tracking) — re-run the analysis for time-weighted figures.",
+                        color = Muted, fontSize = 10.sp, lineHeight = 15.sp)
+                }
             }
             val curve = arr(r, "equity_curve")
             val ec = equitySeries(curve)
@@ -629,10 +679,170 @@ fun AnalysisScreen() {
                     DataTable(misses)
                 }
             }
+            BenchmarkSection(r)
             arr(r, "winners")?.takeIf { it.length() > 0 }?.let { SectionCard("Winners", Bull) { DataTable(it) } }
             arr(r, "losers")?.takeIf { it.length() > 0 }?.let { SectionCard("Losers", Bear) { DataTable(it) } }
+            AiInsightCard(
+                jobKey = "ai_perf_review",
+                title = "AI performance review",
+                blurb = "Reads this whole report — the index comparison, your monthly " +
+                    "pattern, winners, losers and what you sold too early — and says " +
+                    "where the return actually came from and what is costing you.",
+                cta = "✨ Review my track record",
+                accent = Bull,
+            ) { Api.aiPerformanceReview() }
+            Spacer(Modifier.height(24.dp))
         }
     }
+}
+
+/**
+ * "How did I do against the market?" — the vs-index block of the Performance tab.
+ *
+ * Everything here is TIME-WEIGHTED, computed on the backend: money you paid in
+ * is stripped out of the return, so a big deposit doesn't masquerade as a great
+ * year and the number is directly comparable to NIFTY.
+ */
+@Composable
+private fun BenchmarkSection(report: JSONObject) {
+    val bench = report.optJSONObject("benchmark")
+    val job = JobBus.state("benchmark")
+    // Prefer a freshly-recomputed comparison (e.g. after switching index).
+    val b = job.result ?: bench
+    var index by remember { mutableStateOf("^NSEI") }
+
+    val indices = listOf("^NSEI" to "NIFTY 50", "^BSESN" to "SENSEX",
+        "^NSEBANK" to "NIFTY BANK", "^CNX100" to "NIFTY 100")
+
+    SectionCard("You vs the market", AccentHi) {
+        Text("Time-weighted return, so deposits and withdrawals don't count as " +
+            "gains — this measures your stock picking against the index on equal terms.",
+            color = Muted, fontSize = 12.sp, lineHeight = 17.sp)
+        Spacer(Modifier.height(10.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.horizontalScroll(rememberScrollState())) {
+            indices.forEach { (sym, label) ->
+                FilterChip(selected = index == sym,
+                    onClick = {
+                        index = sym
+                        JobBus.clear("benchmark")
+                        JobBus.runSync("benchmark", "Fetching $label…") { Api.benchmark(sym, 365) }
+                    },
+                    label = { Text(label) })
+            }
+        }
+        job.status?.let { Spacer(Modifier.height(8.dp)); StatusBanner(it, if (job.running) Warn else Bear) }
+
+        if (b == null || b.optJSONObject("stats") == null) {
+            Spacer(Modifier.height(10.dp))
+            StatusBanner("No comparison yet — it is built from your equity curve, " +
+                "so it needs the performance analysis above to have produced one.", Warn)
+            return@SectionCard
+        }
+
+        val st = b.optJSONObject("stats") ?: JSONObject()
+        fun d(k: String): Double? = (st.opt(k) as? Number)?.toDouble()
+        fun pct(k: String) = d(k)?.let { "%.2f%%".format(it) } ?: "—"
+        fun plain(k: String) = d(k)?.let { "%.2f".format(it) } ?: "—"
+        val name = b.optJSONObject("benchmark")?.optString("name") ?: "index"
+        val excess = d("excess_pct") ?: 0.0
+
+        Spacer(Modifier.height(14.dp))
+        StatusBanner(
+            (if (excess >= 0) "You beat $name by %.2f%% ".format(excess)
+             else "You trailed $name by %.2f%% ".format(-excess)) +
+            "over the last year — you %.2f%% vs %s %.2f%%.".format(
+                d("portfolio_return_pct") ?: 0.0, name, d("index_return_pct") ?: 0.0),
+            if (excess >= 0) Bull else Bear)
+
+        Spacer(Modifier.height(14.dp))
+        val (pSeries, iSeries) = rebasedSeries(arr(b, "series"))
+        if (pSeries.size >= 2) {
+            Text("₹100 invested a year ago", color = Muted, fontSize = 11.sp)
+            Spacer(Modifier.height(6.dp))
+            LineChart(listOf(
+                ChartSeries(pSeries, "You", AccentHi, filled = true),
+                ChartSeries(iSeries, name, Warn),
+            ))
+        }
+
+        Spacer(Modifier.height(14.dp))
+        KpiGrid(listOf(
+            Triple("Your 1Y return", pct("portfolio_return_pct"),
+                if ((d("portfolio_return_pct") ?: 0.0) >= 0) Bull else Bear),
+            Triple("$name 1Y", pct("index_return_pct"),
+                if ((d("index_return_pct") ?: 0.0) >= 0) Bull else Bear),
+            Triple("Excess return", pct("excess_pct"), if (excess >= 0) Bull else Bear),
+            Triple("Alpha (annual)", pct("alpha_pct"),
+                if ((d("alpha_pct") ?: 0.0) >= 0) Bull else Bear),
+            Triple("Beta", plain("beta"), OnBg),
+            Triple("Correlation", plain("correlation"), OnBg),
+            Triple("Your volatility", pct("portfolio_vol_pct"), Warn),
+            Triple("$name volatility", pct("index_vol_pct"), Muted),
+            Triple("Up capture", pct("up_capture_pct"), Bull),
+            Triple("Down capture", pct("down_capture_pct"), Bear),
+            Triple("Your worst fall", pct("portfolio_max_drawdown_pct"), Bear),
+            Triple("$name worst fall", pct("index_max_drawdown_pct"), Muted),
+        ))
+        Spacer(Modifier.height(10.dp))
+        Text(readBeta(d("beta"), d("up_capture_pct"), d("down_capture_pct")),
+            color = Muted, fontSize = 11.sp, lineHeight = 16.sp)
+    }
+
+    // Rolling trailing-1Y return — "moving return", the shape of your form.
+    val (rollLabels, rollP, rollI) = pairedPct(arr(b ?: JSONObject(), "rolling"), "date")
+    if (rollP.size >= 2) {
+        SectionCard("Rolling 1-year return", Bull) {
+            Text("At every point, what you made over the previous 12 months versus " +
+                "the index. Flat stretches above the index line are consistency; " +
+                "spikes are single bets landing.", color = Muted, fontSize = 11.sp, lineHeight = 16.sp)
+            Spacer(Modifier.height(10.dp))
+            LineChart(listOf(
+                ChartSeries(rollP, "You (1Y trailing)", AccentHi),
+                ChartSeries(rollI, "Index (1Y trailing)", Warn, dashed = true),
+            ))
+        }
+    }
+
+    val (mLabels, mP, mI) = pairedPct(arr(b ?: JSONObject(), "monthly"), "month")
+    if (mP.isNotEmpty()) {
+        SectionCard("Month by month", AccentHi) {
+            BarPairChart(mLabels, mP, mI, "You", "Index")
+            Spacer(Modifier.height(10.dp))
+            val wins = mP.indices.count { mP[it].isFinite() && mI[it].isFinite() && mP[it] > mI[it] }
+            KpiGrid(listOf(
+                Triple("Months beaten", "$wins of ${mP.size}", if (wins * 2 >= mP.size) Bull else Bear),
+                Triple("Best month", mP.filter { it.isFinite() }.maxOrNull()
+                    ?.let { "%.2f%%".format(it) } ?: "—", Bull),
+                Triple("Worst month", mP.filter { it.isFinite() }.minOrNull()
+                    ?.let { "%.2f%%".format(it) } ?: "—", Bear),
+            ))
+        }
+    }
+    (b ?: JSONObject()).optString("note").takeIf { it.isNotBlank() }?.let {
+        SectionCard("How this is measured", Muted) {
+            Text(it, color = Muted, fontSize = 11.sp, lineHeight = 16.sp)
+        }
+    }
+}
+
+/** Plain-English reading of the risk stats, so the KPI grid isn't just jargon. */
+private fun readBeta(beta: Double?, up: Double?, down: Double?): String {
+    if (beta == null) return ""
+    val swing = when {
+        beta > 1.15 -> "Your book swings harder than the index (beta %.2f) — expect bigger moves both ways.".format(beta)
+        beta < 0.85 -> "Your book is steadier than the index (beta %.2f).".format(beta)
+        else -> "Your book moves broadly with the index (beta %.2f).".format(beta)
+    }
+    if (up == null || down == null) return swing
+    val capture = when {
+        up > 100 && down < 100 ->
+            " You capture %.0f%% of the market's rallies but only %.0f%% of its falls — the combination you want.".format(up, down)
+        up < 100 && down > 100 ->
+            " You capture only %.0f%% of rallies but %.0f%% of falls — the wrong way round.".format(up, down)
+        else -> " Rally capture %.0f%%, fall capture %.0f%%.".format(up, down)
+    }
+    return swing + capture
 }
 
 // (vol%, ret%) from an optimizer record, tolerant of decimal vs _pct keys.
@@ -1035,6 +1245,325 @@ fun UniversePicker(selected: String, onSelect: (String) -> Unit) {
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         UNIVERSES.forEach { u ->
             FilterChip(selected = u == selected, onClick = { onSelect(u) }, label = { Text(u) })
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AI insight card — one reusable shell for every LLM application.
+//
+// They all behave identically: submit a job, poll it, render markdown. Keeping
+// that in one place means a new AI feature is three lines at the call site, and
+// every one of them inherits JobBus's survive-navigation / never-double-submit
+// guarantees.
+// ─────────────────────────────────────────────────────────────────────────────
+@Composable
+fun AiInsightCard(
+    jobKey: String,
+    title: String,
+    blurb: String,
+    cta: String,
+    accent: Color = AccentHi,
+    submit: suspend () -> Api.Resp,
+) {
+    val job = JobBus.state(jobKey)
+    SectionCard(title, accent) {
+        Text(blurb, color = Muted, fontSize = 12.sp, lineHeight = 17.sp)
+        Spacer(Modifier.height(10.dp))
+        Button(
+            onClick = {
+                JobBus.run(jobKey, "Thinking — a slow model can take a minute or two…",
+                    maxSecs = 480) { submit() }
+            },
+            enabled = !job.running && BackendBus.running,
+            modifier = Modifier.fillMaxWidth(),
+        ) { Text(if (job.running) "Thinking…" else cta) }
+
+        job.status?.let {
+            Spacer(Modifier.height(8.dp))
+            StatusBanner(it, if (job.running) Warn else Bear)
+        }
+        job.result?.let { r ->
+            Spacer(Modifier.height(12.dp))
+            val text = r.optString("text", "")
+            if (r.optBoolean("ok", text.isNotBlank()) && text.isNotBlank()) {
+                MarkdownText(text)
+                r.optJSONObject("grounding")?.let { g ->
+                    Spacer(Modifier.height(10.dp))
+                    Text("Grounded in ${g.optInt("events")} scheduled events and " +
+                        "${g.optInt("news")} recent headlines" +
+                        (if (g.optBoolean("has_benchmark")) ", plus your benchmark stats." else "."),
+                        color = Muted, fontSize = 10.sp)
+                }
+            } else {
+                StatusBanner(r.optString("error", "The model returned nothing."), Bear)
+            }
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CALENDAR · market-moving events + news bulletin
+// ─────────────────────────────────────────────────────────────────────────────
+
+private fun impactColor(importance: String): Color = when (importance) {
+    "HIGH" -> Bear
+    "MEDIUM" -> Warn
+    else -> Muted
+}
+
+private fun categoryIcon(category: String): String = when (category) {
+    "MONETARY" -> "🏦"
+    "INFLATION" -> "📈"
+    "GROWTH" -> "🏗"
+    "JOBS" -> "👷"
+    "EARNINGS" -> "📊"
+    "EXPIRY" -> "⏱"
+    "POLICY" -> "🏛"
+    else -> "•"
+}
+
+/**
+ * Today + [days] as an ISO date. Uses Calendar, not java.time — minSdk is 24
+ * and the project doesn't enable core-library desugaring, so java.time would
+ * crash on older devices.
+ *
+ * ISO-8601 strings sort lexicographically, so callers can compare them directly.
+ */
+private fun isoPlusDays(days: Int): String {
+    val c = java.util.Calendar.getInstance()
+    c.add(java.util.Calendar.DAY_OF_YEAR, days)
+    return "%04d-%02d-%02d".format(
+        c.get(java.util.Calendar.YEAR),
+        c.get(java.util.Calendar.MONTH) + 1,
+        c.get(java.util.Calendar.DAY_OF_MONTH))
+}
+
+/** "2026-09-16" → "Wed 16 Sep". Falls back to the raw string if unparseable. */
+private fun prettyDate(iso: String, weekday: String): String {
+    val parts = iso.split("-")
+    if (parts.size != 3) return iso
+    val months = listOf("Jan", "Feb", "Mar", "Apr", "May", "Jun",
+        "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+    val m = parts[1].toIntOrNull() ?: return iso
+    val d = parts[2].toIntOrNull() ?: return iso
+    return "$weekday $d ${months.getOrElse(m - 1) { parts[1] }}"
+}
+
+@Composable
+fun CalendarScreen() {
+    val job = JobBus.state("calendar")
+    var horizon by remember { mutableStateOf(60) }
+    var highOnly by remember { mutableStateOf(false) }
+    var selected by remember { mutableStateOf<JSONObject?>(null) }
+
+    // Seed from the backend's cache so switching tabs doesn't refetch ~20 feeds.
+    LaunchedEffect(Unit) {
+        if (BackendBus.running && job.result == null && !job.running) {
+            val cached = Api.calendarCached().objOrNull()?.optJSONObject("data")
+            if (cached != null) JobBus.seed("calendar", cached)
+            else JobBus.run("calendar", "Reading the Fed calendar, RBI and 18 news feeds…",
+                maxSecs = 240) { Api.calendar(horizon, 7) }
+        }
+    }
+
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+        if (!BackendBus.running) { BackendOfflineHint(); return@Column }
+
+        val data = job.result
+        SectionCard("Market calendar", AccentHi) {
+            Text("What's scheduled that can move your book — central-bank decisions, " +
+                "inflation and jobs prints, results season, expiry — plus the news " +
+                "bulletin behind it.", color = Muted, fontSize = 12.sp, lineHeight = 17.sp)
+            Spacer(Modifier.height(12.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf(30, 60, 90).forEach { h ->
+                    FilterChip(selected = horizon == h, onClick = { horizon = h },
+                        label = { Text("${h}d") })
+                }
+                Spacer(Modifier.weight(1f))
+                FilterChip(selected = highOnly, onClick = { highOnly = !highOnly },
+                    label = { Text("High only") })
+            }
+            Spacer(Modifier.height(10.dp))
+            Button(
+                onClick = {
+                    JobBus.clear("calendar")
+                    JobBus.run("calendar", "Reading the Fed calendar, RBI and 18 news feeds…",
+                        maxSecs = 240) { Api.calendar(horizon, 7, refresh = true) }
+                },
+                enabled = !job.running, modifier = Modifier.fillMaxWidth(),
+            ) { Text(if (job.running) "Refreshing…" else "⟳ Refresh calendar") }
+            job.status?.let {
+                Spacer(Modifier.height(8.dp)); StatusBanner(it, if (job.running) Warn else Bear)
+            }
+            data?.optJSONObject("counts")?.let { c ->
+                Spacer(Modifier.height(12.dp))
+                KpiGrid(listOf(
+                    Triple("Upcoming", fmtNum(c.opt("upcoming")), OnBg),
+                    Triple("Confirmed dates", fmtNum(c.opt("confirmed")), Bull),
+                    Triple("Headlines", fmtNum(c.opt("bulletin")), OnBg),
+                    Triple("Window", "${horizon}d", Muted),
+                ))
+            }
+        }
+
+        // The AI layer over the calendar: what all this means for THIS book.
+        AiInsightCard(
+            jobKey = "ai_brief",
+            title = "AI morning brief",
+            blurb = "Reads your holdings, the events ahead and the last few days of " +
+                "news together, and tells you what actually matters for your positions.",
+            cta = "✨ Brief me",
+            accent = Bull,
+        ) { Api.aiBrief() }
+
+        data?.let { d ->
+            val today = d.optString("today")
+            // The horizon chip narrows what's already loaded, so it responds
+            // instantly; Refresh is what widens the fetched window.
+            val cutoff = isoPlusDays(horizon)
+            val fetchedTo = d.optJSONObject("window")?.optString("to") ?: cutoff
+            val events = arr(d, "events") ?: JSONArray()
+            val rows = ArrayList<JSONObject>()
+            for (i in 0 until events.length()) {
+                val e = events.optJSONObject(i) ?: continue
+                val dt = e.optString("date")
+                if (dt < today || dt > cutoff) continue            // outside window
+                if (highOnly && e.optString("importance") != "HIGH") continue
+                rows.add(e)
+            }
+            SectionCard("Scheduled events", Warn) {
+                if (rows.isEmpty()) {
+                    StatusBanner("Nothing scheduled in this window. Widen it or turn " +
+                        "off \"High only\".", Muted)
+                } else {
+                    Text("Tap an event to see what it means for your holdings.",
+                        color = Muted, fontSize = 11.sp)
+                    Spacer(Modifier.height(10.dp))
+                    var lastDate = ""
+                    rows.forEach { e ->
+                        val dt = e.optString("date")
+                        if (dt != lastDate) {
+                            lastDate = dt
+                            Text(prettyDate(dt, e.optString("weekday")),
+                                color = AccentHi, fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.padding(top = 12.dp, bottom = 4.dp))
+                        }
+                        EventRow(e) { selected = e }
+                    }
+                    if (cutoff > fetchedTo) {
+                        Spacer(Modifier.height(10.dp))
+                        StatusBanner("Loaded up to $fetchedTo. Tap Refresh to pull " +
+                            "events further ahead.", Muted)
+                    }
+                    Spacer(Modifier.height(12.dp))
+                    Text(d.optString("legend"), color = Muted, fontSize = 10.sp, lineHeight = 15.sp)
+                }
+            }
+
+            arr(d, "bulletin")?.takeIf { it.length() > 0 }?.let { bl ->
+                SectionCard("News bulletin", AccentHi) {
+                    Text("Filtered to market-relevant headlines from the last few days, " +
+                        "spread across sources so no single feed dominates.",
+                        color = Muted, fontSize = 11.sp)
+                    Spacer(Modifier.height(10.dp))
+                    for (i in 0 until minOf(bl.length(), 30)) {
+                        val n = bl.optJSONObject(i) ?: continue
+                        Column(Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
+                            Text(n.optString("title"), color = OnBg, fontSize = 13.sp,
+                                lineHeight = 18.sp)
+                            Spacer(Modifier.height(3.dp))
+                            Text(n.optString("source") +
+                                (n.optString("published").takeIf { it.isNotBlank() }
+                                    ?.let { " · " + it.take(22) } ?: ""),
+                                color = Muted, fontSize = 10.sp)
+                        }
+                        if (i < minOf(bl.length(), 30) - 1)
+                            Divider(color = BorderCol.copy(alpha = 0.5f))
+                    }
+                }
+            }
+
+            arr(d, "sources")?.let { src ->
+                SectionCard("Sources", Muted) {
+                    for (i in 0 until src.length())
+                        Text("• " + src.optString(i), color = Muted, fontSize = 11.sp,
+                            modifier = Modifier.padding(vertical = 2.dp))
+                }
+            }
+        }
+        Spacer(Modifier.height(24.dp))
+    }
+
+    selected?.let { ev -> EventImpactDialog(ev) { selected = null } }
+}
+
+@Composable
+private fun EventRow(e: JSONObject, onClick: () -> Unit) {
+    val importance = e.optString("importance")
+    val col = impactColor(importance)
+    val confirmed = e.optString("certainty") == "confirmed"
+    Row(
+        Modifier.fillMaxWidth().clickable { onClick() }.padding(vertical = 8.dp),
+        verticalAlignment = Alignment.Top,
+    ) {
+        Box(Modifier.width(4.dp).height(38.dp)
+            .background(col.copy(alpha = 0.85f), androidx.compose.foundation.shape.RoundedCornerShape(2.dp)))
+        Spacer(Modifier.width(10.dp))
+        Column(Modifier.weight(1f)) {
+            Text(categoryIcon(e.optString("category")) + "  " + e.optString("title"),
+                color = OnBg, fontSize = 13.sp, fontWeight = FontWeight.Medium, lineHeight = 18.sp)
+            Spacer(Modifier.height(5.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically) {
+                Pill(importance, col)
+                Pill(e.optString("region"), Muted)
+                // A scraped date is a fact; a pattern-derived one is not. Say which.
+                Pill(if (confirmed) "confirmed" else "expected",
+                    if (confirmed) Bull else Muted)
+            }
+        }
+        Text("›", color = Muted, fontSize = 18.sp)
+    }
+}
+
+@Composable
+private fun EventImpactDialog(event: JSONObject, onDismiss: () -> Unit) {
+    androidx.compose.ui.window.Dialog(
+        onDismissRequest = onDismiss,
+        properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false),
+    ) {
+        Surface(color = Bg, modifier = Modifier.fillMaxSize()) {
+            Column(Modifier.fillMaxSize()) {
+                Row(Modifier.fillMaxWidth().padding(8.dp),
+                    verticalAlignment = Alignment.CenterVertically) {
+                    Spacer(Modifier.weight(1f))
+                    TextButton(onClick = onDismiss) { Text("✕ Close") }
+                }
+                Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
+                    SectionCard(event.optString("title"), impactColor(event.optString("importance"))) {
+                        Text(prettyDate(event.optString("date"), event.optString("weekday")),
+                            color = AccentHi, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                        Spacer(Modifier.height(8.dp))
+                        Text(event.optString("why"), color = OnBg.copy(alpha = 0.9f),
+                            fontSize = 13.sp, lineHeight = 19.sp)
+                        Spacer(Modifier.height(10.dp))
+                        Text("Date ${event.optString("certainty")} — source: " +
+                            event.optString("source"), color = Muted, fontSize = 10.sp)
+                    }
+                    AiInsightCard(
+                        jobKey = "ai_event:" + event.optString("date") + event.optString("title"),
+                        title = "What this means for you",
+                        blurb = "Maps this event onto your actual holdings — which names " +
+                            "react, through what channel, and in which direction.",
+                        cta = "✨ Analyse for my portfolio",
+                        accent = Bull,
+                    ) { Api.aiEventImpact(event) }
+                    Spacer(Modifier.height(24.dp))
+                }
+            }
         }
     }
 }

@@ -541,7 +541,7 @@ class PerformanceAnalyzer:
         calls manageable — one ``candles()`` call per unique instrument.
 
         Returns DataFrame with columns: ``date``, ``portfolio_value``,
-        ``invested_capital``, ``hold_value``.
+        ``invested_capital``, ``hold_value``, ``proceeds``, ``cash_in``.
 
         ``hold_value`` is the buy-and-hold counterfactual: what the portfolio
         would be worth today if every share ever BOUGHT had simply been held
@@ -687,6 +687,11 @@ class PerformanceAnalyzer:
                 # Cash realised from sells so far — needed for a fair
                 # comparison against hold_value (see docstring).
                 "proceeds": round(total_withdrawn, 2),
+                # Cumulative cash PUT IN (gross buy value, never reduced).
+                # With `proceeds` this gives the external cash flow in each
+                # period, which is what time-weighted return needs to strip
+                # deposits out of performance. See src/portfolio/benchmark.py.
+                "cash_in": round(total_invested, 2),
             })
 
         return pd.DataFrame(curve_rows)
@@ -697,43 +702,59 @@ class PerformanceAnalyzer:
 
     @staticmethod
     def compute_returns(equity_curve: pd.DataFrame) -> dict:
-        """Compute 1Y, 3Y, 5Y, and since-inception returns from the equity curve."""
+        """1Y / 3Y / 5Y / since-inception returns, TIME-WEIGHTED.
+
+        Measured on the chain-linked TWR index, not on raw portfolio value:
+        paying ₹1L into the account is not a 100% gain, and treating it as one
+        would both flatter the number and make it incomparable to the index
+        shown beside it. Falls back to raw value growth only for older cached
+        curves that predate cash-flow tracking (flagged via ``basis``).
+        """
         if equity_curve.empty or len(equity_curve) < 2:
             return {}
 
-        ec = equity_curve.copy()
-        ec["date"] = pd.to_datetime(ec["date"])
-        ec = ec.sort_values("date")
+        from src.portfolio.benchmark import twr_series
+        tw = twr_series(equity_curve)
+        if tw.empty:
+            return {}
 
-        latest_value = ec["portfolio_value"].iloc[-1]
-        latest_date = ec["date"].iloc[-1]
+        has_flows = {"cash_in", "proceeds"}.issubset(set(equity_curve.columns))
+        basis = "time_weighted" if has_flows else "raw_value"
 
-        results = {}
+        latest_level = float(tw["twr"].iloc[-1])
+        latest_date = tw["date"].iloc[-1]
+
+        results: dict = {"basis": basis}
         for label, years in [("1Y", 1), ("3Y", 3), ("5Y", 5)]:
             target_date = latest_date - pd.DateOffset(years=years)
-            past = ec[ec["date"] <= target_date]
-            if past.empty:
+            # Only report a period we actually have history for.
+            if not (tw["date"] <= target_date).any():
                 continue
-            past_value = past["portfolio_value"].iloc[-1]
-            past_invested = past["invested_capital"].iloc[-1]
-            if past_value > 0:
-                absolute = (latest_value - past_value) / past_value
-                cagr = (latest_value / past_value) ** (1.0 / years) - 1.0
-                results[label] = {
-                    "absolute_pct": round(absolute * 100, 2),
-                    "cagr_pct": round(cagr * 100, 2),
-                }
+            # Anchor on the FIRST sample at or after the cutoff — the same
+            # anchor benchmark.compare() uses for its window. Anchoring on the
+            # last sample *before* it instead would measure slightly more than
+            # the stated period and disagree with the vs-index number shown
+            # right beside it (they differed by ~1.7pp before this).
+            fwd = tw[tw["date"] >= target_date]
+            if fwd.empty:
+                continue
+            past_level = float(fwd["twr"].iloc[0])
+            if past_level <= 0:
+                continue
+            growth = latest_level / past_level
+            results[label] = {
+                "absolute_pct": round((growth - 1.0) * 100, 2),
+                "cagr_pct": round((growth ** (1.0 / years) - 1.0) * 100, 2),
+            }
 
-        # Since inception
-        first_value = ec["portfolio_value"].iloc[0]
-        if first_value > 0:
-            inception_days = (latest_date - ec["date"].iloc[0]).days
+        first_level = float(tw["twr"].iloc[0])
+        if first_level > 0:
+            inception_days = (latest_date - tw["date"].iloc[0]).days
             inception_years = max(inception_days / 365.25, 0.01)
-            absolute = (latest_value - first_value) / first_value
-            cagr = (latest_value / first_value) ** (1.0 / inception_years) - 1.0
+            growth = latest_level / first_level
             results["inception"] = {
-                "absolute_pct": round(absolute * 100, 2),
-                "cagr_pct": round(cagr * 100, 2),
+                "absolute_pct": round((growth - 1.0) * 100, 2),
+                "cagr_pct": round((growth ** (1.0 / inception_years) - 1.0) * 100, 2),
                 "years": round(inception_years, 1),
             }
 
@@ -1053,6 +1074,17 @@ class PerformanceAnalyzer:
         log.info("Scanning for opportunity misses …")
         misses = self.opportunity_misses(trades, holdings_raw)
 
+        # Benchmark: time-weighted return vs the index over the last year.
+        # Best-effort — a Yahoo hiccup must not sink the whole report.
+        log.info("Benchmarking against the index …")
+        benchmark = {}
+        try:
+            from src.portfolio.benchmark import compare
+            benchmark = compare(equity_curve, window_days=365)
+        except Exception as e:
+            log.warning(f"benchmark failed: {e}")
+            benchmark = {"error": f"Benchmark unavailable: {e}"}
+
         first_trade_date = (
             trades["date"].min().isoformat()
             if not trades.empty and trades["date"].min() is not None
@@ -1066,6 +1098,7 @@ class PerformanceAnalyzer:
             "winners": wl["winners"],
             "losers": wl["losers"],
             "opportunity_misses": misses,
+            "benchmark": benchmark,
             "all_stocks": self.all_stocks_summary(trades, holdings_raw),
             "summary": {
                 "total_invested": round(invested_total, 2),

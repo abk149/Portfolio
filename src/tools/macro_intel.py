@@ -71,9 +71,15 @@ def _fetch_rss(url: str, limit: int = 8) -> list[dict]:
     try:
         r = requests.get(url, timeout=12,
                          headers={"User-Agent": "Mozilla/5.0 (PortfolioQuant)"})
-        if r.status_code != 200 or not r.text:
+        if r.status_code != 200 or not r.content:
             return []
-        text = r.text
+        # Many of these feeds omit a charset, and requests then defaults to
+        # ISO-8859-1 for text/*, turning every curly quote and rupee sign into
+        # mojibake ("India â Bulletin"). Decode as UTF-8 unless told otherwise.
+        if not r.encoding or r.encoding.lower() in ("iso-8859-1", "ascii"):
+            text = r.content.decode("utf-8", errors="replace")
+        else:
+            text = r.text
         items = re.split(r"<item[ >]|<entry[ >]", text)[1:]
         out = []
         for it in items[:limit * 2]:

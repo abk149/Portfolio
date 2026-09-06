@@ -338,3 +338,84 @@ private fun LegendDot(color: Color, label: String) {
         Text(label, color = Muted, fontSize = 11.sp)
     }
 }
+
+/**
+ * Paired bar chart for month-by-month "you vs the index".
+ *
+ * Bars are signed around a zero line — a losing month must read as a bar going
+ * DOWN, not a short bar going up, or the comparison is misleading at a glance.
+ * Labels are thinned when they'd collide.
+ */
+@Composable
+fun BarPairChart(
+    labels: List<String>,
+    seriesA: List<Float>,
+    seriesB: List<Float>,
+    labelA: String,
+    labelB: String,
+    colorA: Color = AccentHi,
+    colorB: Color = Muted,
+    modifier: Modifier = Modifier,
+) {
+    val n = minOf(labels.size, seriesA.size, seriesB.size)
+    if (n == 0) {
+        Text("No monthly data yet.", color = Muted, fontSize = 12.sp); return
+    }
+    val all = (seriesA.take(n) + seriesB.take(n)).filter { it.isFinite() }
+    if (all.isEmpty()) {
+        Text("No monthly data yet.", color = Muted, fontSize = 12.sp); return
+    }
+    // Symmetric-ish scale that always includes zero.
+    val ticks = niceTicks(minOf(all.min(), 0f), maxOf(all.max(), 0f))
+    val lo = ticks.first(); val hi = ticks.last()
+    val range = (hi - lo).takeIf { it > 0f } ?: 1f
+
+    Column(modifier.fillMaxWidth()) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+            LegendDot(colorA, labelA); LegendDot(colorB, labelB)
+        }
+        Spacer(Modifier.height(8.dp))
+        Canvas(Modifier.fillMaxWidth().height(190.dp)) {
+            val padL = 44.dp.toPx(); val padR = 4.dp.toPx()
+            val padT = 8.dp.toPx(); val padB = 20.dp.toPx()
+            val w = size.width - padL - padR
+            val h = size.height - padT - padB
+            fun py(v: Float) = padT + h - ((v - lo) / range) * h
+            val slot = w / n
+            val barW = (slot * 0.34f).coerceAtMost(14.dp.toPx())
+
+            val paint = android.graphics.Paint().apply {
+                color = android.graphics.Color.argb(190, 139, 148, 158)
+                textSize = 9.sp.toPx(); isAntiAlias = true
+            }
+            ticks.forEach { t ->
+                val y = py(t)
+                drawLine(BorderCol.copy(alpha = if (t == 0f) 0.9f else 0.35f),
+                    Offset(padL, y), Offset(padL + w, y), if (t == 0f) 1.5f else 1f)
+                drawContext.canvas.nativeCanvas.drawText(
+                    "%.0f%%".format(t), 2f, y + paint.textSize / 3f, paint)
+            }
+
+            val zeroY = py(0f)
+            // Thin x labels so they never overlap on a narrow phone.
+            val every = kotlin.math.ceil(n / 6.0).toInt().coerceAtLeast(1)
+            for (i in 0 until n) {
+                val cx = padL + slot * (i + 0.5f)
+                listOf(seriesA[i] to colorA, seriesB[i] to colorB)
+                    .forEachIndexed { k, (v, c) ->
+                        if (!v.isFinite()) return@forEachIndexed
+                        val x = cx + (if (k == 0) -barW - 1.dp.toPx() else 1.dp.toPx())
+                        val y = py(v)
+                        drawRect(c,
+                            topLeft = Offset(x, kotlin.math.min(y, zeroY)),
+                            size = Size(barW, kotlin.math.abs(y - zeroY).coerceAtLeast(1.5f)))
+                    }
+                if (i % every == 0) {
+                    val t = labels[i]
+                    drawContext.canvas.nativeCanvas.drawText(
+                        t, cx - paint.measureText(t) / 2f, size.height - 4f, paint)
+                }
+            }
+        }
+    }
+}

@@ -97,6 +97,24 @@ object Api {
         post("/api/portfolio/deploy-cash", JSONObject().put("cash", cash)
             .put("include_universe", false).put("tickers", org.json.JSONArray(tickers)))
 
+    // ── Benchmark (vs index) ──
+    suspend fun benchmark(index: String = "^NSEI", windowDays: Int = 365) =
+        post("/api/portfolio/benchmark",
+            JSONObject().put("index", index).put("window_days", windowDays))
+
+    // ── Market calendar ──
+    suspend fun calendar(daysAhead: Int = 60, daysBack: Int = 7, refresh: Boolean = false) =
+        post("/api/calendar", JSONObject()
+            .put("days_ahead", daysAhead).put("days_back", daysBack).put("refresh", refresh))
+    suspend fun calendarCached() = get("/api/calendar/cached")
+
+    // ── AI applications (all job-based; poll /api/jobs/{id}) ──
+    suspend fun aiBrief() = post("/api/ai/brief")
+    suspend fun aiPerformanceReview() = post("/api/ai/performance-review")
+    suspend fun aiRiskReview() = post("/api/ai/risk-review")
+    suspend fun aiEventImpact(event: JSONObject) =
+        post("/api/ai/event-impact", JSONObject().put("event", event))
+
     // ── Macro Ideas / themes ──
     suspend fun themes(days: Int) = post("/api/themes", JSONObject().put("days", days))
     suspend fun deepDive(symbol: String) =
