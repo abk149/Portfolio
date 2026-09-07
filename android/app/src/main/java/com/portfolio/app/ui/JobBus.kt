@@ -39,6 +39,15 @@ object JobBus {
             internal set
         var finishedAt by mutableStateOf(0L)
             internal set
+        /** 0f..1f for a determinate bar, or null while the total is unknown. */
+        var progress by mutableStateOf<Float?>(null)
+            internal set
+        /** Human-readable detail line under the status ("420 of 1900 stocks"). */
+        var detail by mutableStateOf<String?>(null)
+            internal set
+        /** Id of the backend job currently in flight, for re-attaching. */
+        var jobId by mutableStateOf<String?>(null)
+            internal set
     }
 
     // Survives composition/navigation for the life of the process.
@@ -59,15 +68,38 @@ object JobBus {
         state(key).apply { result = null; status = null }
     }
 
-    /** Poll a backend job id until it leaves "running". */
-    private suspend fun poll(jobId: String, maxSecs: Int): JSONObject {
-        val deadline = System.currentTimeMillis() + maxSecs * 1000L
-        while (System.currentTimeMillis() < deadline) {
+    /**
+     * Poll a backend job id until it leaves "running".
+     *
+     * [maxSecs] is an IDLE timeout, not a total run time. As long as the
+     * backend keeps confirming the job is still running we keep waiting, however
+     * long that takes — a first full-universe crawl legitimately runs for an
+     * hour, and the old hard deadline declared failure while the backend was
+     * still working, threw away the result it went on to produce, and left the
+     * user re-running it into a duplicate crawl.
+     *
+     * We only give up if the job stops being reachable — the backend died or
+     * forgot it — which is a real failure worth surfacing.
+     */
+    private suspend fun poll(
+        jobId: String,
+        maxSecs: Int,
+        onTick: (suspend (String) -> Unit)? = null,
+    ): JSONObject {
+        var lastSeenAlive = System.currentTimeMillis()
+        while (true) {
             val o = Api.job(jobId).objOrNull()
-            if (o != null && o.optString("status") != "running") return o
+            val status = o?.optString("status")
+            if (o != null && status != "running") return o
+            if (status == "running") lastSeenAlive = System.currentTimeMillis()
+            if (System.currentTimeMillis() - lastSeenAlive > maxSecs * 1000L) {
+                return JSONObject().put("status", "error").put("error",
+                    "Lost contact with the backend job — it stopped reporting. " +
+                    "Any work it finished is saved; run it again to continue.")
+            }
+            onTick?.invoke(jobId)
             delay(2000)
         }
-        return JSONObject().put("status", "error").put("error", "timed out")
     }
 
     /**
@@ -78,11 +110,13 @@ object JobBus {
         key: String,
         status: String,
         maxSecs: Int = 600,
+        onTick: (suspend (String, State) -> Unit)? = null,
         submit: suspend () -> Api.Resp,
     ) {
         val s = state(key)
         if (s.running) return                     // dedupe: never double-submit
         s.running = true; s.status = status; s.result = null
+        s.progress = null; s.detail = null; s.jobId = null
         scope.launch {
             try {
                 when (val sub = submit()) {
@@ -92,7 +126,9 @@ object JobBus {
                         if (jobId.isBlank()) {
                             s.status = sub.body.optString("error", "Failed to start.")
                         } else {
-                            val fin = poll(jobId, maxSecs)
+                            s.jobId = jobId
+                            val fin = poll(jobId, maxSecs,
+                                onTick?.let { cb -> { id -> cb(id, s) } })
                             if (fin.optString("status") == "done") {
                                 val r = fin.optJSONObject("result")
                                 if (r != null && r.has("error")) s.status = r.optString("error")
@@ -107,6 +143,8 @@ object JobBus {
                 s.status = "Error: ${e.message}"
             } finally {
                 s.running = false
+                s.progress = null
+                s.jobId = null
                 s.finishedAt = System.currentTimeMillis()
             }
         }

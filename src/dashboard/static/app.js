@@ -543,13 +543,14 @@ function umapRender(stocks, meta) {
       // Quadrant labels
       ctx.fillStyle = "rgba(255,255,255,0.18)";
       ctx.font = "bold 11px -apple-system, sans-serif";
-      ctx.fillText("📈  BUY (high quality + momentum)",
+      // Names kept identical to the Android app's map — same axes, same labels.
+      ctx.fillText("📈  Leaders — strong books, strong chart",
                    x0 + 12, chartArea.top + 18);
-      ctx.fillText("⚡  Momentum-only",
+      ctx.fillText("⚡  Momentum only — weak books, strong chart",
                    chartArea.left + 12, chartArea.top + 18);
-      ctx.fillText("💰  Value / contrarian",
+      ctx.fillText("💰  Out of favour — strong books, weak chart",
                    x0 + 12, chartArea.bottom - 10);
-      ctx.fillText("🚫  Avoid",
+      ctx.fillText("🚫  Weak on both",
                    chartArea.left + 12, chartArea.bottom - 10);
       ctx.restore();
     },
@@ -619,12 +620,17 @@ function umapRender(stocks, meta) {
   const sortByTech = (a, b) => b.tech_score - a.tech_score;
   const sortByFund = (a, b) => (b.fund_score ?? -1) - (a.fund_score ?? -1);
 
-  const valid = stocks.filter(s => s.tech_score != null);
+  // A stock with NO fundamental score is unknown, not bad. Treating null as 0
+  // (as this did) filed every un-fetched name into the weak-fundamentals
+  // quadrants, which both overstated "momentum only" / "avoid" and contradicted
+  // the chart, where those stocks sit in the separate "n/a" gutter.
+  const valid = stocks.filter(s => s.tech_score != null && s.fund_score != null);
+  const unscored = stocks.filter(s => s.tech_score != null && s.fund_score == null).length;
   const T = 50, F = 50;   // quadrant thresholds — match the chart's 4-quadrant split
-  const best = valid.filter(s => s.tech_score >= T && (s.fund_score ?? 0) >= F).sort(sortByCombined).slice(0, 12);
-  const momo = valid.filter(s => s.tech_score >= T && (s.fund_score ?? 0) < F).sort(sortByTech).slice(0, 12);
-  const value = valid.filter(s => s.tech_score < T && (s.fund_score ?? 0) >= F).sort(sortByFund).slice(0, 12);
-  const avoid = valid.filter(s => s.tech_score < T && (s.fund_score ?? 0) < F).sort((a,b) => a.tech_score - b.tech_score).slice(0, 12);
+  const best = valid.filter(s => s.tech_score >= T && s.fund_score >= F).sort(sortByCombined).slice(0, 12);
+  const momo = valid.filter(s => s.tech_score >= T && s.fund_score < F).sort(sortByTech).slice(0, 12);
+  const value = valid.filter(s => s.tech_score < T && s.fund_score >= F).sort(sortByFund).slice(0, 12);
+  const avoid = valid.filter(s => s.tech_score < T && s.fund_score < F).sort((a,b) => a.tech_score - b.tech_score).slice(0, 12);
 
   const cols = [
     {key:"symbol"},
@@ -641,6 +647,8 @@ function umapRender(stocks, meta) {
 
   $("umap-meta").textContent =
     `${meta.count} stocks · ${meta.tech_total} technical · ${meta.fund_scanned||0} fund-scored · ` +
+    (unscored ? `${unscored} awaiting fundamentals · ` : "") +
+    (meta.partial ? `PARTIAL (${meta.count}/${meta.expected_total||"?"}) · ` : "") +
     `built ${(meta.built_at||"").slice(0, 19).replace("T", " ")} UTC`;
 }
 
@@ -695,9 +703,24 @@ async function umapBuild() {
   const myToken = ++_umapStreamToken;   // supersede any older streamer
   let cursor = 0;
   let unknownCount = 0;
+  let ticks = 0;
   $("umap-log").innerHTML = "";
 
   while (myToken === _umapStreamToken) {
+    // 0. progress line + periodic reload. The builder checkpoints its partial
+    // map to disk every 25 stocks, so the chart can fill in during the crawl
+    // instead of staying empty for an hour.
+    const pResp = await fetch(`/api/universe-map/progress/${r.job_id}`).catch(()=>null);
+    if (pResp && pResp.ok) {
+      const pr = (await pResp.json().catch(()=>({}))).progress || {};
+      if (pr.message) {
+        $("umap-meta").innerHTML =
+          `<span class="spin"></span> ${pr.pct ? pr.pct + "% · " : ""}${pr.message}` +
+          (pr.fetched != null ? ` · ${pr.fetched} fetched, ${pr.reused} reused` : "");
+      }
+    }
+    if (++ticks % 20 === 0) umapLoad().catch(()=>{});   // ~every 30s
+
     // 1. tail the log
     const lgResp = await fetch(`/api/universe-map/log/${r.job_id}?since=${cursor}`).catch(()=>null);
     if (lgResp && lgResp.ok) {

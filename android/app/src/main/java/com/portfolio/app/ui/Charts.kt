@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -297,35 +298,143 @@ private fun niceTicks(lo: Float, hi: Float, target: Int = 5): List<Float> {
 }
 
 /** Generic scatter — used for the Universe Map (tech vs fundamental score). */
+/**
+ * One dot on the universe map.
+ *
+ * Axis order matches the web dashboard deliberately — x is the balance sheet,
+ * y is the chart. Two surfaces of the same product showing the same map
+ * transposed would be worse than either choice on its own.
+ */
+data class UniversePoint(
+    val x: Float,          // fundamental score, 0..100
+    val y: Float,          // technical score, 0..100
+    val color: Color,
+    val symbol: String = "",
+)
+
+/** The four corners of the map. */
+enum class Quadrant(val label: String, val blurb: String, val tint: Color) {
+    LEADERS("Leaders", "Strong books, strong chart", Bull),
+    MOMENTUM("Momentum only", "Weak books, strong chart", Warn),
+    OUT_OF_FAVOUR("Out of favour", "Strong books, weak chart", AccentHi),
+    WEAK("Weak on both", "Weak books, weak chart", Bear),
+}
+
+/** Which quadrant a point falls in. x = fundamental, y = technical. */
+fun quadrantOf(fund: Float, tech: Float, mid: Float = 50f): Quadrant = when {
+    fund >= mid && tech >= mid -> Quadrant.LEADERS
+    fund < mid && tech >= mid -> Quadrant.MOMENTUM
+    fund >= mid && tech < mid -> Quadrant.OUT_OF_FAVOUR
+    else -> Quadrant.WEAK
+}
+
+/**
+ * Universe map: fundamental score (y) against technical score (x), split into
+ * four labelled quadrants.
+ *
+ * The axes are pinned to the full 0-100 score range rather than scaled to the
+ * data. That matters: quadrants only mean something if the dividing line sits
+ * at a fixed score, and a fixed frame also makes two builds comparable — under
+ * auto-scaling the same stock could drift across a boundary just because the
+ * rest of the universe moved.
+ */
 @Composable
-fun ScatterChart(
-    points: List<Triple<Float, Float, Color>>,    // x, y, color
-    xLabel: String, yLabel: String,
+fun QuadrantScatterChart(
+    points: List<UniversePoint>,
+    xLabel: String,
+    yLabel: String,
+    mid: Float = 50f,
+    highlight: Quadrant? = null,
     modifier: Modifier = Modifier,
 ) {
-    if (points.size < 2) { Text("No universe data — build the map first.", color = Muted, fontSize = 12.sp); return }
-    val xs = points.map { it.first }; val ys = points.map { it.second }
-    val xlo = xs.min(); val xhi = xs.max(); val ylo = ys.min(); val yhi = ys.max()
-    val xr = (xhi - xlo).takeIf { it > 0 } ?: 1f
-    val yr = (yhi - ylo).takeIf { it > 0 } ?: 1f
+    if (points.isEmpty()) {
+        Text("No universe data — build the map first.", color = Muted, fontSize = 12.sp); return
+    }
+    val counts = remember(points) { points.groupingBy { quadrantOf(it.x, it.y, mid) }.eachCount() }
+
     Column(modifier.fillMaxWidth()) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            LegendDot(Bull, "Buy"); LegendDot(Warn, "Hold"); LegendDot(Bear, "Avoid")
-        }
-        Spacer(Modifier.height(6.dp))
-        Canvas(Modifier.fillMaxWidth().height(260.dp)) {
-            val w = size.width; val h = size.height; val pad = 10f
-            drawLine(BorderCol, Offset(0f, h - 1), Offset(w, h - 1), 1f)
-            drawLine(BorderCol, Offset(1f, 0f), Offset(1f, h), 1f)
-            points.forEach { (x, y, c) ->
-                val px = pad + (x - xlo) / xr * (w - 2 * pad)
-                val py = h - pad - (y - ylo) / yr * (h - 2 * pad)
-                drawCircle(c.copy(alpha = 0.85f), 4.5f, Offset(px, py))
+        Canvas(Modifier.fillMaxWidth().height(300.dp)) {
+            val padL = 30.dp.toPx(); val padR = 8.dp.toPx()
+            val padT = 8.dp.toPx(); val padB = 22.dp.toPx()
+            val w = size.width - padL - padR
+            val h = size.height - padT - padB
+            fun px(v: Float) = padL + (v / 100f).coerceIn(0f, 1f) * w
+            fun py(v: Float) = padT + h - (v / 100f).coerceIn(0f, 1f) * h
+            val mx = px(mid); val my = py(mid)
+
+            // Quadrant washes — faint, so the dots stay the subject.
+            fun wash(q: Quadrant, l: Float, t: Float, r: Float, b: Float) {
+                val a = if (highlight == null || highlight == q) 0.10f else 0.03f
+                drawRect(q.tint.copy(alpha = a), Offset(l, t), Size(r - l, b - t))
             }
+            wash(Quadrant.MOMENTUM, padL, padT, mx, my)          // low fund, high tech
+            wash(Quadrant.LEADERS, mx, padT, padL + w, my)        // high fund, high tech
+            wash(Quadrant.WEAK, padL, my, mx, padT + h)           // low fund, low tech
+            wash(Quadrant.OUT_OF_FAVOUR, mx, my, padL + w, padT + h)
+
+            val axis = android.graphics.Paint().apply {
+                color = android.graphics.Color.argb(170, 139, 148, 158)
+                textSize = 9.sp.toPx(); isAntiAlias = true
+            }
+            val tag = android.graphics.Paint().apply {
+                color = android.graphics.Color.argb(210, 139, 148, 158)
+                textSize = 9.5.sp.toPx(); isAntiAlias = true
+                isFakeBoldText = true
+            }
+
+            // Gridlines + ticks at 0/25/50/75/100 on both axes.
+            listOf(0f, 25f, 50f, 75f, 100f).forEach { t ->
+                val y = py(t); val x = px(t)
+                drawLine(BorderCol.copy(alpha = 0.25f), Offset(padL, y), Offset(padL + w, y), 1f)
+                drawLine(BorderCol.copy(alpha = 0.25f), Offset(x, padT), Offset(x, padT + h), 1f)
+                drawContext.canvas.nativeCanvas.drawText(
+                    "%.0f".format(t), 2f, y + axis.textSize / 3f, axis)
+                if (t > 0f) drawContext.canvas.nativeCanvas.drawText(
+                    "%.0f".format(t), x - axis.measureText("%.0f".format(t)) / 2f,
+                    size.height - 10f, axis)
+            }
+
+            // The dividing lines themselves, drawn stronger than the grid.
+            drawLine(Muted.copy(alpha = 0.55f), Offset(mx, padT), Offset(mx, padT + h), 2f)
+            drawLine(Muted.copy(alpha = 0.55f), Offset(padL, my), Offset(padL + w, my), 2f)
+
+            // Corner labels, inset so they never sit under the dividing lines.
+            val inset = 6.dp.toPx()
+            fun corner(q: Quadrant, right: Boolean, top: Boolean) {
+                val n = counts[q] ?: 0
+                val text = "${q.label} · $n"
+                val tw = tag.measureText(text)
+                val x = if (right) padL + w - inset - tw else padL + inset
+                val y = if (top) padT + inset + tag.textSize else padT + h - inset
+                tag.color = android.graphics.Color.argb(
+                    if (highlight == null || highlight == q) 235 else 90,
+                    (q.tint.red * 255).toInt(), (q.tint.green * 255).toInt(),
+                    (q.tint.blue * 255).toInt())
+                drawContext.canvas.nativeCanvas.drawText(text, x, y, tag)
+            }
+            corner(Quadrant.LEADERS, right = true, top = true)
+            corner(Quadrant.MOMENTUM, right = false, top = true)
+            corner(Quadrant.OUT_OF_FAVOUR, right = true, top = false)
+            corner(Quadrant.WEAK, right = false, top = false)
+
+            points.forEach { p ->
+                val dim = highlight != null && quadrantOf(p.x, p.y, mid) != highlight
+                drawCircle(p.color.copy(alpha = if (dim) 0.15f else 0.8f), 4.5f,
+                    Offset(px(p.x), py(p.y)))
+            }
+
+            // Frame last, so it sits over the washes.
+            drawLine(BorderCol, Offset(padL, padT + h), Offset(padL + w, padT + h), 1.5f)
+            drawLine(BorderCol, Offset(padL, padT), Offset(padL, padT + h), 1.5f)
         }
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+        Row(Modifier.fillMaxWidth().padding(top = 2.dp),
+            horizontalArrangement = Arrangement.SpaceBetween) {
             Text("↑ $yLabel", color = Muted, fontSize = 10.sp)
             Text("$xLabel →", color = Muted, fontSize = 10.sp)
+        }
+        Spacer(Modifier.height(8.dp))
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            LegendDot(Bull, "Buy"); LegendDot(Warn, "Hold"); LegendDot(Bear, "Avoid")
         }
     }
 }

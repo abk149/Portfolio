@@ -27,7 +27,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 import pandas as pd
 
@@ -47,6 +47,37 @@ def _map_dir() -> Path:
 
 def _cache_path(universe: str) -> Path:
     return _map_dir() / f"{universe}.json"
+
+
+def _fail(universe: str, msg: str) -> dict:
+    """Report a build failure WITHOUT destroying an existing map.
+
+    These abort paths used to write an empty result straight over the cache, so
+    a transient auth blip wiped a map that took an hour to crawl. Now the
+    existing map is left alone and simply carries the error alongside it.
+    """
+    err = {"universe": universe, "built_at": datetime.utcnow().isoformat() + "Z",
+           "count": 0, "tech_total": 0, "fund_scanned": 0, "fund_reused": 0,
+           "stocks": [], "error": msg}
+    try:
+        existing = load_cached(universe)
+    except Exception:
+        existing = None
+    if existing and existing.get("stocks"):
+        log.warning(f"universe map build failed ({msg}) — keeping the "
+                    f"{len(existing['stocks'])} stocks already cached.")
+        return {**existing, "error": msg, "stale": True}
+    _write_cache(universe, err)
+    return err
+
+
+def _write_cache(universe: str, payload: dict) -> None:
+    """Atomic cache write — a half-written JSON file would poison every later
+    read, and checkpointing means we now write mid-crawl."""
+    path = _cache_path(universe)
+    tmp = path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(payload, default=str))
+    tmp.replace(path)
 
 
 def load_cached(universe: str) -> Optional[dict]:
@@ -121,11 +152,23 @@ def build_universe_map(
     universe: str = "all_nse",
     max_age_days: float = 7.0,
     workers: int = 4,
+    progress: Optional[Callable[[dict], None]] = None,
+    checkpoint_every: int = 25,
 ) -> dict:
     """Crawl the whole universe, score it, write it into the KB.
 
     `max_age_days`: a stock whose KB entry is younger than this is NOT
     re-fetched — its stored data is reused. Set to 0 to force a full refresh.
+
+    `progress`: called with {stage, done, total, fetched, reused, pct, message}
+    as the crawl advances, so a UI can show a live bar instead of a spinner.
+
+    `checkpoint_every`: the partial map is flushed to the JSON cache every N
+    stocks. The first full-universe build takes long enough that it WILL
+    sometimes be interrupted (app backgrounded, device sleeps, process killed);
+    without checkpoints that lost every row, because the cache was only written
+    after the last stock. With them, an interrupted run leaves a usable —
+    explicitly `partial` — map, and the next run reuses it.
     """
     print(f"[UMAP] universe map build: universe={universe} "
           f"max_age_days={max_age_days}", flush=True, file=sys.stderr)
@@ -135,12 +178,25 @@ def build_universe_map(
         msg = (f"Upstox not reachable ({who}). Token likely expired — "
                f"re-auth via dashboard ⚙ Settings → 🔐 Upstox login.")
         print(f"[UMAP] ✗ ABORT — {msg}", flush=True, file=sys.stderr)
-        empty = {"universe": universe, "built_at": datetime.utcnow().isoformat() + "Z",
-                 "count": 0, "tech_total": 0, "fund_scanned": 0, "fund_reused": 0,
-                 "stocks": [], "error": msg}
-        _cache_path(universe).write_text(json.dumps(empty))
-        return empty
+        return _fail(universe, msg)
     print(f"[UMAP] ✓ Upstox auth OK ({who})", flush=True, file=sys.stderr)
+
+    def _emit(stage: str, done: int = 0, total: int = 0, fetched: int = 0,
+              reused: int = 0, message: str = "") -> None:
+        """Best-effort progress ping — never let a reporting bug kill a crawl."""
+        if not progress:
+            return
+        try:
+            progress({
+                "stage": stage, "done": done, "total": total,
+                "fetched": fetched, "reused": reused,
+                "pct": round(done / total * 100, 1) if total else 0.0,
+                "message": message,
+            })
+        except Exception as e:
+            log.debug(f"progress callback failed: {e}")
+
+    _emit("technical", message="Scanning the universe for price data…")
 
     # ── Stage A: technical scan over the WHOLE universe ──
     eng = ScreenerEngine(workers=workers)
@@ -151,13 +207,11 @@ def build_universe_map(
         msg = ("Technical scan returned 0 rows — every Upstox daily call came "
                "back empty. Token expired mid-run, or instrument keys stale.")
         print(f"[UMAP] ✗ {msg}", flush=True, file=sys.stderr)
-        result = {"universe": universe, "built_at": datetime.utcnow().isoformat() + "Z",
-                  "count": 0, "tech_total": 0, "fund_scanned": 0, "fund_reused": 0,
-                  "stocks": [], "error": msg}
-        _cache_path(universe).write_text(json.dumps(result))
-        return result
+        return _fail(universe, msg)
     print(f"[UMAP] Stage A done — {len(tech)} stocks technically scored",
           flush=True, file=sys.stderr)
+    _emit("fundamentals", 0, len(tech),
+          message=f"{len(tech)} stocks scored — now fetching fundamentals")
 
     # ── Stage B+C: fundamentals for EVERY stock + KB write, incremental ──
     from src.kb import KnowledgeBase
@@ -173,6 +227,28 @@ def build_universe_map(
     n_reused = 0
     n_fetched = 0
     out_records: list[dict] = []
+
+    def _snapshot(partial: bool) -> dict:
+        return {
+            "universe": universe,
+            "built_at": datetime.utcnow().isoformat() + "Z",
+            "count": len(out_records),
+            "tech_total": len(tech),
+            "fund_scanned": n_fetched,
+            "fund_reused": n_reused,
+            "partial": partial,
+            "expected_total": total,
+            "stocks": [_scrub(r) for r in out_records],
+        }
+
+    def _checkpoint(done: int) -> None:
+        """Flush what we have so far. Cheap relative to a network fetch per
+        stock, and it is the difference between an interrupted build being a
+        setback and being a total loss."""
+        try:
+            _write_cache(universe, _snapshot(partial=True))
+        except Exception as e:
+            log.debug(f"checkpoint write failed at {done}: {e}")
 
     def _process(row: dict) -> dict:
         nonlocal n_reused, n_fetched
@@ -255,8 +331,17 @@ def build_universe_map(
               flush=True, file=sys.stderr)
         done = 0
         for r in rows:
-            out_records.append(_process(r))
+            try:
+                out_records.append(_process(r))
+            except Exception as e:
+                # One bad symbol must never abort a 2000-stock crawl.
+                log.debug(f"process error for {r.get('symbol')}: {e}")
             done += 1
+            if done % checkpoint_every == 0:
+                _checkpoint(done)
+            if done % 10 == 0 or done == total:
+                _emit("fundamentals", done, total, n_fetched, n_reused,
+                      f"{done} of {total} stocks")
             if done % 20 == 0 or done == total:
                 print(f"[UMAP] {done}/{total} processed "
                       f"({n_fetched} fetched, {n_reused} reused)",
@@ -271,22 +356,21 @@ def build_universe_map(
                     out_records.append(fut.result())
                 except Exception as e:
                     log.debug(f"process error: {e}")
+                if done % checkpoint_every == 0:
+                    _checkpoint(done)
+                if done % 10 == 0 or done == total:
+                    _emit("fundamentals", done, total, n_fetched, n_reused,
+                          f"{done} of {total} stocks")
                 if done % 50 == 0 or done == total:
                     print(f"[UMAP] {done}/{total} processed "
                         f"({n_fetched} fetched, {n_reused} reused from KB)",
                         flush=True, file=sys.stderr)
 
-    records = [_scrub(r) for r in out_records]
-    result = {
-        "universe": universe,
-        "built_at": datetime.utcnow().isoformat() + "Z",
-        "count": len(records),
-        "tech_total": len(tech),
-        "fund_scanned": n_fetched,
-        "fund_reused": n_reused,
-        "stocks": records,
-    }
-    _cache_path(universe).write_text(json.dumps(result, default=str))
+    result = _snapshot(partial=False)
+    records = result["stocks"]
+    _write_cache(universe, result)
+    _emit("done", total, total, n_fetched, n_reused,
+          f"Done — {len(records)} stocks mapped")
     print(f"[UMAP] ✓ done — {len(records)} stocks "
           f"({n_fetched} freshly fetched, {n_reused} reused) → "
           f"KB now holds {kb.universe.count()} stocks",

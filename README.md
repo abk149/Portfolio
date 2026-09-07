@@ -39,8 +39,12 @@ the desktop and the phone.
 - **DR‑Quant funnel** — a multi‑stage, LLM‑assisted research pipeline over a
   scored stock universe.
 - **Universe Map** — a crawler that scores the whole universe (technical +
-  fundamental) into a persistent knowledge base, visualized as a
-  tech‑vs‑fundamental scatter.
+  fundamental) into a persistent knowledge base, visualized as a four‑quadrant
+  map of balance‑sheet quality against price action (*Leaders · Momentum only ·
+  Out of favour · Weak on both*), with a live tap‑to‑filter table. The crawl is
+  **resumable**: it checkpoints to disk as it goes and reuses anything still
+  fresh, so a first full‑NSE build can be interrupted and picked up later
+  instead of starting over.
 - **Macro Ideas** — ingests **recent, date‑filtered** signals from ~20 sources
   (financial‑news RSS, Google News, Reddit) + a live macro snapshot (VIX / PCR /
   USDINR), then an LLM weighs **all** factors into one *holistic* view and

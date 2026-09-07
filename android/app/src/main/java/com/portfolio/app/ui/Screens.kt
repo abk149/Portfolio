@@ -13,6 +13,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -400,19 +401,24 @@ fun ThemesScreen() {
 fun MapScreen() {
     var universe by remember { mutableStateOf("nifty50") }
     val job = JobBus.state("umap")
-    var report by remember { mutableStateOf<JSONObject?>(null) }
     var data by remember { mutableStateOf<JSONObject?>(null) }
+    var quadrant by remember { mutableStateOf<Quadrant?>(null) }
     val scope = rememberCoroutineScope()
 
     fun loadCached() {
-        scope.launch {
-            report = Api.umapReport().objOrNull()
-            data = Api.umapData().objOrNull()
-        }
+        scope.launch { data = Api.umapData(universe).objOrNull() }
     }
     LaunchedEffect(Unit) { if (BackendBus.running) loadCached() }
+    // Follow the picker — the map used to always show all_nse no matter which
+    // universe was selected.
+    LaunchedEffect(universe) { if (BackendBus.running) { quadrant = null; loadCached() } }
     // When a build completes, pull the freshly written map data.
     LaunchedEffect(job.finishedAt) { if (job.finishedAt > 0L && BackendBus.running) loadCached() }
+    // The builder checkpoints to disk as it goes, so the map can fill in while
+    // the crawl is still running instead of showing nothing for an hour.
+    LaunchedEffect(job.running) {
+        while (job.running) { delay(45_000); if (BackendBus.running) loadCached() }
+    }
 
     ScreenScaffold(title = "Universe Map", loading = job.running, onRefresh = ::loadCached) {
         if (!BackendBus.running) { BackendOfflineHint(); return@ScreenScaffold }
@@ -421,15 +427,75 @@ fun MapScreen() {
             Spacer(Modifier.height(10.dp))
             Button(
                 onClick = {
-                    JobBus.run("umap",
-                        "Crawling universe — this is long; watch the Terminal…",
-                        maxSecs = 1800) { Api.umapBuild(universe) }
+                    JobBus.run(
+                        key = "umap",
+                        status = "Crawling the universe — this takes a while on first run.",
+                        // Idle timeout, not a total budget: a first all-NSE crawl
+                        // can run for an hour and must not be abandoned.
+                        maxSecs = 300,
+                        onTick = { id, st ->
+                            Api.umapProgress(id).objOrNull()
+                                ?.optJSONObject("progress")?.let { pr ->
+                                    val done = pr.optInt("done"); val total = pr.optInt("total")
+                                    st.progress = if (total > 0) done.toFloat() / total else null
+                                    st.detail = pr.optString("message").takeIf { it.isNotBlank() }
+                                        ?.let { m ->
+                                            val f = pr.optInt("fetched"); val r = pr.optInt("reused")
+                                            if (f + r > 0) "$m · $f fetched, $r reused" else m
+                                        }
+                                }
+                        },
+                    ) { Api.umapBuild(universe) }
                 },
                 enabled = !job.running, modifier = Modifier.fillMaxWidth(),
             ) { Text(if (job.running) "Building…" else "▶ Build / refresh map") }
+
+            if (!job.running) {
+                Spacer(Modifier.height(8.dp))
+                Text("The first full build crawls every stock and can take a long while — " +
+                    "it saves as it goes, so stopping and running it again later picks up " +
+                    "where it left off rather than starting over.",
+                    color = Muted, fontSize = 10.5.sp, lineHeight = 15.sp)
+            }
+
+            if (job.running) {
+                Spacer(Modifier.height(12.dp))
+                val pct = job.progress
+                if (pct != null) {
+                    LinearProgressIndicator(progress = pct.coerceIn(0f, 1f),
+                        modifier = Modifier.fillMaxWidth(), color = AccentHi, trackColor = Panel2)
+                    Spacer(Modifier.height(6.dp))
+                    Text("%.0f%% · %s".format(pct * 100, job.detail ?: "working…"),
+                        color = Muted, fontSize = 11.sp)
+                } else {
+                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth(),
+                        color = AccentHi, trackColor = Panel2)
+                    Spacer(Modifier.height(6.dp))
+                    Text(job.detail ?: "Scanning the universe for price data…",
+                        color = Muted, fontSize = 11.sp)
+                }
+                Spacer(Modifier.height(6.dp))
+                Text("Safe to leave this screen — the crawl keeps running and saves " +
+                    "its progress every 25 stocks.", color = Muted, fontSize = 10.sp)
+            }
             job.status?.let { Spacer(Modifier.height(8.dp)); StatusBanner(it, if (job.running) Warn else Bear) }
         }
-        report?.let { rep ->
+
+        // An interrupted crawl now leaves a usable map rather than nothing.
+        data?.takeIf { it.optBoolean("partial") }?.let { d ->
+            SectionCard("Partial map", Warn) {
+                StatusBanner("This map is incomplete — ${d.optInt("count")} of " +
+                    "${d.optInt("expected_total")} stocks were saved before the last " +
+                    "build stopped. It is still usable; run the build again to finish " +
+                    "it — everything already fetched is reused, so it picks up where " +
+                    "it left off.", Warn)
+            }
+        }
+        data?.optString("error")?.takeIf { it.isNotBlank() }?.let {
+            SectionCard("Last build reported", Bear) { StatusBanner(it, Bear) }
+        }
+
+        data?.takeIf { it.optBoolean("ok", true) && it.has("count") }?.let { rep ->
             SectionCard("Stats", AccentHi) {
                 KpiGrid(listOf(
                     Triple("Stocks", fmtNum(rep.opt("count")), OnBg),
@@ -437,14 +503,81 @@ fun MapScreen() {
                     Triple("Fetched", fmtNum(rep.opt("fund_scanned")), AccentHi),
                     Triple("Reused", fmtNum(rep.opt("fund_reused")), Muted),
                 ))
+                rep.optString("built_at").takeIf { it.isNotBlank() }?.let {
+                    Spacer(Modifier.height(8.dp))
+                    Text("Built ${it.take(16).replace("T", " ")} UTC · ${rep.optString("universe")}",
+                        color = Muted, fontSize = 10.sp)
+                }
+            }
+        }
+        if (arr(data, "stocks").let { it == null || it.length() == 0 } && !job.running) {
+            SectionCard("No map yet", Muted) {
+                StatusBanner(data?.optString("error")?.takeIf { it.isNotBlank() }
+                    ?: "Nothing cached for \"$universe\" yet. Build it above — the first " +
+                       "run is the long one; later runs reuse everything still fresh.", Muted)
             }
         }
         arr(data, "stocks")?.takeIf { it.length() > 0 }?.let { stocks ->
+            val pts = universePoints(stocks)
             SectionCard("Map · technical vs fundamental", AccentHi) {
-                ScatterChart(universePoints(stocks), xLabel = "Technical score", yLabel = "Fundamental score")
+                Text("Where every stock sits on balance-sheet quality (→) against price " +
+                    "action (↑). Both lines split at a score of 50, so the corner a " +
+                    "stock lands in is what matters.",
+                    color = Muted, fontSize = 11.sp, lineHeight = 16.sp)
+                Spacer(Modifier.height(12.dp))
+                QuadrantScatterChart(pts, xLabel = "Fundamental score",
+                    yLabel = "Technical score", highlight = quadrant)
+                Spacer(Modifier.height(12.dp))
+                Text("Tap a quadrant to filter the table below.",
+                    color = Muted, fontSize = 11.sp)
+                Spacer(Modifier.height(8.dp))
+                Quadrant.values().forEach { q ->
+                    val n = pts.count { quadrantOf(it.x, it.y) == q }
+                    QuadrantRow(q, n, selected = quadrant == q) {
+                        quadrant = if (quadrant == q) null else q
+                    }
+                }
+                if (pts.size < stocks.length()) {
+                    Spacer(Modifier.height(10.dp))
+                    Text("${stocks.length() - pts.size} stocks aren't plotted — they have " +
+                        "no fundamental score yet (still being crawled, or the source " +
+                        "had nothing).", color = Muted, fontSize = 10.sp, lineHeight = 15.sp)
+                }
             }
-            SectionCard("Universe", AccentHi) { DataTable(stocks, 80) }
+            val shown = filterByQuadrant(stocks, quadrant)
+            SectionCard(quadrant?.let { "Universe · ${it.label}" } ?: "Universe", AccentHi) {
+                if (quadrant != null) {
+                    Text("${shown.length()} stocks · ${quadrant!!.blurb}",
+                        color = Muted, fontSize = 11.sp)
+                    Spacer(Modifier.height(8.dp))
+                }
+                DataTable(shown, 80)
+            }
         }
+    }
+}
+
+/** One tappable quadrant summary row under the map. */
+@Composable
+private fun QuadrantRow(q: Quadrant, count: Int, selected: Boolean, onClick: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth()
+            .padding(vertical = 3.dp)
+            .clip(androidx.compose.foundation.shape.RoundedCornerShape(8.dp))
+            .background(if (selected) q.tint.copy(alpha = 0.16f) else Panel2)
+            .clickable { onClick() }
+            .padding(horizontal = 11.dp, vertical = 9.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(Modifier.size(9.dp)
+            .clip(androidx.compose.foundation.shape.RoundedCornerShape(2.dp))
+            .background(q.tint))
+        Spacer(Modifier.width(10.dp))
+        Column(Modifier.weight(1f)) {
+            Text(q.label, color = OnBg, fontSize = 12.5.sp, fontWeight = FontWeight.Medium)
+            Text(q.blurb, color = Muted, fontSize = 10.5.sp)
+        }
+        Text("$count", color = q.tint, fontSize = 14.sp, fontWeight = FontWeight.Bold)
     }
 }
 
@@ -466,14 +599,15 @@ private fun allocationBuys(arr: JSONArray?): JSONArray {
 }
 
 // Universe stocks → scatter points (x=tech, y=fundamental, color by recommendation).
-private fun universePoints(arr: JSONArray): List<Triple<Float, Float, Color>> {
-    val out = ArrayList<Triple<Float, Float, Color>>()
+private fun universePoints(arr: JSONArray): List<UniversePoint> {
+    val out = ArrayList<UniversePoint>()
     for (i in 0 until arr.length()) {
         val o = arr.optJSONObject(i) ?: continue
-        val x = (o.opt("tech_score") as? Number)?.toFloat()
-            ?: (o.opt("combined") as? Number)?.toFloat() ?: continue
-        val y = (o.opt("fund_score") as? Number)?.toFloat()
-            ?: (o.opt("combined") as? Number)?.toFloat() ?: continue
+        // A stock with no fundamentals yet (fetch failed, or still mid-crawl)
+        // must not be plotted at its technical score on BOTH axes — that would
+        // pile it onto the diagonal and misreport the quadrant counts.
+        val tech = (o.opt("tech_score") as? Number)?.toFloat() ?: continue
+        val fund = (o.opt("fund_score") as? Number)?.toFloat() ?: continue
         val reco = o.optString("recommendation", "")
         val c = when {
             reco.contains("STRONG_BUY") || reco == "BUY" || reco.contains("TECH_BUY") -> Bull
@@ -481,7 +615,20 @@ private fun universePoints(arr: JSONArray): List<Triple<Float, Float, Color>> {
             reco.contains("AVOID") || reco.contains("SELL") -> Bear
             else -> Muted
         }
-        out.add(Triple(x, y, c))
+        out.add(UniversePoint(x = fund, y = tech, color = c, symbol = o.optString("symbol")))
+    }
+    return out
+}
+
+/** Rows of the universe table that fall in one quadrant of the map. */
+private fun filterByQuadrant(arr: JSONArray, q: Quadrant?): JSONArray {
+    if (q == null) return arr
+    val out = JSONArray()
+    for (i in 0 until arr.length()) {
+        val o = arr.optJSONObject(i) ?: continue
+        val tech = (o.opt("tech_score") as? Number)?.toFloat() ?: continue
+        val fund = (o.opt("fund_score") as? Number)?.toFloat() ?: continue
+        if (quadrantOf(fund, tech) == q) out.put(o)
     }
     return out
 }

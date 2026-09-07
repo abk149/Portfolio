@@ -1399,6 +1399,59 @@ def api_tg_test():
 
 # ---------------- Universe Map ----------------
 _UMAP_JOBS: dict[str, dict] = {}
+# job_id -> latest progress dict from the builder's callback. Lets the UI show
+# a real bar during a crawl that can legitimately run for an hour.
+_UMAP_PROGRESS: dict[str, dict] = {}
+
+
+@app.get("/api/universe-map/progress/{job_id}")
+def api_umap_progress(job_id: str):
+    """Live progress for a running build (stage / done / total / pct)."""
+    prog = _UMAP_PROGRESS.get(job_id)
+    job = JOBS.get(job_id)
+    status = (job or {}).get("status")
+    info = _UMAP_JOBS.get(job_id)
+    if status is None and info:
+        proc = info.get("proc")
+        status = "running" if (proc and proc.poll() is None) else "done"
+        # The desktop path runs the crawl in a subprocess, so there's no
+        # in-process callback — recover progress from its log instead, which
+        # already prints "[UMAP] 250/1900 processed (...)".
+        if not prog:
+            prog = _progress_from_log(info.get("log"))
+    return {"ok": True, "job_id": job_id, "status": status or "unknown",
+            "progress": prog or {}}
+
+
+def _progress_from_log(log_path) -> dict:
+    """Parse the newest '[UMAP] done/total processed' line out of a build log."""
+    if not log_path:
+        return {}
+    try:
+        import re
+        path = Path(log_path)
+        if not path.exists():
+            return {}
+        # Only the tail matters; these logs get long.
+        with path.open("rb") as fh:
+            fh.seek(max(0, path.stat().st_size - 20000))
+            tail = fh.read().decode("utf-8", errors="replace")
+        hits = re.findall(
+            r"\[UMAP\] (\d+)/(\d+) processed \((\d+) fetched, (\d+) reused",
+            tail)
+        if hits:
+            done, total, fetched, reused = (int(x) for x in hits[-1])
+            return {"stage": "fundamentals", "done": done, "total": total,
+                    "fetched": fetched, "reused": reused,
+                    "pct": round(done / total * 100, 1) if total else 0.0,
+                    "message": f"{done} of {total} stocks"}
+        if "Stage A" in tail:
+            return {"stage": "technical", "done": 0, "total": 0, "pct": 0.0,
+                    "message": "Scanning the universe for price data…"}
+    except Exception as e:
+        log = get_logger("dashboard")
+        log.debug(f"umap log progress parse failed: {e}")
+    return {}
 
 
 @app.get("/api/universe-map/report")
@@ -1539,8 +1592,16 @@ def api_umap_build(body: dict):
         def _build_in_process():
             from src.universe_map.builder import build_universe_map
             # Note: workers reduced to 1 for stability in-process on mobile
-            return build_universe_map(universe=universe, max_age_days=max_age_days, workers=1)
+            return build_universe_map(
+                universe=universe, max_age_days=max_age_days, workers=1,
+                progress=lambda p: _UMAP_PROGRESS.__setitem__(job_id, p))
 
+        # Bound the map — the on-device backend is long-lived and this would
+        # otherwise grow one entry per build for the life of the process.
+        while len(_UMAP_PROGRESS) > 20:
+            _UMAP_PROGRESS.pop(next(iter(_UMAP_PROGRESS)), None)
+        _UMAP_PROGRESS[job_id] = {"stage": "starting", "done": 0, "total": 0,
+                                  "pct": 0.0, "message": "Starting…"}
         _run_job(job_id, _build_in_process)
         # Mock a status so the UI thinks it's a subproc job if it polls specific subproc endpoints
         # though pollJob uses /api/jobs/ which handles both.

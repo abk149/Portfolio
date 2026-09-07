@@ -138,8 +138,13 @@ object Api {
     suspend fun umapBuild(universe: String, maxAgeDays: Double = 7.0) =
         post("/api/universe-map/build",
             JSONObject().put("universe", universe).put("max_age_days", maxAgeDays))
-    suspend fun umapData() = get("/api/universe-map/data")
-    suspend fun umapReport() = get("/api/universe-map/report")
+    // NOTE: /api/universe-map/report returns an .xlsx FILE, not JSON — it is a
+    // download endpoint and must not be parsed as a response body. The stats the
+    // UI needs (count / tech_total / fund_scanned / fund_reused) all come back
+    // from /data alongside the stocks.
+    suspend fun umapData(universe: String = "all_nse") =
+        get("/api/universe-map/data?universe=$universe")
+    suspend fun umapProgress(jobId: String) = get("/api/universe-map/progress/$jobId")
 
     // ── LLM ──
     suspend fun llmTest() = post("/api/llm/test")
