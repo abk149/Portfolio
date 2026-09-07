@@ -60,6 +60,12 @@ chaquopy {
         version = "3.11"
         pip {
             install "requests"
+            // Chaquopy's wheel repo caps these well behind PyPI. As built today
+            // the APK ships pandas 2.1.3 / numpy 1.26.2, so shared code in src/
+            // must stay compatible with those — a desktop venv on pandas 3.x
+            // will happily accept APIs the phone rejects at runtime. (This bit
+            // once: resample("ME") is pandas >= 2.2 and threw "Invalid
+            // frequency: ME" on-device while passing every desktop test.)
             install "pandas"
             install "numpy"
             // install "scipy" (Currently failing in Chaquopy 3.11/arm64-v8a)

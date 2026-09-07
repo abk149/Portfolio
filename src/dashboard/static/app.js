@@ -1475,11 +1475,22 @@ function _lineCfg(labels, datasets, yLabel) {
 
 function renderBenchmark(b) {
   if (!b || !b.stats) {
-    $("bench-summary").innerHTML =
-      `<div style="color:var(--muted)">No comparison yet — it is built from your
-       equity curve, so run <b>Analyze performance</b> first.</div>`;
+    // The report may be an older cached one whose benchmark failed or predates
+    // this feature. Recompute from the equity curve the backend still holds
+    // rather than sending the user back to re-run an analysis they already ran.
+    if (!window._benchSelfHealed) {
+      window._benchSelfHealed = true;
+      $("bench-summary").innerHTML = `<div style="color:var(--muted)">Comparing against NIFTY 50…</div>`;
+      loadBenchmark("^NSEI");
+      return;
+    }
+    $("bench-summary").innerHTML = b && b.error
+      ? `<div class="neg">Couldn't build the comparison: ${b.error}</div>`
+      : `<div style="color:var(--muted)">No comparison yet — it is built from your
+         equity curve, so run <b>Analyze performance</b> first.</div>`;
     return;
   }
+  window._benchSelfHealed = true;
   const st = b.stats, name = (b.benchmark && b.benchmark.name) || "index";
   const ex = st.excess_pct ?? 0;
   const pc = (v) => v == null ? "—" : fmt(v) + "%";

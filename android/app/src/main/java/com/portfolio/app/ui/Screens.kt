@@ -714,6 +714,17 @@ private fun BenchmarkSection(report: JSONObject) {
     val indices = listOf("^NSEI" to "NIFTY 50", "^BSESN" to "SENSEX",
         "^NSEBANK" to "NIFTY BANK", "^CNX100" to "NIFTY 100")
 
+    // Self-heal. The comparison is normally computed inside the performance
+    // report, but that report may be an older cached one whose benchmark
+    // failed or predates this feature. Rather than telling the user to re-run
+    // a long analysis they already ran, recompute here from the equity curve
+    // the backend still has cached — it's a couple of seconds.
+    LaunchedEffect(report) {
+        if (bench?.optJSONObject("stats") == null && job.result == null && !job.running) {
+            JobBus.runSync("benchmark", "Comparing against NIFTY 50…") { Api.benchmark(index, 365) }
+        }
+    }
+
     SectionCard("You vs the market", AccentHi) {
         Text("Time-weighted return, so deposits and withdrawals don't count as " +
             "gains — this measures your stock picking against the index on equal terms.",
@@ -734,9 +745,18 @@ private fun BenchmarkSection(report: JSONObject) {
         job.status?.let { Spacer(Modifier.height(8.dp)); StatusBanner(it, if (job.running) Warn else Bear) }
 
         if (b == null || b.optJSONObject("stats") == null) {
-            Spacer(Modifier.height(10.dp))
-            StatusBanner("No comparison yet — it is built from your equity curve, " +
-                "so it needs the performance analysis above to have produced one.", Warn)
+            // Surface the actual reason. Showing "run the analysis first" when
+            // the analysis HAS been run and the comparison failed for some
+            // other reason just sends the user in circles.
+            val why = b?.optString("error").orEmpty()
+            if (!job.running) {
+                Spacer(Modifier.height(10.dp))
+                StatusBanner(
+                    if (why.isNotBlank()) "Couldn't build the comparison: $why"
+                    else "No comparison yet — it is built from your equity curve, " +
+                        "so it needs the performance analysis above to have produced one.",
+                    Warn)
+            }
             return@SectionCard
         }
 

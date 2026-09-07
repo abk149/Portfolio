@@ -119,6 +119,17 @@ def index_series(symbol: str, start: date, end: date) -> pd.Series:
     return s.sort_index()
 
 
+def _pct_change(s: pd.Series) -> pd.Series:
+    """Period-over-period change, pinned across pandas versions.
+
+    pandas 2.1 defaults to forward-filling gaps before differencing and warns
+    about it; 2.2+ deprecates the fill entirely. Passing fill_method=None is
+    valid on both and gives the same answer everywhere — which matters, because
+    the phone (pandas 2.1.3) and the desktop (3.x) run this same code.
+    """
+    return s.pct_change(fill_method=None)
+
+
 def _asof(series: pd.Series, when: pd.Timestamp) -> Optional[float]:
     """Last observation on or before `when` (indices don't trade every day)."""
     valid = series[series.index <= when]
@@ -209,8 +220,8 @@ def compare(
     ]
 
     # ---- period returns, for the regression stats ----
-    pr = win["twr"].pct_change()
-    ir = win["index_level"].pct_change()
+    pr = _pct_change(win["twr"])
+    ir = _pct_change(win["index_level"])
     both = pd.DataFrame({"p": pr, "i": ir}).dropna()
 
     stats: dict = {}
@@ -271,19 +282,26 @@ def compare(
         })
 
     # ---- calendar-month returns for the last 12 months ----
-    m = tw.set_index("date")[["twr", "index_level"]].resample("ME").last().dropna()
+    # Grouped by year-month rather than resample(): the month-end alias was
+    # renamed ("M" -> "ME") in pandas 2.2, and the phone ships pandas 2.1.3,
+    # where the newer alias raises "Invalid frequency". Grouping on an integer
+    # YYYYMM key behaves identically and is version-independent.
+    mt = tw[["date", "twr", "index_level"]].copy()
+    mt["_ym"] = mt["date"].dt.year * 100 + mt["date"].dt.month
+    m = mt.groupby("_ym", as_index=False).last().sort_values("_ym")
     monthly = []
     if len(m) >= 2:
-        mp = m["twr"].pct_change().dropna()
-        mi = m["index_level"].pct_change().dropna()
-        for ts in mp.index[-12:]:
-            if ts not in mi.index:
+        mp = _pct_change(m["twr"])
+        mi = _pct_change(m["index_level"])
+        for k in range(len(m)):
+            if not (np.isfinite(mp.iloc[k]) and np.isfinite(mi.iloc[k])):
                 continue
             monthly.append({
-                "month": ts.strftime("%b %y"),
-                "portfolio_pct": round(float(mp.loc[ts]) * 100, 2),
-                "index_pct": round(float(mi.loc[ts]) * 100, 2),
+                "month": m["date"].iloc[k].strftime("%b %y"),
+                "portfolio_pct": round(float(mp.iloc[k]) * 100, 2),
+                "index_pct": round(float(mi.iloc[k]) * 100, 2),
             })
+        monthly = monthly[-12:]
 
     note = (
         "Portfolio performance is time-weighted, so deposits and withdrawals "
