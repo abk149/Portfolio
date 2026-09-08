@@ -31,6 +31,14 @@ object BackendBus {
      */
     var onActivity: (String?) -> Unit = {}
 
+    /**
+     * Build identity of the PYTHON backend actually running, read from
+     * /api/status. The APK version alone doesn't prove which engine code is
+     * live, and telling "regression" from "stale install" apart used to cost a
+     * full rebuild-and-ask cycle.
+     */
+    var backendBuild = mutableStateOf<String?>(null)
+
     val running get() = state.value == State.RUNNING
 
     fun pushLog(line: String) {

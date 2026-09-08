@@ -35,6 +35,20 @@ app = FastAPI(title="Upstox Portfolio Dashboard")
 app.mount("/static", StaticFiles(directory=HERE / "static"), name="static")
 
 
+def _build_info() -> dict:
+    """Which code is actually running.
+
+    Answers the question that otherwise costs a full rebuild-and-ask cycle:
+    is this a regression, or an old install?
+    """
+    try:
+        from src import _build_info as bi
+        return {"id": getattr(bi, "BUILD_ID", "?"),
+                "built_at": getattr(bi, "BUILT_AT", "?")}
+    except Exception:
+        return {"id": "unknown", "built_at": "unknown"}
+
+
 @app.exception_handler(Exception)
 async def _unhandled(request: Request, exc: Exception):
     """Turn any unhandled error into a clean JSON message.
@@ -53,6 +67,9 @@ async def _unhandled(request: Request, exc: Exception):
         content={
             "error": f"{type(exc).__name__}: {exc}"[:400],
             "path": request.url.path,
+            # Stamped so a screenshot of an error is self-identifying — no more
+            # guessing whether the device has the fix for it.
+            "build": _build_info(),
             "hint": "Full traceback is in the System Terminal log.",
         },
     )
@@ -1321,7 +1338,7 @@ _SCHED = {"obj": None}
 @app.get("/api/status")
 def api_status():
     """Health-check every subsystem. The UI uses this to render the dashboard."""
-    out = {}
+    out = {"build": _build_info()}
 
     # Active broker (either/or)
     try:
@@ -1367,7 +1384,8 @@ def api_status():
         out["db"] = {"timescale": False, "error": str(e)[:200]}
 
     # Scheduler
-    out["scheduler"] = {"running": bool(_SCHED["obj"] and _SCHED["obj"].running),
+    out["scheduler"] = {"available": _scheduler_available(),
+                        "running": bool(_SCHED["obj"] and _SCHED["obj"].running),
                         "jobs": [
                             {"id": j.id, "name": j.name, "next": str(j.next_run_time)}
                             for j in (_SCHED["obj"].get_jobs() if _SCHED["obj"] else [])
@@ -1387,8 +1405,21 @@ def api_status():
     return out
 
 
+def _scheduler_available() -> bool:
+    try:
+        from src.scheduler import HAS_APSCHEDULER
+        return bool(HAS_APSCHEDULER)
+    except Exception:
+        return False
+
+
 @app.post("/api/scheduler/start")
 def api_sched_start():
+    if not _scheduler_available():
+        return {"ok": False, "error": "Automatic scheduling isn't available in "
+                                      "this build — APScheduler ships on desktop, "
+                                      "not in the app. You can still trigger each "
+                                      "job manually."}
     from src.scheduler import build_scheduler
     if _SCHED["obj"] and _SCHED["obj"].running:
         return {"ok": True, "already_running": True}

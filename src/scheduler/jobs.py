@@ -9,11 +9,23 @@ Jobs (all in Asia/Kolkata):
 from __future__ import annotations
 
 import pytz
-from apscheduler.schedulers.blocking import BlockingScheduler
-from apscheduler.schedulers.background import BackgroundScheduler
-from apscheduler.triggers.cron import CronTrigger
 
 from src.utils.logger import get_logger
+
+# APScheduler is a desktop-only dependency — it is not shipped in the Android
+# APK, and a phone is the wrong place to run a cron daemon anyway. Importing it
+# at module scope meant `from src.scheduler.jobs import ...` raised
+# ModuleNotFoundError on-device, so even manually triggering a job (which needs
+# none of this) returned a 500. The job functions below are plain callables and
+# must stay importable without it.
+try:
+    from apscheduler.schedulers.background import BackgroundScheduler
+    from apscheduler.schedulers.blocking import BlockingScheduler
+    from apscheduler.triggers.cron import CronTrigger
+    HAS_APSCHEDULER = True
+except ImportError:                                   # pragma: no cover
+    BackgroundScheduler = BlockingScheduler = CronTrigger = None  # type: ignore
+    HAS_APSCHEDULER = False
 
 log = get_logger("scheduler")
 IST = pytz.timezone("Asia/Kolkata")
@@ -98,6 +110,11 @@ def job_eod_report():
 
 # ---------- assembly ----------
 def build_scheduler(background: bool = False):
+    if not HAS_APSCHEDULER:
+        raise RuntimeError(
+            "The scheduler needs APScheduler, which isn't installed in this "
+            "build (it ships on desktop, not in the Android APK). Individual "
+            "jobs can still be triggered manually.")
     Cls = BackgroundScheduler if background else BlockingScheduler
     sched = Cls(timezone=IST)
     sched.add_job(_safe(job_macro_check),   CronTrigger(hour=9,  minute=0,

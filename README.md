@@ -169,6 +169,25 @@ NVIDIA NIM (OpenAI‑compatible) · Upstox & Groww trading APIs.
 
 Every module is independent — import and use any piece without the CLI or agents.
 
+## Testing
+
+```bash
+./run_tests.sh          # both library stacks
+./verify_apk.sh         # prove the APK contains the code you just wrote
+```
+
+The suite runs against **two** stacks: the dev machine's, and the exact one
+Chaquopy ships in the APK (pandas 2.1.3, FastAPI 0.99.1, no scipy, no pyarrow).
+That is not belt-and-braces — several bugs only ever appeared on the phone's
+stack, including a `resample("ME")` alias that arrived in pandas 2.2 and a
+cached pickle that needed pyarrow. Testing only the dev stack sent those to the
+device to be found by hand.
+
+`tests/test_api_smoke.py` walks **every** route with deliberately awkward data —
+NaN, ±Inf, numpy scalars, and price frames whose timezones disagree — and
+asserts two things no endpoint may violate: it must not raise, and its body must
+survive the strict JSON encoder Starlette actually uses.
+
 ## Quick start
 
 ```bash

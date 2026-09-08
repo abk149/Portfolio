@@ -1334,17 +1334,31 @@ fun TerminalScreen() {
     LaunchedEffect(BackendBus.logs.size) {
         if (BackendBus.logs.isNotEmpty()) listState.animateScrollToItem(BackendBus.logs.size - 1)
     }
+    // Ask the engine which code it is running, so a stale install is obvious.
+    LaunchedEffect(BackendBus.state.value) {
+        if (BackendBus.running && BackendBus.backendBuild.value == null) {
+            Api.status().objOrNull()?.optJSONObject("build")?.let { b ->
+                BackendBus.backendBuild.value =
+                    "${b.optString("id")} · ${b.optString("built_at")}"
+            }
+        }
+    }
     Column(Modifier.fillMaxSize().padding(12.dp)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Text("System Terminal", color = OnBg, fontSize = 16.sp, fontWeight = FontWeight.SemiBold,
                 modifier = Modifier.weight(1f))
-            val (lbl, col) = when (BackendBus.state.value) {
+            val (lbl, col2) = when (BackendBus.state.value) {
                 BackendBus.State.RUNNING -> "● RUNNING" to Bull
                 BackendBus.State.STARTING -> "● STARTING" to Warn
                 BackendBus.State.ERROR -> "● ERROR" to Bear
                 else -> "● STOPPED" to Muted
             }
-            Pill(lbl, col)
+            Pill(lbl, col2)
+        }
+        BackendBus.backendBuild.value?.let {
+            Spacer(Modifier.height(4.dp))
+            Text("engine build $it", color = Muted, fontSize = 10.sp,
+                fontFamily = FontFamily.Monospace)
         }
         Spacer(Modifier.height(8.dp))
         LazyColumn(

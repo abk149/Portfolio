@@ -1029,16 +1029,36 @@ class PerformanceAnalyzer:
         """
         log.info("Starting performance analysis …")
 
-        # Current holdings
+        # Current holdings.
+        #
+        # A single holding with a missing quote used to turn the ENTIRE report's
+        # value, P&L and percentage into NaN — one unpriced stock and the whole
+        # Performance tab reads blank. Value what can be valued, fall back to
+        # cost for what can't, and say how many were affected.
         holdings_raw = self.upstox.holdings() or []
-        current_value = sum(
-            float(h.get("quantity", 0)) * float(h.get("last_price", 0))
-            for h in holdings_raw
-        )
-        invested_total = sum(
-            float(h.get("quantity", 0)) * float(h.get("average_price", 0))
-            for h in holdings_raw
-        )
+
+        def _num(v, default=0.0) -> float:
+            try:
+                f = float(v)
+            except (TypeError, ValueError):
+                return default
+            return default if (math.isnan(f) or math.isinf(f)) else f
+
+        current_value = invested_total = 0.0
+        unpriced: list[str] = []
+        for h in holdings_raw:
+            qty = _num(h.get("quantity"))
+            avg = _num(h.get("average_price"))
+            ltp = _num(h.get("last_price"), default=0.0)
+            invested_total += qty * avg
+            if ltp > 0:
+                current_value += qty * ltp
+            else:
+                # No usable quote — hold it at cost rather than at zero, which
+                # would read as a total loss on that position.
+                current_value += qty * avg
+                sym = h.get("tradingsymbol") or h.get("trading_symbol") or "?"
+                unpriced.append(str(sym))
 
         # Trade history
         log.info("Fetching trade history …")
@@ -1111,6 +1131,9 @@ class PerformanceAnalyzer:
                 "first_trade_date": first_trade_date,
                 "total_trades": len(trades),
                 "n_holdings": len(holdings_raw),
+                # Surfaced rather than hidden: these are held at cost, so the
+                # value shown is a floor, not a mark.
+                "unpriced_holdings": unpriced,
             },
         }
 

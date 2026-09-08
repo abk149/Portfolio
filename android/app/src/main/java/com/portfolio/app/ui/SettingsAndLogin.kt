@@ -254,6 +254,13 @@ fun SettingsScreen(openLogin: () -> Unit) {
         SectionCard("About", Muted) {
             Text("Portfolio Quant v$version", color = OnBg, fontSize = 13.sp,
                 fontWeight = FontWeight.SemiBold)
+            // The APK version and the Python engine build are separate things;
+            // showing both makes "is my fix actually installed?" a glance
+            // rather than a rebuild.
+            BackendBus.backendBuild.value?.let {
+                Spacer(Modifier.height(2.dp))
+                Text("engine $it", color = Muted, fontSize = 10.5.sp)
+            }
             Spacer(Modifier.height(4.dp))
             Text("Python engine runs on-device. Broker, LLM and Telegram " +
                 "credentials are stored only in this app's private storage.",
