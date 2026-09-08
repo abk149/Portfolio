@@ -457,6 +457,28 @@ def _capture_recommendations(source: str, items: list[dict],
         get_logger("dashboard").debug(f"recommendation capture failed: {e}")
 
 
+def _capture_quant(result: dict) -> dict:
+    """Record a DR-Quant run's validated names.
+
+    Called from BOTH run paths. The desktop spawns a subprocess and the phone
+    runs it in a thread, and the first version of this hooked only the
+    subprocess branch — so on the device, which is where it matters, DR-Quant
+    picks never reached the ghost queue at all.
+    """
+    try:
+        _capture_recommendations("dr-quant", [
+            {"symbol": v.get("symbol") or v.get("ticker"),
+             "sector": v.get("sector"),
+             "conviction": ("HIGH" if (v.get("health_score") or 0) >= 70
+                            else "MEDIUM"),
+             "rationale": v.get("thesis")}
+            for v in ((result or {}).get("validated") or [])
+        ], run_id=(result or {}).get("run_id"))
+    except Exception as e:
+        get_logger("dashboard").debug(f"quant capture failed: {e}")
+    return result
+
+
 @app.get("/api/recommendations")
 def api_recommendations(status: str | None = None):
     """Everything the engines have suggested, newest first."""
@@ -1988,11 +2010,12 @@ def api_quant_run(body: dict):
             # Import and run the quant engine directly
             from src.scheduler.jobs import job_full_funnel_sync
             try:
-                return job_full_funnel_sync(universe=universe)
+                res = job_full_funnel_sync(universe=universe)
             except ImportError:
                 # If specialized sync job doesn't exist, use common one
                 from src.scheduler.jobs import job_full_funnel
-                return job_full_funnel()
+                res = job_full_funnel()
+            return _capture_quant(res)
 
         _run_job(job_id, _quant_in_process)
         return {"job_id": job_id, "in_process": True}
@@ -2099,18 +2122,7 @@ def api_job(job_id: str):
         if rc == 0 and qj["result"].exists():
             import json as _j
             try:
-                result = _j.loads(qj["result"].read_text())
-                # DR-Quant runs in a subprocess, so this is the one place its
-                # output crosses back into the app. Capture here rather than
-                # asking the user to retype names they were just shown.
-                _capture_recommendations("dr-quant", [
-                    {"symbol": v.get("symbol") or v.get("ticker"),
-                     "sector": v.get("sector"),
-                     "conviction": ("HIGH" if (v.get("health_score") or 0) >= 70
-                                    else "MEDIUM"),
-                     "rationale": v.get("thesis")}
-                    for v in (result.get("validated") or [])
-                ], run_id=result.get("run_id"))
+                result = _capture_quant(_j.loads(qj["result"].read_text()))
                 return {"status": "done", "result": result,
                         "error": None, "exit_code": rc}
             except Exception as e:

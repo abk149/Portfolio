@@ -40,9 +40,20 @@ while IFS= read -r f; do
 done < <(find src -name "*.py" -not -path "*/__pycache__/*")
 [ $missing -eq 0 ] && echo "All src/*.py are present in the bundle."
 
+# Markers are searched in BOTH layers: the Python bundle and the compiled
+# Kotlin (dex). Searching only Python reported UI strings as "missing", which
+# is worse than not checking at all.
+if [ $# -gt 0 ]; then
+  unzip -qo "$APK" "classes*.dex" -d "$WORK/dex" 2>/dev/null || true
+fi
 for marker in "$@"; do
-  if grep -rql "$marker" "$WORK/py" 2>/dev/null; then
-    echo "  ✅ '$marker' found in packaged bytecode"
+  where=""
+  grep -rql "$marker" "$WORK/py" 2>/dev/null && where="python"
+  if grep -rql "$marker" "$WORK/dex" 2>/dev/null; then
+    where="${where:+$where + }kotlin"
+  fi
+  if [ -n "$where" ]; then
+    echo "  ✅ '$marker' found in $where"
   else
     echo "  ❌ '$marker' NOT in the APK — the device would run older code"
     missing=1

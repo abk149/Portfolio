@@ -155,7 +155,22 @@ fun GhostScreen() {
     var confirmReset by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
-    LaunchedEffect(Unit) { if (BackendBus.running && snap == null) GhostBus.refresh() }
+    // Refresh on EVERY visit, not just the first. GhostBus is a singleton, so
+    // the old `if (snap == null)` guard meant the queue was fetched once and
+    // never again — run an engine, come back, and its picks were missing even
+    // though the backend had recorded them.
+    LaunchedEffect(Unit) { if (BackendBus.running) GhostBus.refresh() }
+
+    // And refresh the moment a producing engine finishes, so picks appear even
+    // if you never leave this screen.
+    val producers = listOf(
+        JobBus.state("themes").finishedAt,
+        JobBus.state("quant").finishedAt,
+        JobBus.state("deploy_cash").finishedAt,
+        JobBus.state("alloc_themes").finishedAt,
+        JobBus.state("optimize").finishedAt,
+    )
+    LaunchedEffect(producers) { if (BackendBus.running) GhostBus.refresh() }
 
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
         if (!BackendBus.running) { BackendOfflineHint(); return@Column }
@@ -190,9 +205,20 @@ fun GhostScreen() {
                 color = Muted, fontSize = 12.sp, lineHeight = 17.sp)
             if (pending.isEmpty()) {
                 Spacer(Modifier.height(10.dp))
-                StatusBanner("Nothing waiting. Run Macro Ideas, the DR-Quant " +
-                    "funnel, or the cash optimiser and their picks will appear here.",
+                val everRan = (recs?.optJSONObject("counts")?.length() ?: 0) > 0
+                StatusBanner(
+                    if (everRan)
+                        "Nothing pending — you've acted on everything suggested " +
+                        "so far. Run an engine again for fresh picks."
+                    else
+                        "Nothing waiting yet. Run Macro Ideas, the DR-Quant funnel, " +
+                        "or the cash optimiser and their picks land here automatically.",
                     Muted)
+                Spacer(Modifier.height(8.dp))
+                TextButton(onClick = { GhostBus.refresh() },
+                    contentPadding = PaddingValues(0.dp)) {
+                    Text("↻ Check again", color = AccentHi, fontSize = 12.sp)
+                }
             } else {
                 Spacer(Modifier.height(6.dp))
                 pending.forEach { RecommendationCard(it) }
