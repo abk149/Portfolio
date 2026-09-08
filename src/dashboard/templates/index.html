@@ -14,6 +14,7 @@
     <button data-tab="portfolio" class="active">Portfolio</button>
     <button data-tab="performance">📈 Performance</button>
     <button data-tab="calendar">🗓 Calendar</button>
+    <button data-tab="ghost">👻 Ghost</button>
     <button data-tab="optimize">MPT Optimize</button>
     <button data-tab="screener">Screener</button>
     <button data-tab="intraday">Intraday</button>
@@ -261,6 +262,76 @@
   <div class="card" style="margin-top:18px">
     <h3>🔎 Sources</h3>
     <div id="cal-sources" style="margin-top:10px; color:var(--muted); font-size:12px"></div>
+  </div>
+</section>
+
+<section id="tab-ghost" class="tab">
+  <div style="color:var(--muted); font-size:12px; margin-bottom:14px; line-height:1.55">
+    Paper positions, treated exactly like real ones — same prices, same technicals,
+    same calendar, same sell discipline. Test the system's ideas here before
+    trusting them with money. Entries book at the <b>live price</b>: you don't get
+    to pick the fill, or the record is worthless as a test.
+  </div>
+
+  <div class="card">
+    <h3>👻 Take a paper position</h3>
+    <div class="row" style="margin-top:10px">
+      <label>Symbol <input type="text" id="ghost-sym" placeholder="RELIANCE" style="width:140px"></label>
+      <label>Amount (₹) <input type="number" id="ghost-amt" value="25000" min="500" step="500" style="width:120px"></label>
+      <button class="primary" onclick="ghostBuy()">Invest</button>
+      <span id="ghost-msg" class="status"></span>
+    </div>
+  </div>
+
+  <div id="ghost-kpis" class="kpis" style="margin-top:16px"></div>
+
+  <div class="card" style="margin-top:16px">
+    <div style="display:flex; justify-content:space-between; align-items:center">
+      <h3>📈 If you'd acted on these ideas</h3>
+      <button onclick="ghostCurve()">Build / refresh charts</button>
+    </div>
+    <div style="color:var(--muted); font-size:11px; margin-top:4px">
+      Your real book, the paper positions, and the two together.
+    </div>
+    <div style="position:relative; height:300px; margin-top:10px">
+      <canvas id="ghost-combined-chart"></canvas>
+    </div>
+    <h3 style="margin-top:22px">💰 Total P&L — real plus paper</h3>
+    <div style="position:relative; height:230px; margin-top:8px">
+      <canvas id="ghost-pnl-chart"></canvas>
+    </div>
+    <h3 style="margin-top:22px">👻 Ghost portfolio on its own</h3>
+    <div style="position:relative; height:230px; margin-top:8px">
+      <canvas id="ghost-only-chart"></canvas>
+    </div>
+    <div id="ghost-curve-note" style="color:var(--muted); font-size:11px; margin-top:10px"></div>
+  </div>
+
+  <div class="card" style="margin-top:16px">
+    <div style="display:flex; justify-content:space-between; align-items:center">
+      <h3>🔍 When to sell</h3>
+      <button onclick="ghostReview()">Review my positions</button>
+    </div>
+    <div style="color:var(--muted); font-size:12px; margin-top:4px; line-height:1.55">
+      Runs the same exit review a real position would get — RSI, moving averages,
+      give-back from the high, time held — then weighs those against the market
+      regime and what's on the calendar.
+    </div>
+    <div id="ghost-signals" style="margin-top:12px"></div>
+    <div id="ghost-ai" class="ai-out"></div>
+  </div>
+
+  <div class="card" style="margin-top:16px">
+    <h3>Open paper positions</h3>
+    <div id="ghost-open" style="margin-top:10px"></div>
+  </div>
+
+  <div class="card" style="margin-top:16px">
+    <h3>Closed — the honest track record</h3>
+    <div style="color:var(--muted); font-size:11px">
+      Kept deliberately: a paper record that only shows the winners tells you nothing.
+    </div>
+    <div id="ghost-closed" style="margin-top:10px"></div>
   </div>
 </section>
 

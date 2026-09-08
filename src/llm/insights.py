@@ -372,3 +372,89 @@ One sentence: is this worth acting on before the date, or just watching?"""
     out = _complete(system, prompt)
     out["event"] = {k: event.get(k) for k in ("date", "title", "region", "importance")}
     return out
+
+
+# ---------------------------------------------------------------------------
+# Application 5 — sell discipline for the paper book
+# ---------------------------------------------------------------------------
+
+def ghost_review(sig: dict, cal: Optional[dict] = None) -> dict:
+    """Should each paper position be held, trimmed or sold?
+
+    The exit signals (RSI, moving averages, drawdown from peak, time held) are
+    computed deterministically before this is called. The model's job is to
+    weigh them against the market regime and what is on the calendar — not to
+    invent technical readings, which it would do badly and unrepeatably.
+    """
+    rows = (sig or {}).get("positions") or []
+    if not rows:
+        return {"ok": False, "error": "No open ghost positions to review."}
+
+    def _fmt(r: dict) -> str:
+        bits = [
+            f"{r['symbol']}: {r['qty']} sh, entry ₹{r['entry_price']} on "
+            f"{r['entry_date']}, now ₹{r.get('current')} ({r.get('gain_pct'):+}%)",
+            f"    RSI {r.get('rsi')} · 50DMA ₹{r.get('dma50')} · 200DMA ₹{r.get('dma200')}",
+        ]
+        if r.get("drawdown_from_peak_pct") is not None:
+            bits.append(f"    peak since entry ₹{r.get('peak_since_entry')} "
+                        f"({r['drawdown_from_peak_pct']:+}% off it)")
+        if r.get("atr_stop"):
+            bits.append(f"    2-ATR stop would sit at ₹{r['atr_stop']}")
+        bits.append("    signals: " + (", ".join(r["flags"]) if r["flags"] else "none"))
+        for reason in r.get("reasons", []):
+            bits.append(f"      - {reason}")
+        return "\n".join(bits)
+
+    macro = sig.get("macro") or {}
+    macro_str = (f"Regime {macro.get('mode', '?')} · India VIX {macro.get('india_vix')} · "
+                 f"USD/INR {macro.get('usdinr')} · Nifty {macro.get('nifty_change_pct')}% today")
+    events = sig.get("upcoming_events") or []
+    events_str = "\n".join(
+        f"  {e['date']} [{e.get('importance')}] {e['title']}" for e in events[:8]
+    ) or "  (none loaded)"
+
+    s = sig.get("summary") or {}
+    system = (
+        "You are running the sell discipline on a portfolio. You are given, for "
+        "each position, exit signals that have ALREADY been computed from price "
+        "data — treat those as fact and do not recompute or contradict them. "
+        "Your job is to weigh them against the market regime and the events "
+        "ahead, and give one clear instruction per position. Be decisive: HOLD, "
+        "TRIM or SELL, with the reason in one or two sentences. Selling a "
+        "winner to bank a gain and cutting a loser are both legitimate; so is "
+        "doing nothing. Never invent a price, a ratio or a date.")
+
+    prompt = f"""PAPER PORTFOLIO REVIEW
+
+Book: {s.get('n_open')} open positions, ₹{s.get('invested')} invested,
+worth ₹{s.get('current_value')} (unrealised ₹{s.get('unrealised_pnl')},
+realised so far ₹{s.get('realised_pnl')}).
+
+MARKET BACKDROP: {macro_str}
+
+HIGH-IMPACT EVENTS AHEAD:
+{events_str}
+
+POSITIONS AND THEIR COMPUTED SIGNALS:
+{chr(10).join(_fmt(r) for r in rows)}
+
+Answer in markdown:
+
+## Calls
+One line per position, in this exact shape:
+**SYMBOL — HOLD/TRIM/SELL** — reason, citing the specific signal or event.
+
+## Event exposure
+Which of these positions is most exposed to the events listed above, and what
+you would do before the date.
+
+## The book overall
+Two sentences: is this collection working, and what is the one change that
+would most improve it?
+
+Under 350 words."""
+    out = _complete(system, prompt)
+    out["grounding"] = {"positions": len(rows), "events": len(events),
+                        "has_macro": bool(macro)}
+    return out

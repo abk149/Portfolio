@@ -1802,3 +1802,157 @@ document.querySelectorAll("#cal-horizon .filter-btn").forEach(b => {
 document.querySelector('[data-tab="calendar"]')?.addEventListener("click", () => {
   if (!window._calInited) { window._calInited = true; loadCalendar(false); }
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Ghost (paper) portfolio
+// ═══════════════════════════════════════════════════════════════════════════
+let ghostCombinedChart, ghostPnlChart, ghostOnlyChart;
+
+async function ghostLoad() {
+  const d = await fetch("/api/ghost").then(r => r.json()).catch(() => null);
+  if (!d) return;
+  const s = d.summary || {};
+  $("ghost-kpis").innerHTML = [
+    kpi("Invested", inr(s.invested)),
+    kpi("Value now", inr(s.current_value)),
+    kpi("Unrealised", inr(s.unrealised_pnl), cls(s.unrealised_pnl)),
+    kpi("Realised", inr(s.realised_pnl), cls(s.realised_pnl)),
+    kpi("Total paper P&L", inr(s.total_pnl), cls(s.total_pnl)),
+    kpi("Return", fmt(s.unrealised_pnl_pct) + "%", cls(s.unrealised_pnl_pct)),
+  ].join("");
+
+  $("ghost-open").innerHTML = (d.open || []).length
+    ? table(d.open, [
+        {key: "symbol"},
+        {key: "qty", title: "Qty"},
+        {key: "entry_price", title: "Entry", fmt: v => inr(v)},
+        {key: "last_price", title: "Now", fmt: v => inr(v)},
+        {key: "pnl", title: "P&L", fmt: v => inr(v), cls: v => cls(v)},
+        {key: "pnl_pct", title: "%", fmt: v => fmt(v) + "%", cls: v => cls(v)},
+        {key: "held_days", title: "Days"},
+        {key: "source", title: "From"},
+        {key: "id", title: "", fmt: (v) =>
+          `<button onclick="ghostSell('${v}')">Sell</button>`},
+      ])
+    : "<div style='color:var(--muted)'>No open paper positions.</div>";
+
+  $("ghost-closed").innerHTML = (d.closed || []).length
+    ? table(d.closed, [
+        {key: "symbol"}, {key: "qty", title: "Qty"},
+        {key: "entry_price", title: "Entry", fmt: v => inr(v)},
+        {key: "exit_price", title: "Exit", fmt: v => inr(v)},
+        {key: "pnl", title: "P&L", fmt: v => inr(v), cls: v => cls(v)},
+        {key: "pnl_pct", title: "%", fmt: v => fmt(v) + "%", cls: v => cls(v)},
+        {key: "exit_date", title: "Closed"},
+      ])
+    : "<div style='color:var(--muted)'>Nothing closed yet.</div>";
+}
+
+async function ghostBuy() {
+  const symbol = ($("ghost-sym").value || "").trim().toUpperCase();
+  const amount = parseFloat($("ghost-amt").value);
+  if (!symbol || !(amount > 0)) { toast("Symbol and amount, please"); return; }
+  $("ghost-msg").textContent = "Getting the live price…";
+  const r = await fetch("/api/ghost/buy", {
+    method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({symbol, amount, source: "manual"}),
+  }).then(r => r.json());
+  if (r.error) { $("ghost-msg").innerHTML = `<span class="neg">${escapeHtml(r.error)}</span>`; return; }
+  const p = r.position;
+  $("ghost-msg").innerHTML = `<span class="pos">Bought ${p.qty} ${p.symbol} at ${inr(p.entry_price)}</span>`;
+  $("ghost-sym").value = "";
+  ghostLoad();
+}
+
+async function ghostSell(id) {
+  await fetch("/api/ghost/sell", {
+    method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({id}),
+  });
+  ghostLoad();
+}
+
+async function ghostCurve() {
+  $("ghost-curve-note").textContent = "Building…";
+  try {
+    const {job_id} = await fetch("/api/ghost/curve", {method: "POST"}).then(r => r.json());
+    const c = await pollJob(job_id);
+    const pts = c.points || [];
+    const labels = pts.map(p => p.date);
+
+    ghostCombinedChart?.destroy();
+    ghostCombinedChart = new Chart($("ghost-combined-chart"), _lineCfg(labels, [
+      {label: "Combined", data: pts.map(p => p.combined), borderColor: "#58a6ff",
+       backgroundColor: "rgba(88,166,255,.12)", fill: true},
+      {label: "Real portfolio", data: pts.map(p => p.portfolio), borderColor: "#8b949e",
+       borderDash: [6, 4]},
+      {label: "Ghost only", data: pts.map(p => p.ghost), borderColor: "#d29922"},
+    ]));
+
+    ghostPnlChart?.destroy();
+    ghostPnlChart = new Chart($("ghost-pnl-chart"), _lineCfg(labels, [
+      {label: "Total P&L (real + paper)", data: pts.map(p => p.total_pnl),
+       borderColor: "#3fb950", backgroundColor: "rgba(63,185,80,.12)", fill: true},
+      {label: "Real P&L only", data: pts.map(p => p.real_pnl), borderColor: "#8b949e",
+       borderDash: [6, 4]},
+    ]));
+
+    const g = (c.ghost && c.ghost.points) || [];
+    ghostOnlyChart?.destroy();
+    ghostOnlyChart = new Chart($("ghost-only-chart"), _lineCfg(g.map(p => p.date), [
+      {label: "Ghost value", data: g.map(p => p.value), borderColor: "#d29922",
+       backgroundColor: "rgba(210,153,34,.12)", fill: true},
+      {label: "Invested", data: g.map(p => p.invested), borderColor: "#8b949e",
+       borderDash: [6, 4]},
+    ]));
+
+    $("ghost-curve-note").textContent = (c.has_real ? "" :
+      "The real leg is flat because the performance analysis hasn't run yet — " +
+      "run it on the Performance tab and rebuild. ") + (c.note || "");
+  } catch (e) {
+    $("ghost-curve-note").innerHTML = `<span class="neg">${e.message}</span>`;
+  }
+}
+
+async function ghostReview() {
+  $("ghost-signals").innerHTML = "<span class='spin'></span> reviewing …";
+  $("ghost-ai").innerHTML = "";
+  try {
+    const {job_id} = await fetch("/api/ghost/review", {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({with_ai: true}),
+    }).then(r => r.json());
+    const r = await pollJob(job_id);
+    const rows = (r.signals && r.signals.positions) || [];
+    $("ghost-signals").innerHTML = rows.length ? rows.map(p => `
+      <div class="vcard">
+        <div class="vcard-head">
+          <div><div class="vcard-sym">${escapeHtml(p.symbol)}</div>
+            <div class="vcard-sector">RSI ${fmt(p.rsi, 1)} · 50DMA ${inr(p.dma50)} · 200DMA ${inr(p.dma200)}</div>
+          </div>
+          <div class="vcard-score ${cls(p.gain_pct)}">
+            <div class="v">${(p.gain_pct >= 0 ? "+" : "") + fmt(p.gain_pct)}%</div>
+            <div class="l">SINCE ENTRY</div>
+          </div>
+        </div>
+        ${(p.flags || []).length
+          ? `<div class="cal-tags" style="margin-top:10px">` + p.flags.map(f =>
+              `<span class="cal-tag" style="color:#d29922;border-color:#d29922">${escapeHtml(f)}</span>`).join("") + `</div>`
+          : ""}
+        <div class="vcard-risks" style="color:var(--muted)">${
+          (p.reasons || []).map(x => `<div>• ${escapeHtml(x)}</div>`).join("")}</div>
+      </div>`).join("")
+      : "<div style='color:var(--muted)'>No open paper positions to review.</div>";
+
+    const ai = r.ai || {};
+    $("ghost-ai").innerHTML = (ai.ok && ai.text)
+      ? mdToHtml(ai.text)
+      : `<div class="neg">${escapeHtml(ai.error || "No review returned.")}</div>`;
+  } catch (e) {
+    $("ghost-signals").innerHTML = `<span class="neg">${e.message}</span>`;
+  }
+}
+
+document.querySelector('[data-tab="ghost"]')?.addEventListener("click", () => {
+  if (!window._ghostInited) { window._ghostInited = true; ghostLoad(); }
+});

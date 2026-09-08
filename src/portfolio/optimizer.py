@@ -137,7 +137,18 @@ class PortfolioOptimizer:
             try:
                 df = self.md.daily(yf_t, ikey, lookback_days=lookback_days)
                 if df is not None and not df.empty:
-                    series[yf_t] = df["close"]
+                    close = df["close"]
+                    # Belt and braces: this concat is where mixed broker
+                    # (tz-aware) and Yahoo (tz-naive) indices used to raise
+                    # "Cannot join tz-naive with tz-aware DatetimeIndex".
+                    # MarketData normalises now, but a series can reach here
+                    # from elsewhere, and one bad index poisons the whole join.
+                    idx = pd.to_datetime(close.index)
+                    if getattr(idx, "tz", None) is not None:
+                        idx = idx.tz_convert("Asia/Kolkata").tz_localize(None)
+                    close = close.copy()
+                    close.index = idx.normalize()
+                    series[yf_t] = close[~close.index.duplicated(keep="last")]
             except Exception as e:
                 log.debug(f"return load failed {yf_t}: {e}")
         if not series:

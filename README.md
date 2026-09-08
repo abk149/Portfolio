@@ -20,6 +20,15 @@ the desktop and the phone.
 - **Performance & attribution** — reconstructs your portfolio value **over time**
   from executed orders, money‑weighted return (**XIRR**), winners/losers, and
   "sold‑too‑early" opportunity misses.
+- **Ghost portfolio (paper trading)** — take any recommendation on paper with one
+  tap; it books at the **live price** (you don't get to pick the fill, or the
+  record proves nothing) and is then tracked with the same machinery as the real
+  book. Two charts: your real book, the paper book and the two combined; and the
+  ghost book standalone. Closed positions keep their realised P&L, so the track
+  record includes what went wrong. A **sell review** runs the same exit
+  discipline a real position gets — RSI, moving averages, give-back from the
+  high, time held, all computed deterministically — then weighs those against
+  the market regime and the events on the calendar.
 - **Benchmark vs the index** — **time‑weighted** return (deposits and
   withdrawals are stripped out, so new money is never mistaken for performance)
   against NIFTY 50 / SENSEX / NIFTY BANK / NIFTY 100: rebased growth curve,

@@ -136,6 +136,17 @@ object Api {
     suspend fun aiEventImpact(event: JSONObject) =
         post("/api/ai/event-impact", JSONObject().put("event", event))
 
+    // ── Ghost (paper) portfolio ──
+    suspend fun ghost() = get("/api/ghost")
+    suspend fun ghostBuy(symbol: String, amount: Double, source: String, note: String = "") =
+        post("/api/ghost/buy", JSONObject()
+            .put("symbol", symbol).put("amount", amount)
+            .put("source", source).put("note", note))
+    suspend fun ghostSell(id: String) = post("/api/ghost/sell", JSONObject().put("id", id))
+    suspend fun ghostReset() = post("/api/ghost/reset")
+    suspend fun ghostCurve() = post("/api/ghost/curve")
+    suspend fun ghostReview() = post("/api/ghost/review", JSONObject().put("with_ai", true))
+
     // ── Macro Ideas / themes ──
     suspend fun themes(days: Int) = post("/api/themes", JSONObject().put("days", days))
     suspend fun deepDive(symbol: String) =

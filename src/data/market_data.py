@@ -72,6 +72,34 @@ def reset_data_breaker():
     _DATA_BREAKER.fails = 0
 
 
+def _normalise_daily_index(df):
+    """Force a daily OHLCV frame onto a tz-naive, midnight-normalised index.
+
+    The broker returns ISO timestamps with +05:30, so pandas builds a tz-AWARE
+    index; the Yahoo fallback returns epoch seconds and builds a tz-NAIVE one.
+    Any caller that combined the two — the cash-allocation optimiser concatenates
+    one series per ticker, and a mixed set is the normal case as soon as one
+    ticker falls back — hit "Cannot join tz-naive with tz-aware DatetimeIndex".
+
+    Daily bars carry no meaningful intraday time, so the timezone is noise.
+    Dropping it here means every consumer sees one consistent index.
+    """
+    if df is None or not hasattr(df, "index") or len(df) == 0:
+        return df
+    try:
+        idx = pd.to_datetime(df.index)
+        if getattr(idx, "tz", None) is not None:
+            # Convert to IST first so a late-evening UTC stamp doesn't land on
+            # the previous calendar day, then drop the zone.
+            idx = idx.tz_convert("Asia/Kolkata").tz_localize(None)
+        df = df.copy()
+        df.index = idx.normalize()
+        return df[~df.index.duplicated(keep="last")].sort_index()
+    except Exception as e:
+        log.debug(f"daily index normalise failed: {e}")
+        return df
+
+
 class MarketData:
     def __init__(self, upstox: Optional[UpstoxClient] = None):
         if upstox is not None:
@@ -144,7 +172,10 @@ class MarketData:
             # entitled, no Upstox auth, breaker open, etc.) → free public source.
             return self._yahoo_daily(yf_ticker, lookback_days)
 
-        return get_or_set("daily", cache_key, ttl_seconds=60 * 60 * 6, fn=_fetch)
+        # Normalise on the way OUT, not inside _fetch — a cached frame from an
+        # earlier run can still carry the old index type.
+        return _normalise_daily_index(
+            get_or_set("daily", cache_key, ttl_seconds=60 * 60 * 6, fn=_fetch))
 
     @staticmethod
     def _yahoo_daily(yf_ticker: Optional[str], lookback_days: int = 365) -> pd.DataFrame:

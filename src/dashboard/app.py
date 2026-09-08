@@ -411,6 +411,78 @@ def api_portfolio_benchmark(body: dict | None = None):
         return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
 
+# ---------------- ghost (paper) portfolio ----------------
+@app.get("/api/ghost")
+def api_ghost():
+    """Open + closed paper positions, marked to market."""
+    from src.portfolio.ghost import snapshot
+    return _scrub_for_json(snapshot())
+
+
+@app.post("/api/ghost/buy")
+def api_ghost_buy(body: dict):
+    """Take a paper position at the prevailing price."""
+    from src.portfolio.ghost import buy
+    return _scrub_for_json(buy(
+        symbol=body.get("symbol", ""),
+        amount=body.get("amount"),
+        qty=body.get("qty"),
+        note=body.get("note", ""),
+        source=body.get("source", "manual"),
+    ))
+
+
+@app.post("/api/ghost/sell")
+def api_ghost_sell(body: dict):
+    from src.portfolio.ghost import sell
+    return _scrub_for_json(sell(body.get("id", "")))
+
+
+@app.post("/api/ghost/reset")
+def api_ghost_reset():
+    from src.portfolio.ghost import reset
+    return reset()
+
+
+@app.post("/api/ghost/curve")
+def api_ghost_curve():
+    """Ghost curve alone, and combined with the real book (background job)."""
+    job_id = uuid.uuid4().hex[:8]
+
+    def _do():
+        from src.portfolio.ghost import combined_curve
+        perf = _PERF_CACHE.get("data") or {}
+        return _scrub_for_json(combined_curve(perf.get("equity_curve")))
+
+    _run_job(job_id, _do)
+    return {"job_id": job_id}
+
+
+@app.post("/api/ghost/review")
+def api_ghost_review(body: dict | None = None):
+    """Sell discipline: computed exit signals + an LLM call on top."""
+    body = body or {}
+    job_id = uuid.uuid4().hex[:8]
+
+    def _do():
+        from src.portfolio.ghost import signals
+        cal = _CAL_CACHE.get("data")
+        if cal is None:
+            try:
+                cal = _calendar(days_ahead=30, days_back=2)
+            except Exception as e:
+                get_logger("dashboard").debug(f"ghost review calendar failed: {e}")
+        sig = signals(calendar=cal)
+        out = {"signals": _scrub_for_json(sig)}
+        if body.get("with_ai", True):
+            from src.llm.insights import ghost_review
+            out["ai"] = ghost_review(sig, cal)
+        return out
+
+    _run_job(job_id, _do)
+    return {"job_id": job_id}
+
+
 # ---------------- news source diagnostics ----------------
 @app.get("/api/news/health")
 def api_news_health(refresh: bool = False):

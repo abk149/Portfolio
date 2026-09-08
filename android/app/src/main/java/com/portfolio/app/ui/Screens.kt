@@ -28,7 +28,7 @@ import org.json.JSONObject
 
 private val UNIVERSES = listOf("nifty50", "nifty100", "all_nse")
 
-private fun arr(o: JSONObject?, key: String): JSONArray? =
+internal fun arr(o: JSONObject?, key: String): JSONArray? =
     o?.optJSONArray(key) ?: o?.optJSONObject(key)?.optJSONArray("array")
 
 // Allocation records → (label, value) pie slices. Label = first non-numeric
@@ -408,6 +408,8 @@ private fun ValidatedCard(v: JSONObject, onDeepDive: () -> Unit) {
         TextButton(onClick = onDeepDive, contentPadding = PaddingValues(0.dp)) {
             Text("🔍 Deep dive ${v.optString("symbol")}", color = AccentHi, fontSize = 12.sp)
         }
+        // Take the idea on paper without leaving the card.
+        GhostInvestRow(v.optString("symbol"), source = "dr-quant")
     }
 }
 
@@ -507,6 +509,8 @@ fun ThemesScreen() {
                         Spacer(Modifier.height(8.dp))
                         Text(p.optString("thesis", ""), color = OnBg.copy(alpha = 0.9f),
                             fontSize = 13.sp, lineHeight = 18.sp)
+                        Spacer(Modifier.height(6.dp))
+                        GhostInvestRow(sym, source = "ideas")
                     }
                 }
 
@@ -793,8 +797,8 @@ private fun filterByQuadrant(arr: JSONArray, q: Quadrant?): JSONArray {
 // ─────────────────────────────────────────────────────────────────────────────
 @Composable
 fun AnalysisScreen() {
-    var sub by remember { mutableStateOf("Optimize") }
-    val tabs = listOf("Optimize", "Screener", "Intraday", "Performance", "KB")
+    var sub by remember { mutableStateOf("Ghost") }
+    val tabs = listOf("Ghost", "Optimize", "Screener", "Intraday", "Performance", "KB")
     Column(Modifier.fillMaxSize()) {
         ScrollableTabRow(
             selectedTabIndex = tabs.indexOf(sub),
@@ -807,6 +811,7 @@ fun AnalysisScreen() {
         }
         Box(Modifier.weight(1f)) {
             when (sub) {
+                "Ghost" -> GhostScreen()
                 "Optimize" -> OptimizeTab()
                 "Screener" -> ScreenerTab()
                 "Intraday" -> IntradayTab()
@@ -1496,6 +1501,14 @@ fun DeepDiveScreen(symbol: String) {
                             color = Muted, fontSize = 10.sp)
                     }
                 }
+            }
+
+            SectionCard("Take it on paper", Bull) {
+                Text("Book this at the live price and track it in the ghost " +
+                    "portfolio — the system will then review it for exits like a " +
+                    "real position.", color = Muted, fontSize = 11.sp, lineHeight = 16.sp)
+                Spacer(Modifier.height(8.dp))
+                GhostInvestRow(symbol, source = "deep-dive")
             }
 
             SectionCard("Quant entry", Bull) {

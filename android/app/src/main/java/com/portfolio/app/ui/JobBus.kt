@@ -71,6 +71,8 @@ object JobBus {
         "ai_brief" to "AI morning brief",
         "ai_perf_review" to "AI performance review",
         "ai_risk_review" to "AI risk review",
+        "ghost_curve" to "Ghost portfolio charts",
+        "ghost_review" to "Ghost sell review",
     )
 
     private fun labelFor(key: String): String = when {
