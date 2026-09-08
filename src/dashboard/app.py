@@ -551,27 +551,53 @@ def api_recommendation_take(body: dict):
     return _scrub_for_json(res)
 
 
+# Progress for the size+research pass, which can run for minutes.
+_REC_PROGRESS: dict[str, dict] = {}
+
+
+@app.get("/api/recommendations/progress/{job_id}")
+def api_recommendations_progress(job_id: str):
+    job = JOBS.get(job_id)
+    return {"ok": True, "job_id": job_id,
+            "status": (job or {}).get("status", "unknown"),
+            "progress": _REC_PROGRESS.get(job_id, {})}
+
+
 @app.post("/api/recommendations/optimize")
 def api_recommendations_optimize(body: dict):
-    """Size the whole pending queue against the portfolio you actually hold.
+    """Size the pending queue against your book, and research every name.
 
-    Engines size their ideas inconsistently — the cash optimiser thinks in
-    weights of your book, Macro Ideas and DR-Quant don't size at all — so the
-    queue mixed "₹25,000" (a UI default) with real allocations. This runs every
-    pending name through the same buy-only optimiser, against your real
-    holdings, and writes one consistent size back onto each.
+    Two jobs in one action because they answer one question — "should this go
+    in, and how much of it":
+
+      * SIZING runs every pending name through the same buy-only optimiser
+        against your real holdings, then converts the rupee allocation into
+        WHOLE SHARES at the live price. An optimiser works in continuous
+        weights and will happily return ₹400 for a ₹600 stock, which is not a
+        placeable instruction.
+      * RESEARCH assembles a full dossier per name — fundamentals, the last
+        filings, the price model, the macro regime, scheduled events, news, and
+        social that named sources corroborate — and asks for one judgement over
+        the lot. The ghost book is a rehearsal for real money; a name shouldn't
+        enter it on a one-line thesis.
     """
     cash = float(body.get("cash") or 0)
     if cash <= 0:
         return {"error": "How much are you putting in? Give an amount to size against."}
     max_weight = float(body.get("max_weight", 0.25))
+    with_research = bool(body.get("research", True))
     job_id = uuid.uuid4().hex[:8]
+
+    def _progress(**kw):
+        _REC_PROGRESS[job_id] = {**_REC_PROGRESS.get(job_id, {}), **kw}
 
     def _do():
         from src.portfolio import PortfolioManager, PortfolioOptimizer
         from src.portfolio.recommendations import apply_sizing, list_all
+        from src.portfolio.sizing import to_whole_shares
 
-        pending = [i for i in list_all("pending")["items"]]
+        _progress(stage="sizing", message="Reading your holdings…", pct=0)
+        pending = list_all("pending")["items"]
         symbols = sorted({i["symbol"] for i in pending})
         if not symbols:
             return {"error": "Nothing pending to size. Run an engine first."}
@@ -589,57 +615,87 @@ def api_recommendations_optimize(body: dict):
                 if sym:
                     held[f"{sym}.NS"] = float(row.get("current_value", 0) or 0)
 
+        _progress(stage="sizing", message="Optimising against your book…", pct=5)
         res = PortfolioOptimizer().deploy_cash(
-            current_value_by_yf=held,
-            cash_to_deploy=cash,
-            candidates_extra=[f"{s}.NS" for s in symbols],
-            max_weight=max_weight,
-        )
+            current_value_by_yf=held, cash_to_deploy=cash,
+            candidates_extra=[f"{s}.NS" for s in symbols], max_weight=max_weight)
         if res.get("error"):
             return res
 
-        # Price each buy so the queue can show whole shares, not just rupees.
         try:
             from src.data import MarketData
             md = MarketData()
+            price_of = md.ltp
         except Exception:
-            md = None
+            price_of = lambda t: None                       # noqa: E731
 
-        funded = {}
-        for b in (res.get("buys") or []):
-            sym = (b.get("ticker") or "").replace(".NS", "").replace(".BO", "")
-            amount = float(b.get("buy_inr") or 0)
-            px = None
-            if md is not None:
-                try:
-                    px = md.ltp(b.get("ticker", ""))
-                except Exception:
-                    px = None
-            funded[sym] = {
-                "amount": round(amount, 0),
-                "price": round(float(px), 2) if px else None,
-                "shares": int(amount // px) if px and px > 0 else None,
-                "weight_pct": b.get("final_weight_pct"),
-                "note": None,
-            }
+        sized = to_whole_shares(res.get("buys") or [], price_of, cash)
 
-        # A name the optimiser wouldn't fund is a real answer, not a gap.
+        funded: dict[str, dict] = {}
+        for a in sized["allocations"]:
+            funded[a["symbol"]] = {
+                "amount": a["amount"], "price": a["price"], "shares": a["shares"],
+                "weight_pct": a.get("weight_pct"), "note": None}
+        for a in sized["unaffordable"]:
+            funded[a["symbol"]] = {
+                "amount": 0, "price": a["price"], "shares": 0,
+                "weight_pct": a.get("weight_pct"), "note": a["reason"]}
+        for u in sized["unpriced"]:
+            funded[u["symbol"]] = {
+                "amount": 0, "price": None, "shares": 0, "weight_pct": 0,
+                "note": u["reason"]}
         for sym in symbols:
-            if sym not in funded:
-                funded[sym] = {
-                    "amount": 0, "price": None, "shares": 0, "weight_pct": 0.0,
-                    "note": "The optimiser wouldn't fund this alongside what you "
-                            "already hold — it adds risk without enough return.",
-                }
+            funded.setdefault(sym, {
+                "amount": 0, "price": None, "shares": 0, "weight_pct": 0.0,
+                "note": "The optimiser wouldn't fund this alongside what you "
+                        "already hold — it adds risk without enough return."})
 
         apply_sizing(funded, cash, max_weight)
-        return _scrub_for_json({
+
+        out = {
             "ok": True, "cash": cash, "max_weight": max_weight,
             "sized": len(funded),
-            "funded": sum(1 for f in funded.values() if (f["amount"] or 0) > 0),
+            "funded": sum(1 for f in funded.values() if (f["shares"] or 0) > 0),
+            "totals": sized["totals"], "sizing_note": sized["note"],
+            "unaffordable": sized["unaffordable"], "unpriced": sized["unpriced"],
             "before": res.get("before"), "after": res.get("after"),
             "sharpe_uplift": res.get("sharpe_uplift"),
-        })
+        }
+
+        if not with_research:
+            _progress(stage="done", pct=100, message="Sized.")
+            return _scrub_for_json(out)
+
+        # Research every name we'd actually buy, plus any the optimiser
+        # declined — knowing WHY it declined is worth the same look.
+        from src.portfolio.research import research
+        from src.portfolio.recommendations import attach_research
+        cal = _CAL_CACHE.get("data")
+        macro = None
+        try:
+            from src.tools.macro import MacroSnapshot
+            macro = MacroSnapshot().market_mode()
+        except Exception as e:
+            get_logger("dashboard").debug(f"macro for research failed: {e}")
+
+        total = len(symbols)
+        done = 0
+        researched = {}
+        for sym in symbols:
+            done += 1
+            _progress(stage="research", pct=round(10 + 88 * done / total, 1),
+                      message=f"Researching {sym} ({done} of {total})",
+                      symbol=sym, done=done, total=total)
+            try:
+                researched[sym] = research(sym, macro=macro, calendar=cal)
+            except Exception as e:
+                get_logger("dashboard").debug(f"research {sym} failed: {e}")
+                researched[sym] = {"symbol": sym, "error": str(e)[:200]}
+        attach_research(researched)
+        out["researched"] = len(researched)
+        _progress(stage="done", pct=100,
+                  message=f"Sized {len(funded)} and researched {total}.")
+        return _scrub_for_json(out)
 
     _run_job(job_id, _do)
     return {"job_id": job_id}

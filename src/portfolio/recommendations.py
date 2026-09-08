@@ -171,6 +171,26 @@ def apply_sizing(sized: dict, cash: float, max_weight: float) -> dict:
     return {"ok": True, "sized": touched, "cash": cash}
 
 
+def attach_research(dossiers: dict) -> dict:
+    """Store a full research dossier alongside each pending recommendation."""
+    stamp = datetime.now().isoformat(timespec="seconds")
+    with _LOCK:
+        data = _load()
+        n = 0
+        for i in data["items"]:
+            if i.get("status") != "pending":
+                continue
+            d = dossiers.get(i["symbol"])
+            if not d:
+                continue
+            i["research"] = d
+            i["researched_at"] = stamp
+            n += 1
+        if n:
+            _save(data)
+    return {"ok": True, "attached": n}
+
+
 def prune(max_age_days: int = 60) -> dict:
     """Drop recommendations past their shelf life.
 

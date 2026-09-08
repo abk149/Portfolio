@@ -28,8 +28,15 @@ the desktop and the phone.
   listening to. The queue can be **sized against your real holdings** — every
   pending idea goes through the same buy-only optimiser, so a Macro Ideas pick
   and an optimiser pick are quoted in one currency (₹, whole shares, and share
-  of the book) instead of a flat default beside a real allocation. A name the
-  optimiser won't fund alongside what you own says so, which is an answer — P&L, return and hit rate per source, with your own manual picks
+  of the book) instead of a flat default beside a real allocation. Sizes are in
+  **whole shares at the live price** — an optimiser works in continuous weights
+  and will happily return ₹400 for a ₹600 stock, which is not a placeable
+  instruction — and the basket always stays inside the budget. The same action
+  builds a **full research dossier** per name: fundamentals with provenance, the
+  last filings, the quant entry model, the macro regime, scheduled events, news,
+  and social that named sources corroborate, ending in one judgement over the
+  lot with its risks and what would change it. A name the optimiser won't fund
+  alongside what you own says so, which is an answer — P&L, return and hit rate per source, with your own manual picks
   tracked separately so they can't be credited to an engine. Positions book at
   the **live price** (you don't get to pick the fill, or the record proves
   nothing) and are then tracked with the same machinery as the real book. Two charts: your real book, the paper book and the two combined; and the

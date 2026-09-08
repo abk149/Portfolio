@@ -145,9 +145,12 @@ object Api {
         })
     suspend fun recommendationDismiss(id: String) =
         post("/api/recommendations/dismiss", JSONObject().put("id", id))
-    suspend fun recommendationsOptimize(cash: Double, maxWeight: Double = 0.25) =
-        post("/api/recommendations/optimize",
-            JSONObject().put("cash", cash).put("max_weight", maxWeight))
+    suspend fun recommendationsOptimize(cash: Double, maxWeight: Double = 0.25,
+                                       research: Boolean = true) =
+        post("/api/recommendations/optimize", JSONObject()
+            .put("cash", cash).put("max_weight", maxWeight).put("research", research))
+    suspend fun recommendationsProgress(jobId: String) =
+        get("/api/recommendations/progress/$jobId")
     suspend fun recommendationsClear(which: String = "dismissed") =
         post("/api/recommendations/clear", JSONObject().put("which", which))
 

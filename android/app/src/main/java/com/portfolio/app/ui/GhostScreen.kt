@@ -12,6 +12,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -224,17 +225,32 @@ fun GhostScreen() {
                             val amt = sizeCash.toDoubleOrNull() ?: 0.0
                             if (amt > 0) {
                                 JobBus.clear("size_recs")
-                                JobBus.run("size_recs",
-                                    "Sizing every pending idea against your holdings…",
-                                    maxSecs = 300) { Api.recommendationsOptimize(amt) }
+                                JobBus.run(
+                                    key = "size_recs",
+                                    status = "Sizing and researching every pending idea…",
+                                    maxSecs = 900,          // full research per name is slow
+                                    onTick = { id, st ->
+                                        Api.recommendationsProgress(id).objOrNull()
+                                            ?.optJSONObject("progress")?.let { pr ->
+                                                val pct = (pr.opt("pct") as? Number)?.toFloat()
+                                                st.progress = pct?.let { it / 100f }
+                                                st.detail = pr.optString("message")
+                                                    .takeIf { it.isNotBlank() }
+                                            }
+                                    },
+                                ) { Api.recommendationsOptimize(amt) }
                             }
                         },
                         enabled = !sizeJob.running && BackendBus.running,
                     ) { Text(if (sizeJob.running) "…" else "⚖ Size these") }
                 }
-                Text("Runs the whole queue through the buy-only optimiser against " +
-                    "the portfolio you already hold, and gives each one an amount, " +
-                    "a share count and a share of the book.",
+                Text("Sizes every pending idea against the portfolio you already " +
+                    "hold — in whole shares you can actually place — and builds a " +
+                    "full research dossier for each: fundamentals, the last " +
+                    "filings, the price model, the macro regime, upcoming events, " +
+                    "news, and social that named sources corroborate.\n" +
+                    "Expect a minute or so per name; it keeps running if you " +
+                    "leave this screen.",
                     color = Muted, fontSize = 10.sp, lineHeight = 14.sp)
                 sizeJob.status?.let {
                     Spacer(Modifier.height(6.dp))
@@ -244,12 +260,23 @@ fun GhostScreen() {
                     LaunchedEffect(sizeJob.finishedAt) { GhostBus.refresh() }
                     Spacer(Modifier.height(8.dp))
                     val up = (r.opt("sharpe_uplift") as? Number)?.toDouble()
-                    StatusBanner("Sized ${r.optInt("sized")} idea(s); " +
-                        "${r.optInt("funded")} got funding out of ₹${fmtCompact(r.opt("cash"))}." +
-                        (up?.let { "\nSharpe would go from " +
-                            "${fmtNum(r.optJSONObject("before")?.opt("sharpe"))} to " +
+                    val t = r.optJSONObject("totals")
+                    StatusBanner(
+                        "${r.optInt("funded")} of ${r.optInt("sized")} ideas funded" +
+                        (if (r.has("researched")) " and researched" else "") + ".\n" +
+                        "Deploying ₹${fmtCompact(t?.opt("deployed"))} of " +
+                        "₹${fmtCompact(t?.opt("cash"))} across ${t?.optInt("n_positions")} " +
+                        "positions — ₹${fmtCompact(t?.opt("leftover"))} left over." +
+                        (up?.let { "\nSharpe ${fmtNum(r.optJSONObject("before")?.opt("sharpe"))} → " +
                             "${fmtNum(r.optJSONObject("after")?.opt("sharpe"))} (+${fmtNum(it)})." } ?: ""),
                         Bull)
+                    arr(r, "unaffordable")?.takeIf { it.length() > 0 }?.let { un ->
+                        Spacer(Modifier.height(8.dp))
+                        Text("Couldn't fund a whole share of: " +
+                            (0 until un.length()).joinToString(", ") {
+                                un.optJSONObject(it)?.optString("symbol") ?: ""
+                            }, color = Warn, fontSize = 10.sp)
+                    }
                 }
             }
 
@@ -586,6 +613,8 @@ private fun RecommendationCard(r: JSONObject) {
             Spacer(Modifier.height(6.dp))
             Text("suggested $it", color = Muted, fontSize = 9.5.sp)
         }
+
+        r.optJSONObject("research")?.let { ResearchPanel(it) }
         Spacer(Modifier.height(10.dp))
         Row(verticalAlignment = Alignment.CenterVertically) {
             OutlinedTextField(
@@ -605,6 +634,128 @@ private fun RecommendationCard(r: JSONObject) {
                 Text("Skip", color = Muted, fontSize = 12.sp)
             }
         }
+    }
+}
+
+/**
+ * The full dossier behind a recommendation, collapsed by default.
+ *
+ * The ghost book is a rehearsal for real money, so the reasoning has to be
+ * inspectable — not just a verdict. Collapsed so the queue stays scannable;
+ * everything that went into the call is one tap away.
+ */
+@Composable
+private fun ResearchPanel(res: JSONObject) {
+    var open by remember { mutableStateOf(false) }
+    val v = res.optJSONObject("verdict")
+    val counts = res.optJSONObject("counts")
+    val verdict = v?.optString("verdict").orEmpty()
+    val conviction = v?.optString("conviction").orEmpty()
+    val col = when (verdict) {
+        "BUY", "ACCUMULATE" -> Bull
+        "AVOID" -> Bear
+        else -> Warn
+    }
+
+    Spacer(Modifier.height(10.dp))
+    Divider(color = BorderCol.copy(alpha = 0.5f))
+    Spacer(Modifier.height(8.dp))
+    Row(Modifier.fillMaxWidth().clickable { open = !open },
+        verticalAlignment = Alignment.CenterVertically) {
+        if (verdict.isNotBlank()) {
+            Pill(verdict + (if (conviction.isNotBlank()) " · $conviction" else ""), col)
+            Spacer(Modifier.width(8.dp))
+        }
+        Text(
+            counts?.let {
+                "${it.optInt("news")} articles · ${it.optInt("reports")} filings · " +
+                "${it.optInt("social")} corroborated posts · ${it.optInt("events")} events"
+            } ?: "research",
+            color = Muted, fontSize = 10.sp, modifier = Modifier.weight(1f))
+        Text(if (open) "▲" else "▼ detail", color = AccentHi, fontSize = 10.sp)
+    }
+
+    v?.optString("thesis")?.takeIf { it.isNotBlank() }?.let {
+        Spacer(Modifier.height(6.dp))
+        Text(it, color = OnBg.copy(alpha = 0.9f), fontSize = 12.sp, lineHeight = 17.sp,
+            maxLines = if (open) Int.MAX_VALUE else 3)
+    }
+    v?.optString("error")?.takeIf { it.isNotBlank() }?.let {
+        Spacer(Modifier.height(6.dp))
+        StatusBanner("Couldn't produce a final judgement: $it\nThe research " +
+            "below is still complete.", Warn)
+    }
+
+    if (!open) return
+
+    @Composable
+    fun para(label: String, value: String?) {
+        if (value.isNullOrBlank() || value == "null") return
+        Spacer(Modifier.height(10.dp))
+        Text(label.uppercase(), color = Muted, fontSize = 9.5.sp, letterSpacing = 0.6.sp)
+        Spacer(Modifier.height(3.dp))
+        Text(value, color = OnBg.copy(alpha = 0.9f), fontSize = 12.sp, lineHeight = 17.sp)
+    }
+
+    @Composable
+    fun bullets(label: String, arr0: JSONArray?, color: Color) {
+        if (arr0 == null || arr0.length() == 0) return
+        Spacer(Modifier.height(10.dp))
+        Text(label.uppercase(), color = Muted, fontSize = 9.5.sp, letterSpacing = 0.6.sp)
+        for (i in 0 until arr0.length()) {
+            Text("• " + arr0.optString(i), color = color, fontSize = 11.5.sp,
+                lineHeight = 16.sp, modifier = Modifier.padding(top = 2.dp))
+        }
+    }
+
+    para("The company itself", v?.optString("micro_view"))
+    para("Buying into this market", v?.optString("macro_view"))
+    para("Timing", v?.optString("timing"))
+    para("What people are saying", v?.optString("what_people_say"))
+    bullets("Key risks", v?.optJSONArray("key_risks"), Warn)
+    bullets("What would change this view", v?.optJSONArray("what_would_change_my_mind"), AccentHi)
+    para("Confidence", v?.optString("confidence_note"))
+
+    // The evidence, so the judgement can be checked rather than trusted.
+    res.optJSONObject("entry")?.let { e ->
+        Spacer(Modifier.height(10.dp))
+        Text("PRICE MODEL", color = Muted, fontSize = 9.5.sp, letterSpacing = 0.6.sp)
+        Text("CMP ₹${fmtNum(e.opt("current"))} · 50-DMA ₹${fmtNum(e.opt("dma50"))} · " +
+            "200-DMA ₹${fmtNum(e.opt("dma200"))} · RSI ${fmtNum(e.opt("rsi"))}\n" +
+            "entry zone ₹${fmtNum(e.opt("entry_low"))}–${fmtNum(e.opt("entry_high"))}",
+            color = OnBg.copy(alpha = 0.85f), fontSize = 11.sp, lineHeight = 16.sp)
+    }
+    arr(res, "reports")?.takeIf { it.length() > 0 }?.let { rep ->
+        Spacer(Modifier.height(10.dp))
+        Text("FILINGS READ", color = Muted, fontSize = 9.5.sp, letterSpacing = 0.6.sp)
+        for (i in 0 until rep.length())
+            Text("• " + (rep.optJSONObject(i)?.optString("title") ?: ""),
+                color = Muted, fontSize = 10.5.sp, maxLines = 2, lineHeight = 14.sp)
+    }
+    arr(res, "news")?.takeIf { it.length() > 0 }?.let { nw ->
+        Spacer(Modifier.height(10.dp))
+        Text("NEWS USED", color = Muted, fontSize = 9.5.sp, letterSpacing = 0.6.sp)
+        for (i in 0 until minOf(nw.length(), 6)) {
+            val n = nw.optJSONObject(i) ?: continue
+            Text("• ${n.optString("title")}  (${n.optString("source")})",
+                color = Muted, fontSize = 10.5.sp, maxLines = 2, lineHeight = 14.sp)
+        }
+    }
+    arr(res, "events")?.takeIf { it.length() > 0 }?.let { ev ->
+        Spacer(Modifier.height(10.dp))
+        Text("EVENTS AHEAD", color = Muted, fontSize = 9.5.sp, letterSpacing = 0.6.sp)
+        for (i in 0 until ev.length()) {
+            val e = ev.optJSONObject(i) ?: continue
+            Text("• ${e.optString("date")} — ${e.optString("title")}",
+                color = Warn, fontSize = 10.5.sp, lineHeight = 14.sp)
+        }
+    }
+    arr(res, "gaps")?.takeIf { it.length() > 0 }?.let { g ->
+        Spacer(Modifier.height(10.dp))
+        // Naming what couldn't be gathered matters: "no bad news found" and
+        // "the news lookup failed" are very different things.
+        Text("Couldn't gather: " + (0 until g.length()).joinToString(", ") { g.optString(it) },
+            color = Warn, fontSize = 10.sp, lineHeight = 14.sp)
     }
 }
 

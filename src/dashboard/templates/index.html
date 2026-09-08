@@ -281,6 +281,20 @@
       typing symbols in, so the track record measures the <b>system's</b> calls
       and not your own.
     </div>
+    <div class="row" style="margin-top:12px; align-items:center">
+      <label>Deploy (₹) <input type="number" id="ghost-size-cash" value="50000"
+             min="1000" step="1000" style="width:130px"></label>
+      <button class="primary" onclick="ghostSizeAll()">⚖ Size &amp; research these</button>
+      <span id="ghost-size-status" class="status"></span>
+    </div>
+    <div style="color:var(--muted); font-size:11px; margin-top:6px; line-height:1.5">
+      Sizes every pending idea against the portfolio you already hold — in whole
+      shares you can actually place — and builds a full research dossier for each:
+      fundamentals, the last filings, the price model, the macro regime, upcoming
+      events, news, and social that named sources corroborate. Roughly a minute
+      per name.
+    </div>
+    <div id="ghost-size-result" style="margin-top:10px"></div>
     <div id="ghost-recs" style="margin-top:12px"></div>
     <span id="ghost-msg" class="status"></span>
   </div>

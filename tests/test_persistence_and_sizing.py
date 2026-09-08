@@ -92,8 +92,9 @@ def queue(tmp_path, monkeypatch):
 
 
 def _size(A, rec, cash=50000):
+    """Sizing only — research does real network work and has its own tests."""
     import time
-    jid = A.api_recommendations_optimize({"cash": cash})["job_id"]
+    jid = A.api_recommendations_optimize({"cash": cash, "research": False})["job_id"]
     for _ in range(150):
         if A.JOBS[jid]["status"] != "running":
             break
@@ -120,11 +121,17 @@ def test_sizing_gives_every_source_the_same_currency(queue, monkeypatch):
     monkeypatch.setattr(opt.PortfolioOptimizer, "deploy_cash", lambda self, **k: {
         "buys": [{"ticker": "AAA.NS", "buy_inr": 32000.0, "final_weight_pct": 14.2},
                  {"ticker": "BBB.NS", "buy_inr": 18000.0, "final_weight_pct": 8.0}]})
+    # Sizing is in whole shares now, so a price is required to size at all.
+    import src.data.market_data as mdm
+    monkeypatch.setattr(mdm.MarketData, "ltp",
+                        lambda self, t, ik=None: {"AAA.NS": 1000.0, "BBB.NS": 500.0}.get(t))
     assert _size(A, rec)["status"] == "done"
 
     by = {i["symbol"]: i for i in rec.list_all()["items"]}
-    assert by["AAA"]["suggested_amount"] == 32000 and by["AAA"]["suggested_weight_pct"] == 14.2
-    assert by["BBB"]["suggested_amount"] == 18000 and by["BBB"]["suggested_weight_pct"] == 8.0
+    # Both engines' ideas now quoted the same way: shares x price, and a weight.
+    assert by["AAA"]["suggested_shares"] == 32 and by["AAA"]["suggested_amount"] == 32000.0
+    assert by["BBB"]["suggested_shares"] == 36 and by["BBB"]["suggested_amount"] == 18000.0
+    assert by["AAA"]["suggested_weight_pct"] == 14.2
     assert all(i["sized_for_cash"] == 50000 for i in by.values())
 
 

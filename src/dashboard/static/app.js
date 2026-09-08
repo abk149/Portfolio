@@ -1969,10 +1969,12 @@ async function ghostRecs() {
     `(${pending.length} pending · ${c.taken || 0} taken · ${c.dismissed || 0} skipped)`;
 
   $("ghost-recs").innerHTML = pending.length ? pending.map(r => {
+    // After sizing this is the optimiser's answer in placeable whole shares.
     const bits = [
-      r.suggested_entry != null ? `suggested entry ${inr(r.suggested_entry)}` : null,
-      r.suggested_amount != null ? `suggested ${inr(r.suggested_amount)}` : null,
-      r.suggested_shares ? `${r.suggested_shares} shares` : null,
+      r.suggested_shares ? `<b>${r.suggested_shares} shares</b>` : null,
+      r.suggested_entry != null ? `at ${inr(r.suggested_entry)}` : null,
+      r.suggested_amount != null ? `= ${inr(r.suggested_amount)}` : null,
+      r.suggested_weight_pct != null ? `${fmt(r.suggested_weight_pct, 1)}% of book` : null,
     ].filter(Boolean).join(" · ");
     return `
       <div class="vcard">
@@ -1988,7 +1990,13 @@ async function ghostRecs() {
         </div>
         ${r.rationale && r.rationale !== "null"
           ? `<div class="vcard-thesis">${escapeHtml(r.rationale)}</div>` : ""}
-        ${bits ? `<div style="color:var(--muted);font-size:11px;margin-top:8px">${bits}</div>` : ""}
+        ${bits ? `<div style="font-size:11px;margin-top:8px;color:${
+          r.sized_at ? "var(--accent)" : "var(--muted)"}">${bits}${
+          r.sized_at ? " <span style='color:var(--muted)'>· sized against your holdings</span>" : ""}</div>` : ""}
+        ${r.sizing_note && r.sizing_note !== "null"
+          ? `<div style="color:#d29922;font-size:11px;margin-top:6px">${escapeHtml(r.sizing_note)}</div>` : ""}
+        ${r.age_label ? `<div style="color:var(--muted);font-size:10px;margin-top:4px">suggested ${escapeHtml(r.age_label)}</div>` : ""}
+        ${researchHtml(r.research)}
         <div class="row" style="margin-top:10px">
           <input type="number" id="recamt-${r.id}" value="${Math.round(r.suggested_amount || 25000)}"
                  min="500" step="500" style="width:120px">
@@ -2037,4 +2045,96 @@ function ghostAttribution(d) {
       ]) + `<div style="color:var(--muted);font-size:11px;margin-top:8px">${
         escapeHtml((d.attribution || {}).note || "")}</div>`
     : "<div style='color:var(--muted)'>No paper positions yet.</div>";
+}
+
+// --- size + research the whole queue -----------------------------------------
+async function ghostSizeAll() {
+  const cash = parseFloat($("ghost-size-cash").value);
+  if (!(cash > 0)) { toast("Enter an amount to size against"); return; }
+  const st = $("ghost-size-status");
+  st.innerHTML = "<span class='spin'></span> starting …";
+  $("ghost-size-result").innerHTML = "";
+  try {
+    const {job_id, error} = await fetch("/api/recommendations/optimize", {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({cash, research: true}),
+    }).then(r => r.json());
+    if (!job_id) { st.innerHTML = `<span class="neg">${escapeHtml(error || "failed")}</span>`; return; }
+
+    // Poll progress alongside the job — a full research pass runs for minutes.
+    const tick = setInterval(async () => {
+      const p = await fetch(`/api/recommendations/progress/${job_id}`)
+        .then(r => r.json()).catch(() => null);
+      const pr = (p || {}).progress || {};
+      if (pr.message) st.innerHTML =
+        `<span class='spin'></span> ${pr.pct ? pr.pct + "% · " : ""}${escapeHtml(pr.message)}`;
+    }, 1500);
+
+    const r = await pollJob(job_id).finally(() => clearInterval(tick));
+    st.textContent = "";
+    if (r.error) { $("ghost-size-result").innerHTML = `<div class="neg">${escapeHtml(r.error)}</div>`; return; }
+
+    const t = r.totals || {};
+    const un = (r.unaffordable || []).map(u => u.symbol).join(", ");
+    $("ghost-size-result").innerHTML = `
+      <div class="kpis">
+        ${kpi("Funded", `${r.funded} of ${r.sized}`)}
+        ${kpi("Deploying", inr(t.deployed))}
+        ${kpi("Left over", inr(t.leftover))}
+        ${kpi("Positions", t.n_positions)}
+        ${r.sharpe_uplift != null ? kpi("Sharpe uplift", "+" + fmt(r.sharpe_uplift, 3), "pos") : ""}
+      </div>
+      ${un ? `<div style="color:#d29922;font-size:11px;margin-top:8px">
+                Couldn't fund a whole share of: ${escapeHtml(un)}</div>` : ""}
+      <div style="color:var(--muted);font-size:11px;margin-top:6px">${escapeHtml(r.sizing_note || "")}</div>`;
+    ghostRecs(); ghostLoad();
+  } catch (e) {
+    st.innerHTML = `<span class="neg">${e.message}</span>`;
+  }
+}
+
+/** The dossier behind a recommendation, collapsed by default. */
+function researchHtml(res) {
+  if (!res) return "";
+  const v = res.verdict || {};
+  const c = res.counts || {};
+  const li = (a) => (a || []).map(x => `<li>${escapeHtml(x)}</li>`).join("");
+  const para = (label, val) => (!val || val === "null") ? "" :
+    `<h4>${label}</h4><p>${escapeHtml(val)}</p>`;
+  const evidence = [
+    (res.reports || []).length
+      ? `<h4>Filings read</h4><ul>${li((res.reports || []).map(r => r.title))}</ul>` : "",
+    (res.news || []).length
+      ? `<h4>News used</h4><ul>${li((res.news || []).slice(0, 6).map(n => `${n.title} (${n.source})`))}</ul>` : "",
+    (res.events || []).length
+      ? `<h4>Events ahead</h4><ul>${li((res.events || []).map(e => `${e.date} — ${e.title}`))}</ul>` : "",
+    (res.gaps || []).length
+      ? `<div style="color:#d29922;font-size:11px">Couldn't gather: ${escapeHtml((res.gaps || []).join(", "))}</div>` : "",
+  ].join("");
+
+  return `
+    <details style="margin-top:10px">
+      <summary style="cursor:pointer">
+        ${v.verdict ? `<b style="color:${v.verdict === "AVOID" ? "#f85149" :
+          (v.verdict === "BUY" || v.verdict === "ACCUMULATE") ? "#3fb950" : "#d29922"}">${
+          escapeHtml(v.verdict)}${v.conviction ? " · " + escapeHtml(v.conviction) : ""}</b> — ` : ""}
+        <span style="color:var(--muted);font-size:11px">${c.news || 0} articles ·
+        ${c.reports || 0} filings · ${c.social || 0} corroborated posts ·
+        ${c.events || 0} events</span>
+      </summary>
+      <div class="ai-out" style="margin-top:8px">
+        ${v.error ? `<div class="neg">Couldn't produce a final judgement: ${escapeHtml(v.error)}.
+                     The research below is still complete.</div>` : ""}
+        ${para("Thesis", v.thesis)}
+        ${para("The company itself", v.micro_view)}
+        ${para("Buying into this market", v.macro_view)}
+        ${para("Timing", v.timing)}
+        ${para("What people are saying", v.what_people_say)}
+        ${(v.key_risks || []).length ? `<h4>Key risks</h4><ul>${li(v.key_risks)}</ul>` : ""}
+        ${(v.what_would_change_my_mind || []).length
+          ? `<h4>What would change this view</h4><ul>${li(v.what_would_change_my_mind)}</ul>` : ""}
+        ${para("Confidence", v.confidence_note)}
+        ${evidence}
+      </div>
+    </details>`;
 }
