@@ -54,12 +54,31 @@ object Api {
                 .get().build()
             client.newCall(req).execute().use { r ->
                 val txt = r.body?.string().orEmpty()
-                if (!r.isSuccessful) return@withContext Resp.Err("HTTP ${r.code}: ${txt.take(180)}")
+                if (!r.isSuccessful) return@withContext Resp.Err(errorMessage(r.code, txt))
                 Resp.Ok(parse(txt))
             }
         } catch (e: Exception) {
             Resp.Err(e.message ?: e.javaClass.simpleName)
         }
+    }
+
+    /**
+     * Readable message from a failed response.
+     *
+     * The backend now answers errors with `{"error": "..."}`, so pull that out
+     * rather than showing the first 180 characters of whatever came back —
+     * which, for a traceback, was fifty frames of framework internals with the
+     * actual cause cut off the end.
+     */
+    private fun errorMessage(code: Int, body: String): String {
+        val fromJson = runCatching {
+            val o = JSONObject(body)
+            listOfNotNull(
+                o.optString("error").takeIf { it.isNotBlank() },
+                o.optString("message").takeIf { it.isNotBlank() },
+            ).firstOrNull()
+        }.getOrNull()
+        return fromJson ?: "HTTP $code: ${body.take(180)}"
     }
 
     suspend fun post(path: String, body: JSONObject = JSONObject()): Resp = withContext(Dispatchers.IO) {
@@ -71,7 +90,7 @@ object Api {
                 .build()
             client.newCall(req).execute().use { r ->
                 val txt = r.body?.string().orEmpty()
-                if (!r.isSuccessful) return@withContext Resp.Err("HTTP ${r.code}: ${txt.take(180)}")
+                if (!r.isSuccessful) return@withContext Resp.Err(errorMessage(r.code, txt))
                 Resp.Ok(parse(txt))
             }
         } catch (e: Exception) {

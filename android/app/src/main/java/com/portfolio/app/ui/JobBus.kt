@@ -48,6 +48,59 @@ object JobBus {
         /** Id of the backend job currently in flight, for re-attaching. */
         var jobId by mutableStateOf<String?>(null)
             internal set
+        /** Human-readable name, shown in the activity bar and the notification. */
+        var label by mutableStateOf("")
+            internal set
+        var startedAt by mutableStateOf(0L)
+            internal set
+    }
+
+    /** Friendly names for the job keys, for the activity bar. */
+    private val LABELS = mapOf(
+        "quant" to "DR-Quant funnel",
+        "themes" to "Macro ideas",
+        "umap" to "Universe map build",
+        "performance" to "Performance analysis",
+        "benchmark" to "Index comparison",
+        "optimize" to "Portfolio optimisation",
+        "deploy_cash" to "Cash allocation",
+        "alloc_themes" to "Idea allocation",
+        "screener" to "Screener scan",
+        "intraday" to "Intraday analysis",
+        "calendar" to "Market calendar",
+        "ai_brief" to "AI morning brief",
+        "ai_perf_review" to "AI performance review",
+        "ai_risk_review" to "AI risk review",
+    )
+
+    private fun labelFor(key: String): String = when {
+        LABELS.containsKey(key) -> LABELS.getValue(key)
+        key.startsWith("deepdive:") -> "Deep dive · " + key.removePrefix("deepdive:")
+        key.startsWith("ai_event:") -> "Event impact"
+        else -> key
+    }
+
+    /** Every job currently in flight — drives the embedded activity bar. */
+    fun active(): List<Pair<String, State>> =
+        states.entries.filter { it.value.running }.map { it.key to it.value }
+            .sortedBy { it.second.startedAt }
+
+    val runningCount: Int get() = states.count { it.value.running }
+
+    /**
+     * Mirror in-flight work onto the foreground-service notification, so the
+     * user can see it is still going after minimising the app — and so Android
+     * has a visible reason to keep the process alive.
+     */
+    private fun publishActivity() {
+        val jobs = active()
+        BackendBus.onActivity(
+            when {
+                jobs.isEmpty() -> null
+                jobs.size == 1 -> jobs[0].second.label
+                else -> "${jobs.size} tasks running · ${jobs[0].second.label}"
+            }
+        )
     }
 
     // Survives composition/navigation for the life of the process.
@@ -117,6 +170,8 @@ object JobBus {
         if (s.running) return                     // dedupe: never double-submit
         s.running = true; s.status = status; s.result = null
         s.progress = null; s.detail = null; s.jobId = null
+        s.label = labelFor(key); s.startedAt = System.currentTimeMillis()
+        publishActivity()
         scope.launch {
             try {
                 when (val sub = submit()) {
@@ -146,6 +201,7 @@ object JobBus {
                 s.progress = null
                 s.jobId = null
                 s.finishedAt = System.currentTimeMillis()
+                publishActivity()
             }
         }
     }
@@ -155,6 +211,8 @@ object JobBus {
         val s = state(key)
         if (s.running) return
         s.running = true; s.status = status; s.result = null
+        s.label = labelFor(key); s.startedAt = System.currentTimeMillis()
+        publishActivity()
         scope.launch {
             try {
                 when (val r = call()) {
@@ -168,6 +226,7 @@ object JobBus {
             } finally {
                 s.running = false
                 s.finishedAt = System.currentTimeMillis()
+                publishActivity()
             }
         }
     }

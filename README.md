@@ -88,6 +88,11 @@ the desktop and the phone.
 - **One backend, two surfaces.** The same FastAPI + Python engine serves the
   desktop web dashboard and runs **inside the Android app** via Chaquopy —
   Gradle syncs `src/` + `config/` into the APK at build time.
+- **Nothing blocks.** The app has no modal dialogs: every long analysis is
+  submitted to a process-wide job registry and tracked in an embedded activity
+  bar, so you can start a deep dive, navigate elsewhere, and come back to it.
+  Work continues while the app is minimised — it runs in a foreground service
+  whose notification reports what is in flight.
 - **Native Android UI** in Jetpack Compose (Material 3): portfolio, ideas,
   calendar, DR‑Quant, universe map, analysis, settings, an in‑app system
   terminal, and native charts drawn on Canvas (donut / multi‑series line with a

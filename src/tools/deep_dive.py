@@ -67,17 +67,71 @@ def _entry_price(symbol: str) -> dict:
         return {"note": f"entry model error: {e}"}
 
 
+def _fill_from_kb(symbol: str, fund: dict) -> tuple[dict, dict]:
+    """Backfill missing fundamentals from the Universe Map's stored record.
+
+    The live providers are scrapers, and on a phone most of them are blocked or
+    too slow — which left every metric blank. The Universe Map has already
+    collected and stored these numbers for the whole universe, so use them
+    rather than showing nothing, and record which source each value came from.
+    """
+    provenance = {k: "live" for k, v in fund.items()
+                  if v is not None and not k.startswith("_")}
+    try:
+        from src.kb import KnowledgeBase
+        stored = KnowledgeBase.get().get_stock(symbol) or {}
+    except Exception as e:
+        log.debug(f"KB lookup failed for {symbol}: {e}")
+        return fund, provenance
+
+    if not stored:
+        return fund, provenance
+
+    # KB column names differ from the live schema, and ROE is stored as a
+    # fraction there but reported as a percentage here.
+    roe = stored.get("roe")
+    mapping = {
+        "pe": stored.get("pe"),
+        "roe_pct": (roe * 100) if isinstance(roe, (int, float)) and roe is not None
+                   and abs(roe) <= 5 else roe,
+        "debt_to_equity": stored.get("de"),
+        "market_cap_cr": stored.get("market_cap_cr"),
+        "sector": stored.get("sector"),
+        "industry": stored.get("industry"),
+    }
+    inner = stored.get("_data") or stored.get("data")
+    if isinstance(inner, str):
+        try:
+            import json as _j
+            inner = _j.loads(inner)
+        except Exception:
+            inner = None
+    if isinstance(inner, dict):
+        for key in ("sales_growth_pct", "profit_growth_pct", "roce_pct",
+                    "sector", "industry"):
+            if mapping.get(key) is None and inner.get(key) is not None:
+                mapping[key] = inner[key]
+
+    for k, v in mapping.items():
+        if v is not None and fund.get(k) is None:
+            fund[k] = v
+            provenance[k] = "universe map (stored)"
+    return fund, provenance
+
+
 def deep_dive(symbol: str, max_docs: int = 3) -> dict:
     symbol = (symbol or "").upper().strip()
     if not symbol:
         return {"error": "no symbol"}
 
-    fund = {}
+    fund: dict = {}
     try:
         from src.tools.screener_in import fetch_fundamentals
         fund = fetch_fundamentals(symbol) or {}
     except Exception as e:
         log.debug(f"fundamentals failed for {symbol}: {e}")
+
+    fund, provenance = _fill_from_kb(symbol, fund)
 
     docs: list[dict] = []
     try:
@@ -129,11 +183,15 @@ Return STRICT JSON, no prose:
     except Exception as e:
         analysis = {"error": f"LLM analysis failed: {e}"}
 
+    wanted = ("pe", "roe_pct", "roce_pct", "debt_to_equity", "sales_growth_pct",
+              "profit_growth_pct", "market_cap_cr", "sector")
     return {
         "symbol": symbol,
-        "fundamentals": {k: fund.get(k) for k in (
-            "pe", "roe_pct", "roce_pct", "debt_to_equity", "sales_growth_pct",
-            "profit_growth_pct", "market_cap_cr", "sector")},
+        "fundamentals": {k: fund.get(k) for k in wanted},
+        # Where each number came from, and which are simply unavailable. A bare
+        # dash in the UI is indistinguishable from a bug; naming the gap isn't.
+        "fundamentals_provenance": provenance,
+        "fundamentals_missing": [k for k in wanted if fund.get(k) is None],
         "entry": entry,
         "analysis": analysis,
         "sources": [{"title": d.get("title"), "url": d.get("url")} for d in docs],

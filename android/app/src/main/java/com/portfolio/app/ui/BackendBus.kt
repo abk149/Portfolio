@@ -22,6 +22,15 @@ object BackendBus {
     var onStart: () -> Unit = {}
     var onStop: () -> Unit = {}
 
+    /**
+     * Report in-flight work to the foreground-service notification.
+     *
+     * Two reasons this matters: the user can see that an analysis is still
+     * progressing after minimising the app, and Android has a visible,
+     * user-facing reason to keep the process alive rather than reclaiming it.
+     */
+    var onActivity: (String?) -> Unit = {}
+
     val running get() = state.value == State.RUNNING
 
     fun pushLog(line: String) {

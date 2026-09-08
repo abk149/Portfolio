@@ -242,6 +242,23 @@ fun SettingsScreen(openLogin: () -> Unit) {
                 Text("Save settings")
             }
         }
+
+        // Read from the package at runtime rather than BuildConfig, so this
+        // needs no extra Gradle buildFeatures flag. Handy for confirming which
+        // build is actually installed after an upgrade.
+        val version = remember {
+            runCatching {
+                ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName
+            }.getOrNull() ?: "?"
+        }
+        SectionCard("About", Muted) {
+            Text("Portfolio Quant v$version", color = OnBg, fontSize = 13.sp,
+                fontWeight = FontWeight.SemiBold)
+            Spacer(Modifier.height(4.dp))
+            Text("Python engine runs on-device. Broker, LLM and Telegram " +
+                "credentials are stored only in this app's private storage.",
+                color = Muted, fontSize = 11.sp, lineHeight = 16.sp)
+        }
         Spacer(Modifier.height(24.dp))
     }
 }
@@ -257,12 +274,12 @@ private fun Field(label: String, value: String, password: Boolean = false, onCha
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// LOGIN DIALOG — ported from the Upstox bot's Android flow:
+// LOGIN SCREEN — ported from the Upstox bot's Android flow:
 //   get link → open in the real browser → paste the redirect URL back → exchange
 //   (plus a direct access-token path for both brokers)
 // ─────────────────────────────────────────────────────────────────────────────
 @Composable
-fun LoginDialog(onDismiss: () -> Unit) {
+fun LoginScreen() {
     val ctx = LocalContext.current
     val prefs = remember { Prefs(ctx) }
     val scope = rememberCoroutineScope()
@@ -303,11 +320,10 @@ fun LoginDialog(onDismiss: () -> Unit) {
     var gtotp by remember { mutableStateOf(prefs.get("groww_totp_secret")) }
     var gsec by remember { mutableStateOf(prefs.get("groww_api_secret")) }
 
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } },
-        title = { Text("Login · ${broker.replaceFirstChar { it.uppercase() }}") },
-        text = {
+    // An embedded screen, not a dialog: logging in involves leaving for a
+    // browser and coming back, and a modal made that flow fight the app.
+    Column(Modifier.fillMaxSize()) {
+        SectionCard("Login · ${broker.replaceFirstChar { it.uppercase() }}", Bull) {
             Column(Modifier.verticalScroll(rememberScrollState())) {
                 // Broker selector — pick which one you're logging into.
                 Text("Broker", color = Muted, fontSize = 11.sp)
@@ -511,23 +527,7 @@ fun LoginDialog(onDismiss: () -> Unit) {
                     modifier = Modifier.fillMaxWidth(),
                 ) { Text("Apply & test token") }
             }
-
-            // Read from the package at runtime rather than BuildConfig, so this
-            // needs no extra Gradle buildFeatures flag. Handy for confirming
-            // which build is actually installed after an upgrade.
-            val version = remember {
-                runCatching {
-                    ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName
-                }.getOrNull() ?: "?"
-            }
-            SectionCard("About", Muted) {
-                Text("Portfolio Quant v$version", color = OnBg, fontSize = 13.sp,
-                    fontWeight = FontWeight.SemiBold)
-                Spacer(Modifier.height(4.dp))
-                Text("Python engine runs on-device. Broker, LLM and Telegram " +
-                    "credentials are stored only in this app's private storage.",
-                    color = Muted, fontSize = 11.sp, lineHeight = 16.sp)
-            }
-        },
-    )
+        }
+        Spacer(Modifier.height(24.dp))
+    }
 }

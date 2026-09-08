@@ -32,6 +32,8 @@ UA = {
     "Accept-Language": "en-US,en;q=0.9",
 }
 
+_HANDSHAKE_COOLDOWN_S = 120.0     # don't re-handshake more often than this
+_LAST_HANDSHAKE = 0.0
 _SESSION: Optional[requests.Session] = None
 _CRUMB: Optional[str] = None
 
@@ -43,9 +45,18 @@ def _session(force: bool = False) -> requests.Session:
       2. GET /v1/test/getcrumb           → returns the crumb string
       3. pass &crumb=<crumb> on every subsequent quoteSummary call
     """
-    global _SESSION, _CRUMB
-    if _SESSION is not None and not force:
+    global _SESSION, _CRUMB, _LAST_HANDSHAKE
+    # Only reuse a session that actually HAS a crumb. Previously any session was
+    # cached, so a single transient 429 on the crumb endpoint left a crumb-less
+    # session cached for the life of the process — quietly disabling Yahoo
+    # fundamentals (ROE, D/E, growth, sector) until restart. Retry, with a
+    # cooldown so we don't hammer a rate-limited endpoint either.
+    if _SESSION is not None and _CRUMB and not force:
         return _SESSION
+    if _SESSION is not None and not force and \
+            (time.time() - _LAST_HANDSHAKE) < _HANDSHAKE_COOLDOWN_S:
+        return _SESSION
+    _LAST_HANDSHAKE = time.time()
 
     s = requests.Session()
     s.headers.update(UA)
@@ -55,16 +66,23 @@ def _session(force: bool = False) -> requests.Session:
         s.get("https://finance.yahoo.com/quote/RELIANCE.NS", timeout=12)
         # 2. crumb
         for host in HOSTS:
-            try:
-                cr = s.get(f"https://{host}/v1/test/getcrumb", timeout=10)
-                txt = (cr.text or "").strip()
-                # a valid crumb is short and not HTML
-                if cr.status_code == 200 and txt and "<" not in txt and len(txt) < 40:
-                    _CRUMB = txt
-                    log.info(f"yahoo crumb acquired ({len(txt)} chars)")
+            for attempt in range(2):
+                try:
+                    cr = s.get(f"https://{host}/v1/test/getcrumb", timeout=10)
+                    txt = (cr.text or "").strip()
+                    # a valid crumb is short and not HTML
+                    if cr.status_code == 200 and txt and "<" not in txt and len(txt) < 40:
+                        _CRUMB = txt
+                        log.info(f"yahoo crumb acquired ({len(txt)} chars)")
+                        break
+                    if cr.status_code == 429:
+                        time.sleep(1.5)          # brief backoff, then one retry
+                        continue
                     break
-            except Exception:
-                continue
+                except Exception:
+                    break
+            if _CRUMB:
+                break
         if not _CRUMB:
             log.warning("yahoo: could not acquire crumb — quoteSummary may 401")
     except Exception as e:

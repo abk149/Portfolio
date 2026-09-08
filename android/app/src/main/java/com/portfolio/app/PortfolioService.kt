@@ -82,6 +82,29 @@ class PortfolioService : LifecycleService() {
         return binder
     }
 
+    /** Last analysis activity reported by the UI, shown in the notification. */
+    private var activityText: String? = null
+
+    /**
+     * Show in-flight analysis in the ongoing notification.
+     *
+     * The work runs in this process, and this service is what keeps the process
+     * alive once the app is minimised. Surfacing the task both tells the user it
+     * is still going and gives Android a user-visible reason not to reclaim us.
+     */
+    fun setActivity(text: String?) {
+        if (activityText == text) return
+        activityText = text
+        val base = when (pythonState) {
+            ServerState.RUNNING -> "Backend running"
+            ServerState.STARTING -> "Backend booting…"
+            ServerState.ERROR -> "Backend encountered an error"
+            else -> "Backend is stopped"
+        }
+        startForeground(notificationId,
+            createNotification(if (text.isNullOrBlank()) base else "⏳ $text"))
+    }
+
     fun setStateListener(listener: ServiceStateListener?) {
         stateListener = listener
         listener?.onStateChanged(llamaState, pythonState)

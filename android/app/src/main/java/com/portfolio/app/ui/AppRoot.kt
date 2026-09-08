@@ -8,9 +8,8 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.sp
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Chat
 import androidx.compose.material.icons.filled.Event
@@ -23,11 +22,13 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.ShowChart
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.unit.sp
+import androidx.activity.compose.BackHandler
 
 // Settings lives in the top bar rather than the bottom nav: adding Calendar to
 // a six-item bar would have squeezed every label, and Settings is the one
@@ -41,47 +42,69 @@ private enum class Dest(val label: String, val icon: ImageVector) {
     ANALYSIS("Analysis", Icons.Filled.ShowChart),
 }
 
+/**
+ * The app shell.
+ *
+ * Everything that used to be a modal popup — deep dive, chat, terminal,
+ * settings, login, event impact — is now an ordinary destination rendered in
+ * this Scaffold's content area. Consequences that matter: the bottom navigation
+ * and the activity bar stay live, long analyses no longer lock the UI, and you
+ * can leave a running task and come back to it.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AppRoot() {
     var dest by remember { mutableStateOf(Dest.HOME) }
-    var showSettings by remember { mutableStateOf(false) }
-    var showLogin by remember { mutableStateOf(false) }
-    var showTerminal by remember { mutableStateOf(false) }
-    var showChat by remember { mutableStateOf(false) }
+    val overlay = UiNav.overlay
+
+    // Hardware/gesture back closes a secondary screen instead of the app.
+    BackHandler(enabled = overlay != null) { UiNav.close() }
 
     Scaffold(
         containerColor = Bg,
         topBar = {
             TopAppBar(
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = Panel, titleContentColor = OnBg),
-                title = {
-                    val (label, col) = when (BackendBus.state.value) {
-                        BackendBus.State.RUNNING -> "Engine live" to Bull
-                        BackendBus.State.STARTING -> "Starting…" to Warn
-                        BackendBus.State.ERROR -> "Engine error" to Bear
-                        else -> "Engine off" to Muted
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = Panel, titleContentColor = OnBg),
+                navigationIcon = {
+                    if (overlay != null) {
+                        IconButton(onClick = { UiNav.close() }) {
+                            Icon(Icons.Filled.ArrowBack, contentDescription = "Back", tint = OnBg)
+                        }
                     }
-                    androidx.compose.foundation.layout.Column {
-                        Text("Portfolio Quant", fontSize = 18.sp, fontWeight = FontWeight.Bold)
-                        Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-                            Text("●", color = col, fontSize = 10.sp)
-                            Spacer(Modifier.width(5.dp))
-                            Text(label, color = Muted, fontSize = 11.sp)
+                },
+                title = {
+                    if (overlay != null) {
+                        Text(UiNav.title, fontSize = 16.sp, fontWeight = FontWeight.Bold,
+                            maxLines = 1)
+                    } else {
+                        val (label, col) = when (BackendBus.state.value) {
+                            BackendBus.State.RUNNING -> "Engine live" to Bull
+                            BackendBus.State.STARTING -> "Starting…" to Warn
+                            BackendBus.State.ERROR -> "Engine error" to Bear
+                            else -> "Engine off" to Muted
+                        }
+                        Column {
+                            Text("Portfolio Quant", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text("●", color = col, fontSize = 10.sp)
+                                Spacer(Modifier.width(5.dp))
+                                Text(label, color = Muted, fontSize = 11.sp)
+                            }
                         }
                     }
                 },
                 actions = {
-                    IconButton(onClick = { showSettings = true }) {
+                    IconButton(onClick = { UiNav.open(UiNav.Screen.Settings) }) {
                         Icon(Icons.Filled.Settings, contentDescription = "Settings", tint = Muted)
                     }
-                    IconButton(onClick = { showChat = true }) {
+                    IconButton(onClick = { UiNav.open(UiNav.Screen.Chat) }) {
                         Icon(Icons.Filled.Chat, contentDescription = "AI Assistant", tint = AccentHi)
                     }
-                    IconButton(onClick = { showTerminal = true }) {
+                    IconButton(onClick = { UiNav.open(UiNav.Screen.Terminal) }) {
                         Icon(Icons.Filled.List, contentDescription = "Terminal", tint = AccentHi)
                     }
-                    IconButton(onClick = { showLogin = true }) {
+                    IconButton(onClick = { UiNav.open(UiNav.Screen.Login) }) {
                         Icon(Icons.Filled.Lock, contentDescription = "Login", tint = Bull)
                     }
                 },
@@ -91,80 +114,42 @@ fun AppRoot() {
             NavigationBar(containerColor = Panel) {
                 Dest.values().forEach { d ->
                     NavigationBarItem(
-                        selected = dest == d,
-                        onClick = { dest = d },
+                        selected = dest == d && overlay == null,
+                        // Tapping a tab also leaves whatever secondary screen is
+                        // open — the nav bar stays usable at all times.
+                        onClick = { UiNav.close(); dest = d },
                         icon = { Icon(d.icon, contentDescription = d.label) },
                         label = { Text(d.label, maxLines = 1) },
                         colors = NavigationBarItemDefaults.colors(
                             selectedIconColor = AccentHi, selectedTextColor = AccentHi,
-                            indicatorColor = Panel2, unselectedIconColor = Muted, unselectedTextColor = Muted,
+                            indicatorColor = Panel2, unselectedIconColor = Muted,
+                            unselectedTextColor = Muted,
                         ),
                     )
                 }
             }
         },
     ) { pad ->
-        Box(Modifier.padding(pad)) {
-            when (dest) {
-                Dest.HOME -> HomeScreen()
-                Dest.IDEAS -> ThemesScreen()
-                Dest.CALENDAR -> CalendarScreen()
-                Dest.QUANT -> QuantScreen()
-                Dest.MAP -> MapScreen()
-                Dest.ANALYSIS -> AnalysisScreen()
-            }
-        }
-    }
-
-    if (showLogin) LoginDialog(onDismiss = { showLogin = false })
-
-    if (showSettings) {
-        Dialog(onDismissRequest = { showSettings = false },
-            properties = DialogProperties(usePlatformDefaultWidth = false)) {
-            Surface(color = Bg, modifier = Modifier.fillMaxSize()) {
-                Column(Modifier.fillMaxSize()) {
-                    Row(Modifier.fillMaxWidth().padding(8.dp),
-                        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-                        Text("Settings", fontSize = 16.sp, fontWeight = FontWeight.Bold,
-                            color = OnBg, modifier = Modifier.padding(start = 8.dp))
-                        Spacer(Modifier.weight(1f))
-                        TextButton(onClick = { showSettings = false }) { Text("✕ Close") }
+        Column(Modifier.padding(pad).fillMaxSize()) {
+            // Persistent, embedded progress for everything in flight.
+            ActivityBar()
+            Box(Modifier.fillMaxSize()) {
+                when (overlay) {
+                    null -> when (dest) {
+                        Dest.HOME -> HomeScreen()
+                        Dest.IDEAS -> ThemesScreen()
+                        Dest.CALENDAR -> CalendarScreen()
+                        Dest.QUANT -> QuantScreen()
+                        Dest.MAP -> MapScreen()
+                        Dest.ANALYSIS -> AnalysisScreen()
                     }
-                    Box(Modifier.weight(1f)) {
-                        SettingsScreen(openLogin = { showSettings = false; showLogin = true })
-                    }
-                }
-            }
-        }
-    }
-
-    if (showTerminal) {
-        Dialog(onDismissRequest = { showTerminal = false },
-            properties = DialogProperties(usePlatformDefaultWidth = false)) {
-            Surface(color = Bg, modifier = Modifier.fillMaxSize()) {
-                Column(Modifier.fillMaxSize()) {
-                    Row(Modifier.fillMaxWidth().padding(8.dp),
-                        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-                        Spacer(Modifier.weight(1f))
-                        TextButton(onClick = { showTerminal = false }) { Text("✕ Close") }
-                    }
-                    Box(Modifier.weight(1f)) { TerminalScreen() }
-                }
-            }
-        }
-    }
-
-    if (showChat) {
-        Dialog(onDismissRequest = { showChat = false },
-            properties = DialogProperties(usePlatformDefaultWidth = false)) {
-            Surface(color = Bg, modifier = Modifier.fillMaxSize()) {
-                Column(Modifier.fillMaxSize()) {
-                    Row(Modifier.fillMaxWidth().padding(8.dp),
-                        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-                        Spacer(Modifier.weight(1f))
-                        TextButton(onClick = { showChat = false }) { Text("✕ Close") }
-                    }
-                    Box(Modifier.weight(1f)) { ChatScreen() }
+                    is UiNav.Screen.DeepDive -> DeepDiveScreen(overlay.symbol)
+                    is UiNav.Screen.EventImpact -> EventImpactScreen(overlay.event)
+                    UiNav.Screen.Chat -> ChatScreen()
+                    UiNav.Screen.Terminal -> TerminalScreen()
+                    UiNav.Screen.Settings -> SettingsScreen(
+                        openLogin = { UiNav.open(UiNav.Screen.Login) })
+                    UiNav.Screen.Login -> LoginScreen()
                 }
             }
         }

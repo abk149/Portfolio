@@ -200,11 +200,9 @@ fun QuantScreen() {
     var universe by remember { mutableStateOf("nifty50") }
     val job = JobBus.state("quant")
     var macro by remember { mutableStateOf<JSONObject?>(null) }
-    var deepSym by remember { mutableStateOf<String?>(null) }
     var symInput by remember { mutableStateOf("") }
 
     LaunchedEffect(Unit) { if (BackendBus.running) macro = Api.macro().objOrNull() }
-    deepSym?.let { DeepDiveDialog(it) { deepSym = null } }
 
     ScreenScaffold(title = "DR-Quant", loading = job.running, onRefresh = null) {
         if (!BackendBus.running) { BackendOfflineHint(); return@ScreenScaffold }
@@ -218,7 +216,7 @@ fun QuantScreen() {
                     label = { Text("Symbol (e.g. RELIANCE)") }, singleLine = true,
                     modifier = Modifier.weight(1f))
                 Spacer(Modifier.width(8.dp))
-                Button(onClick = { if (symInput.isNotBlank()) deepSym = symInput.trim() },
+                Button(onClick = { if (symInput.isNotBlank()) UiNav.open(UiNav.Screen.DeepDive(symInput.trim())) },
                     enabled = symInput.isNotBlank()) { Text("🔍 Dive") }
             }
         }
@@ -261,7 +259,7 @@ fun QuantScreen() {
                     Spacer(Modifier.height(4.dp))
                     for (i in 0 until validated.length()) {
                         validated.optJSONObject(i)?.let { v ->
-                            ValidatedCard(v) { deepSym = v.optString("symbol") }
+                            ValidatedCard(v) { UiNav.open(UiNav.Screen.DeepDive(v.optString("symbol"))) }
                         }
                     }
                 }
@@ -430,10 +428,8 @@ fun ThemesScreen() {
     val job = JobBus.state("themes")
     var cash by remember { mutableStateOf("25000") }
     val allocJob = JobBus.state("alloc_themes")
-    var deepSym by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
 
-    deepSym?.let { DeepDiveDialog(it) { deepSym = null } }
 
     ScreenScaffold(title = "Macro Ideas", loading = job.running, onRefresh = null) {
         if (!BackendBus.running) { BackendOfflineHint(); return@ScreenScaffold }
@@ -499,7 +495,7 @@ fun ThemesScreen() {
                             Text(p.optString("sector", ""), color = Muted, fontSize = 11.sp,
                                 modifier = Modifier.weight(1f))
                             Text("🔍 deep dive", color = AccentHi, fontSize = 11.sp,
-                                modifier = Modifier.clickable { deepSym = sym })
+                                modifier = Modifier.clickable { UiNav.open(UiNav.Screen.DeepDive(sym)) })
                         }
                         if (e != null) {
                             Spacer(Modifier.height(8.dp))
@@ -1374,59 +1370,56 @@ fun TerminalScreen() {
 // ─────────────────────────────────────────────────────────────────────────────
 @Composable
 fun ChatScreen() {
-    val msgs = remember { mutableStateListOf<Pair<Boolean, String>>() }   // isUser, text
-    var input by remember { mutableStateOf("") }
-    var busy by remember { mutableStateOf(false) }
-    val scope = rememberCoroutineScope()
+    val msgs = ChatBus.messages
     val listState = rememberLazyListState()
     LaunchedEffect(msgs.size) { if (msgs.isNotEmpty()) listState.animateScrollToItem(msgs.size - 1) }
 
-    fun send() {
-        val q = input.trim()
-        if (q.isEmpty()) return
-        msgs.add(true to q); input = ""; busy = true
-        scope.launch {
-            val reply = when (val r = Api.chat(q)) {
-                is Api.Resp.Ok ->
-                    if (r.body.optBoolean("ok", false)) r.body.optString("reply")
-                    else "⚠ ${r.body.optString("error", "no answer")}"
-                is Api.Resp.Err -> "⚠ Backend: ${r.message}"
-            }
-            msgs.add(false to reply); busy = false
-        }
-    }
-
     Column(Modifier.fillMaxSize().padding(12.dp)) {
-        Text("AI Assistant", color = OnBg, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
-        Spacer(Modifier.height(4.dp))
-        Text("Knows your portfolio, latest DR-Quant run, and the Universe Map.",
-            color = Muted, fontSize = 11.sp)
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("AI Assistant", color = OnBg, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                Text("Knows your portfolio, the latest DR-Quant run, the Universe " +
+                    "Map, your benchmark stats and the calendar.",
+                    color = Muted, fontSize = 11.sp, lineHeight = 15.sp)
+            }
+            if (msgs.isNotEmpty()) TextButton(onClick = { ChatBus.clear() }) {
+                Text("Clear", fontSize = 12.sp)
+            }
+        }
         Spacer(Modifier.height(8.dp))
         if (!BackendBus.running) StatusBanner("Start the backend first (Terminal ▶).", Warn)
         LazyColumn(state = listState, modifier = Modifier.weight(1f).fillMaxWidth(),
             verticalArrangement = Arrangement.spacedBy(8.dp)) {
             items(msgs.size) { i ->
-                val (isUser, text) = msgs[i]
+                val m = msgs[i]
                 Row(Modifier.fillMaxWidth(),
-                    horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start) {
+                    horizontalArrangement = if (m.fromUser) Arrangement.End else Arrangement.Start) {
                     Box(
-                        Modifier.widthIn(max = 300.dp)
-                            .background(if (isUser) Accent else Panel2,
+                        Modifier.widthIn(max = 320.dp)
+                            .background(if (m.fromUser) Accent else Panel2,
                                 androidx.compose.foundation.shape.RoundedCornerShape(12.dp))
                             .padding(10.dp)
-                    ) { Text(text, color = OnBg, fontSize = 13.sp) }
+                    ) {
+                        if (m.fromUser) Text(m.text, color = OnBg, fontSize = 13.sp)
+                        else MarkdownText(m.text)
+                    }
                 }
             }
         }
-        if (busy) Row(Modifier.padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+        if (ChatBus.busy) Row(Modifier.padding(vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically) {
             CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp, color = AccentHi)
-            Spacer(Modifier.width(8.dp)); Text("Thinking…", color = Muted, fontSize = 12.sp)
+            Spacer(Modifier.width(8.dp))
+            Text("Thinking — you can leave this screen, the answer will be here.",
+                color = Muted, fontSize = 11.sp)
         }
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            OutlinedTextField(input, { input = it }, modifier = Modifier.weight(1f),
+            OutlinedTextField(ChatBus.draft, { ChatBus.draft = it },
+                modifier = Modifier.weight(1f),
                 placeholder = { Text("Ask about your data…") }, maxLines = 3)
             Spacer(Modifier.width(8.dp))
-            Button(onClick = { send() }, enabled = !busy && input.isNotBlank() && BackendBus.running) {
+            Button(onClick = { ChatBus.send(ChatBus.draft) },
+                enabled = !ChatBus.busy && ChatBus.draft.isNotBlank() && BackendBus.running) {
                 Text("Send")
             }
         }
@@ -1437,80 +1430,133 @@ fun ChatScreen() {
 // DEEP DIVE — last-2-quarter results, valuation issues, quant entry price
 // ─────────────────────────────────────────────────────────────────────────────
 @Composable
-fun DeepDiveDialog(symbol: String, onDismiss: () -> Unit) {
-    // Keyed per symbol so a dive survives closing/reopening the dialog and
-    // navigating away; reopening the same symbol shows the finished result.
+fun DeepDiveScreen(symbol: String) {
+    // Keyed per symbol so a dive survives leaving the screen; coming back to
+    // the same symbol shows the finished result rather than re-running it.
     val job = JobBus.state("deepdive:$symbol")
     LaunchedEffect(symbol) {
         if (job.result == null && !job.running) {
             JobBus.run("deepdive:$symbol", "Analysing…", maxSecs = 240) { Api.deepDive(symbol) }
         }
     }
-    val loading = job.running
-    val res = job.result
-    val error = job.status
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } },
-        title = { Text("Deep dive · $symbol") },
-        text = {
-            Column(Modifier.verticalScroll(rememberScrollState())) {
-                if (loading) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp, color = AccentHi)
-                        Spacer(Modifier.width(10.dp))
-                        Text("Pulling results PDFs, fundamentals & price model…",
-                            color = Muted, fontSize = 12.sp)
-                    }
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+        if (job.running) {
+            SectionCard("Working", AccentHi) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp, color = AccentHi)
+                    Spacer(Modifier.width(10.dp))
+                    Text("Pulling results PDFs, fundamentals & the price model…",
+                        color = Muted, fontSize = 12.sp)
                 }
-                error?.let { StatusBanner(it, Bear) }
-                res?.let { r ->
-                    val f = r.optJSONObject("fundamentals") ?: JSONObject()
-                    val e = r.optJSONObject("entry") ?: JSONObject()
-                    val a = r.optJSONObject("analysis") ?: JSONObject()
+                Spacer(Modifier.height(8.dp))
+                Text("This keeps running if you navigate away or minimise the app.",
+                    color = Muted, fontSize = 10.5.sp)
+            }
+        }
+        job.status?.takeIf { !job.running }?.let {
+            SectionCard("Couldn't complete", Bear) { StatusBanner(it, Bear) }
+        }
+        job.result?.let { r ->
+            val f = r.optJSONObject("fundamentals") ?: JSONObject()
+            val e = r.optJSONObject("entry") ?: JSONObject()
+            val a = r.optJSONObject("analysis") ?: JSONObject()
+            val prov = r.optJSONObject("fundamentals_provenance")
 
-                    Text("Valuation & quality", color = AccentHi, fontSize = 12.sp,
-                        fontWeight = FontWeight.SemiBold)
-                    Spacer(Modifier.height(6.dp))
-                    KpiGrid(listOf(
-                        Triple("PE", fmtNum(f.opt("pe")), OnBg),
-                        Triple("ROE", fmtNum(f.opt("roe_pct")) + "%", OnBg),
-                        Triple("D/E", fmtNum(f.opt("debt_to_equity")), OnBg),
-                        Triple("Profit gr.", fmtNum(f.opt("profit_growth_pct")) + "%",
-                            if (((f.opt("profit_growth_pct") as? Number)?.toDouble() ?: 0.0) >= 0) Bull else Bear),
-                    ))
-
-                    Spacer(Modifier.height(12.dp))
-                    Text("Quant entry", color = AccentHi, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                    Spacer(Modifier.height(6.dp))
-                    StatusBanner("CMP ₹${fmtNum(e.opt("current"))}  ·  50-DMA ₹${fmtNum(e.opt("dma50"))}  ·  " +
-                        "RSI ${fmtNum(e.opt("rsi"))}\nSuggested entry ₹${fmtNum(e.opt("suggested_entry"))} " +
-                        "(zone ₹${fmtNum(e.opt("entry_low"))}–${fmtNum(e.opt("entry_high"))}, " +
-                        "${fmtNum(e.opt("discount_to_cmp_pct"))}% below CMP)\n${e.optString("note", "")}", Bull)
-
-                    Spacer(Modifier.height(12.dp))
-                    a.optString("verdict").takeIf { it.isNotBlank() }?.let { Pill(it, AccentHi); Spacer(Modifier.height(8.dp)) }
-                    deepText("Financial health", a.optString("financial_health"))
-                    deepText("Last 2 quarters", a.optString("quarter_trend"))
-                    deepText("Valuation", a.optString("valuation"))
-                    deepText("Entry view", a.optString("entry_view"))
-                    deepList("Issues", a.optJSONArray("issues"), Warn)
-                    deepList("Red flags", a.optJSONArray("red_flags"), Bear)
-                    a.optString("raw").takeIf { it.isNotBlank() }?.let {
-                        Spacer(Modifier.height(8.dp)); Text(it, color = Muted, fontSize = 11.sp)
+            SectionCard("Valuation & quality", AccentHi) {
+                KpiGrid(listOf(
+                    Triple("P/E", fundVal(f, "pe"), OnBg),
+                    Triple("ROE", fundVal(f, "roe_pct", "%"), OnBg),
+                    Triple("D/E", fundVal(f, "debt_to_equity"), OnBg),
+                    Triple("Sales gr.", fundVal(f, "sales_growth_pct", "%"),
+                        signColor(f.opt("sales_growth_pct"))),
+                    Triple("Profit gr.", fundVal(f, "profit_growth_pct", "%"),
+                        signColor(f.opt("profit_growth_pct"))),
+                    Triple("Mkt cap", fundVal(f, "market_cap_cr", " cr"), OnBg),
+                ))
+                // Name the gaps. A grid of dashes is indistinguishable from a
+                // broken screen; saying which sources answered is not.
+                arr(r, "fundamentals_missing")?.takeIf { it.length() > 0 }?.let { miss ->
+                    Spacer(Modifier.height(10.dp))
+                    val names = (0 until miss.length()).joinToString(", ") {
+                        prettyMetric(miss.optString(it))
                     }
-                    val srcs = r.optJSONArray("sources")
-                    if (srcs != null && srcs.length() > 0) {
-                        Spacer(Modifier.height(10.dp))
-                        Text("Sources", color = Muted, fontSize = 11.sp)
-                        for (i in 0 until srcs.length())
-                            Text("• ${srcs.optJSONObject(i)?.optString("title")}",
-                                color = Muted, fontSize = 11.sp, maxLines = 1)
+                    Text("Not available from any source right now: $names. " +
+                        "These come from public financial sites, which sometimes " +
+                        "block or rate-limit us; the Universe Map's stored values " +
+                        "are used as a fallback where it has them.",
+                        color = Muted, fontSize = 10.5.sp, lineHeight = 15.sp)
+                }
+                prov?.let { pv ->
+                    val stored = pv.keys().asSequence()
+                        .filter { pv.optString(it).contains("universe") }.toList()
+                    if (stored.isNotEmpty()) {
+                        Spacer(Modifier.height(6.dp))
+                        Text("From the Universe Map (stored): " +
+                            stored.joinToString(", ") { prettyMetric(it) },
+                            color = Muted, fontSize = 10.sp)
                     }
                 }
             }
-        },
-    )
+
+            SectionCard("Quant entry", Bull) {
+                StatusBanner("CMP ₹${fmtNum(e.opt("current"))}  ·  50-DMA ₹${fmtNum(e.opt("dma50"))}  ·  " +
+                    "RSI ${fmtNum(e.opt("rsi"))}\nSuggested entry ₹${fmtNum(e.opt("suggested_entry"))} " +
+                    "(zone ₹${fmtNum(e.opt("entry_low"))}–${fmtNum(e.opt("entry_high"))}, " +
+                    "${fmtNum(e.opt("discount_to_cmp_pct"))}% below CMP)\n${e.optString("note", "")}", Bull)
+            }
+
+            SectionCard("Analysis", AccentHi) {
+                a.optString("verdict").takeIf { it.isNotBlank() }?.let {
+                    Pill(it, AccentHi); Spacer(Modifier.height(8.dp))
+                }
+                deepText("Financial health", a.optString("financial_health"))
+                deepText("Last 2 quarters", a.optString("quarter_trend"))
+                deepText("Valuation", a.optString("valuation"))
+                deepText("Entry view", a.optString("entry_view"))
+                deepList("Issues", a.optJSONArray("issues"), Warn)
+                deepList("Red flags", a.optJSONArray("red_flags"), Bear)
+                a.optString("error").takeIf { it.isNotBlank() }?.let {
+                    Spacer(Modifier.height(8.dp)); StatusBanner(it, Bear)
+                }
+                a.optString("raw").takeIf { it.isNotBlank() }?.let {
+                    Spacer(Modifier.height(8.dp)); Text(it, color = Muted, fontSize = 11.sp)
+                }
+            }
+
+            arr(r, "sources")?.takeIf { it.length() > 0 }?.let { srcs ->
+                SectionCard("Sources", Muted) {
+                    for (i in 0 until srcs.length())
+                        Text("• ${srcs.optJSONObject(i)?.optString("title")}",
+                            color = Muted, fontSize = 11.sp, maxLines = 2, lineHeight = 15.sp,
+                            modifier = Modifier.padding(vertical = 2.dp))
+                }
+            }
+            Spacer(Modifier.height(24.dp))
+        }
+    }
+}
+
+/** Metric value, or an explicit dash when no source supplied it. */
+private fun fundVal(f: JSONObject, key: String, suffix: String = ""): String {
+    val v = f.opt(key)
+    if (v == null || v == JSONObject.NULL) return "—"
+    return (if (key == "market_cap_cr") fmtCompact(v) else fmtNum(v)) + suffix
+}
+
+private fun signColor(v: Any?): Color {
+    val d = (v as? Number)?.toDouble() ?: return Muted
+    return if (d >= 0) Bull else Bear
+}
+
+private fun prettyMetric(key: String): String = when (key) {
+    "pe" -> "P/E"
+    "roe_pct" -> "ROE"
+    "roce_pct" -> "ROCE"
+    "debt_to_equity" -> "D/E"
+    "sales_growth_pct" -> "sales growth"
+    "profit_growth_pct" -> "profit growth"
+    "market_cap_cr" -> "market cap"
+    else -> key.replace("_", " ")
 }
 
 @Composable
@@ -1681,7 +1727,6 @@ fun CalendarScreen() {
     val job = JobBus.state("calendar")
     var horizon by remember { mutableStateOf(60) }
     var highOnly by remember { mutableStateOf(false) }
-    var selected by remember { mutableStateOf<JSONObject?>(null) }
 
     // Seed from the backend's cache so switching tabs doesn't refetch ~20 feeds.
     LaunchedEffect(Unit) {
@@ -1777,7 +1822,7 @@ fun CalendarScreen() {
                                 fontWeight = FontWeight.Bold,
                                 modifier = Modifier.padding(top = 12.dp, bottom = 4.dp))
                         }
-                        EventRow(e) { selected = e }
+                        EventRow(e) { UiNav.open(UiNav.Screen.EventImpact(e)) }
                     }
                     if (cutoff > fetchedTo) {
                         Spacer(Modifier.height(10.dp))
@@ -1827,7 +1872,6 @@ fun CalendarScreen() {
         Spacer(Modifier.height(24.dp))
     }
 
-    selected?.let { ev -> EventImpactDialog(ev) { selected = null } }
 }
 
 /**
@@ -1911,40 +1955,26 @@ private fun EventRow(e: JSONObject, onClick: () -> Unit) {
 }
 
 @Composable
-private fun EventImpactDialog(event: JSONObject, onDismiss: () -> Unit) {
-    androidx.compose.ui.window.Dialog(
-        onDismissRequest = onDismiss,
-        properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false),
-    ) {
-        Surface(color = Bg, modifier = Modifier.fillMaxSize()) {
-            Column(Modifier.fillMaxSize()) {
-                Row(Modifier.fillMaxWidth().padding(8.dp),
-                    verticalAlignment = Alignment.CenterVertically) {
-                    Spacer(Modifier.weight(1f))
-                    TextButton(onClick = onDismiss) { Text("✕ Close") }
-                }
-                Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
-                    SectionCard(event.optString("title"), impactColor(event.optString("importance"))) {
-                        Text(prettyDate(event.optString("date"), event.optString("weekday")),
-                            color = AccentHi, fontSize = 13.sp, fontWeight = FontWeight.Bold)
-                        Spacer(Modifier.height(8.dp))
-                        Text(event.optString("why"), color = OnBg.copy(alpha = 0.9f),
-                            fontSize = 13.sp, lineHeight = 19.sp)
-                        Spacer(Modifier.height(10.dp))
-                        Text("Date ${event.optString("certainty")} — source: " +
-                            event.optString("source"), color = Muted, fontSize = 10.sp)
-                    }
-                    AiInsightCard(
-                        jobKey = "ai_event:" + event.optString("date") + event.optString("title"),
-                        title = "What this means for you",
-                        blurb = "Maps this event onto your actual holdings — which names " +
-                            "react, through what channel, and in which direction.",
-                        cta = "✨ Analyse for my portfolio",
-                        accent = Bull,
-                    ) { Api.aiEventImpact(event) }
-                    Spacer(Modifier.height(24.dp))
-                }
-            }
+fun EventImpactScreen(event: JSONObject) {
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+        SectionCard(event.optString("title"), impactColor(event.optString("importance"))) {
+            Text(prettyDate(event.optString("date"), event.optString("weekday")),
+                color = AccentHi, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(8.dp))
+            Text(event.optString("why"), color = OnBg.copy(alpha = 0.9f),
+                fontSize = 13.sp, lineHeight = 19.sp)
+            Spacer(Modifier.height(10.dp))
+            Text("Date ${event.optString("certainty")} — source: " +
+                event.optString("source"), color = Muted, fontSize = 10.sp)
         }
+        AiInsightCard(
+            jobKey = "ai_event:" + event.optString("date") + event.optString("title"),
+            title = "What this means for you",
+            blurb = "Maps this event onto your actual holdings — which names " +
+                "react, through what channel, and in which direction.",
+            cta = "✨ Analyse for my portfolio",
+            accent = Bull,
+        ) { Api.aiEventImpact(event) }
+        Spacer(Modifier.height(24.dp))
     }
 }

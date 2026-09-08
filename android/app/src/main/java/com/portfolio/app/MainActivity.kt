@@ -45,11 +45,13 @@ class MainActivity : ComponentActivity() {
             BackendBus.setLogs(svc.logs.toList())
             BackendBus.onStart = { svc.startServers() }
             BackendBus.onStop = { svc.stopServers() }
+            BackendBus.onActivity = { text -> svc.setActivity(text) }
         }
         override fun onServiceDisconnected(name: ComponentName?) {
             service = null
             BackendBus.onStart = {}
             BackendBus.onStop = {}
+            BackendBus.onActivity = {}
         }
     }
 
@@ -66,6 +68,9 @@ class MainActivity : ComponentActivity() {
     override fun onDestroy() {
         super.onDestroy()
         service?.setStateListener(null)
+        // Deliberately NOT stopping the service: analyses run in this process
+        // and must survive the Activity going away, which is exactly what the
+        // foreground service is for.
         runCatching { unbindService(connection) }
     }
 }

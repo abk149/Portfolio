@@ -35,6 +35,29 @@ app = FastAPI(title="Upstox Portfolio Dashboard")
 app.mount("/static", StaticFiles(directory=HERE / "static"), name="static")
 
 
+@app.exception_handler(Exception)
+async def _unhandled(request: Request, exc: Exception):
+    """Turn any unhandled error into a clean JSON message.
+
+    Without this, an exception anywhere becomes a raw ASGI traceback: the
+    terminal fills with fifty frames of starlette internals and the app shows a
+    truncated "HTTP 500: File ..." with the actual cause cut off. The full
+    traceback still goes to the log, where it belongs.
+    """
+    import traceback
+    log = get_logger("dashboard")
+    log.error(f"unhandled error on {request.url.path}: "
+              f"{type(exc).__name__}: {exc}\n{traceback.format_exc()}")
+    return JSONResponse(
+        status_code=500,
+        content={
+            "error": f"{type(exc).__name__}: {exc}"[:400],
+            "path": request.url.path,
+            "hint": "Full traceback is in the System Terminal log.",
+        },
+    )
+
+
 # (Heavy modules are no longer preloaded — quant runs use a subprocess so the
 # dashboard process stays lean.)
 
@@ -144,10 +167,18 @@ def api_portfolio_deploy_cash(body: dict):
     universe = body.get("universe", "all_nse")
     max_weight = float(body.get("max_weight", 0.25))
 
-    pm = PortfolioManager()
-    snap = pm.snapshot()
+    try:
+        pm = PortfolioManager()
+        snap = pm.snapshot()
+    except _need_upstox() as e:
+        # Every sibling endpoint handles this; this one didn't, so an expired
+        # token surfaced as a 500 with a wall of traceback.
+        return {"error": "Broker not authenticated — open Login and reconnect. "
+                         f"({e})"}
     if snap.holdings.empty:
-        return {"error": "no holdings to optimise around"}
+        return {"error": "No holdings to optimise around. This suggests an "
+                         "allocation relative to what you already own, so it "
+                         "needs at least one existing position."}
 
     val_by_yf = {}
     for _, row in snap.holdings.iterrows():
@@ -178,12 +209,22 @@ def api_portfolio_deploy_cash(body: dict):
             log = get_logger("dashboard")
             log.debug(f"universe candidates pull failed: {e}")
 
-    res = PortfolioOptimizer().deploy_cash(
-        current_value_by_yf=val_by_yf,
-        cash_to_deploy=cash,
-        candidates_extra=candidates,
-        max_weight=max_weight,
-    )
+    try:
+        res = PortfolioOptimizer().deploy_cash(
+            current_value_by_yf=val_by_yf,
+            cash_to_deploy=cash,
+            candidates_extra=candidates,
+            max_weight=max_weight,
+        )
+    except Exception as e:
+        get_logger("dashboard").exception("deploy_cash failed")
+        return {"error": f"Could not compute an allocation: {type(e).__name__}: {e}",
+                "hint": "This needs a year of overlapping price history for your "
+                        "holdings. If the broker feed is down it falls back to a "
+                        "free public source, which can be rate-limited — retry in "
+                        "a minute."}
+    if res.get("error"):
+        return res
     res["universe_candidates_considered"] = len(candidates)
 
     # Enrich each buy with a live price and a whole-share count (amount → shares).
