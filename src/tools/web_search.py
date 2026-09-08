@@ -5,8 +5,11 @@ breaks the others. Sources combined:
 
   1. DuckDuckGo  → indian-outlet-filtered articles (moneycontrol / ET / mint /
                    business-standard / hindubusinessline)
-  2. Reddit      → r/IndianStockMarket, r/IndiaInvestments, r/DalalStreetTalks
-  3. NSE filings → corporate announcements (these double as authoritative news)
+  2. NSE filings → corporate announcements (these double as authoritative news)
+  3. Reddit      → retail chatter, included ONLY where a post is independently
+                   corroborated by one of the named sources above. This bundle
+                   goes straight into the analyst prompt, so unverified social
+                   claims are dropped rather than merely down-weighted.
 
 `news_for()` returns title+snippet+source. `news_with_bodies()` additionally
 fetches the article body for the top URLs — gives the LLM real paragraphs
@@ -121,9 +124,29 @@ class WebSearcher:
         out: list[dict] = []
         out.extend(self._ddg(f"{stock_name} stock news"))
         out.extend(self._google_news(stock_name, company_name))
-        out.extend(self._reddit(stock_name, company_name))
         out.extend(self._moneycontrol_news(stock_name, company_name))
         out.extend(self._nse_filings(stock_name))
+
+        # Reddit is gated on corroboration by the named sources gathered above.
+        # This bundle is fed verbatim into the analyst prompt that decides
+        # KEEP/REJECT on a stock, so an uncorroborated anonymous post here is a
+        # direct route from a pump-and-dump to an investment thesis. Posts that
+        # nothing else confirms are dropped, not down-weighted.
+        social = self._reddit(stock_name, company_name)
+        if social:
+            try:
+                from src.tools.corroborate import corroborate
+                checked = corroborate(social, out)
+                for v in checked["verified"]:
+                    srcs = sorted({e["source"] for e in v["corroboration"]["sources"]})
+                    v["source"] = f"{v.get('source', 'Reddit')} (corroborated by {', '.join(srcs)})"
+                    out.append(v)
+                if checked["counts"]["rejected"]:
+                    log.info(f"  {stock_name}: dropped "
+                             f"{checked['counts']['rejected']} uncorroborated social "
+                             f"post(s); kept {checked['counts']['verified']}")
+            except Exception as e:
+                log.debug(f"social corroboration failed for {stock_name}: {e}")
 
         # dedupe by URL where URLs exist
         seen, deduped = set(), []

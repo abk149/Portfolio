@@ -1734,7 +1734,32 @@ function renderCalendar() {
        <div class="src">${n.source || ""}${n.published ? " · " + String(n.published).slice(0, 22) : ""}</div>
      </div>`).join("") || `<div style="color:var(--muted)">No headlines loaded.</div>`;
 
-  $("cal-sources").innerHTML = (d.sources || []).map(x => `• ${x}`).join("<br>");
+  $("cal-sources").innerHTML = (d.sources || []).map(x => `• ${escapeHtml(x)}`).join("<br>")
+    + sourceHealthHtml(d.source_health);
+}
+
+/**
+ * Feed health. A source that answers 200 with zero items is a silent failure —
+ * it looks like "no news today" rather than a broken feed, and quietly shrinks
+ * the evidence pool every downstream judgement rests on.
+ */
+function sourceHealthHtml(h) {
+  if (!h || !h.sources) return "";
+  const bad = (h.degraded || []);
+  const rows = h.sources.map(r =>
+    `<div style="display:flex;gap:8px;align-items:center;padding:2px 0">
+       <span style="color:${r.ok ? "#3fb950" : "#f85149"}">●</span>
+       <span style="flex:1">${escapeHtml(r.name)}</span>
+       <span style="color:var(--muted)">${r.ok ? `${r.items} · ${r.ms}ms`
+                                               : escapeHtml((r.error||"").slice(0,40))}</span>
+     </div>`).join("");
+  return `
+    <details style="margin-top:12px">
+      <summary style="cursor:pointer; color:${bad.length ? "#d29922" : "#3fb950"}">
+        ${h.healthy}/${h.total} news feeds live${bad.length ? ` — ${bad.length} not responding` : ""}
+      </summary>
+      <div style="margin-top:8px; font-size:11px">${rows}</div>
+    </details>`;
 }
 
 function askEvent(i) {

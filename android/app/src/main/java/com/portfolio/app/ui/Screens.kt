@@ -1817,6 +1817,10 @@ fun CalendarScreen() {
                     for (i in 0 until src.length())
                         Text("• " + src.optString(i), color = Muted, fontSize = 11.sp,
                             modifier = Modifier.padding(vertical = 2.dp))
+                    d.optJSONObject("source_health")?.let { h ->
+                        Spacer(Modifier.height(10.dp))
+                        SourceHealthPanel(h)
+                    }
                 }
             }
         }
@@ -1824,6 +1828,57 @@ fun CalendarScreen() {
     }
 
     selected?.let { ev -> EventImpactDialog(ev) { selected = null } }
+}
+
+/**
+ * Which news feeds answered, and which didn't.
+ *
+ * A feed that quietly returns nothing is indistinguishable from "no news
+ * today" unless something says otherwise — and a shrinking evidence pool
+ * silently weakens every downstream judgement.
+ */
+@Composable
+private fun SourceHealthPanel(h: JSONObject) {
+    var expanded by remember { mutableStateOf(false) }
+    val healthy = h.optInt("healthy")
+    val total = h.optInt("total")
+    val degraded = arr(h, "degraded")
+    val allOk = degraded == null || degraded.length() == 0
+    Column(Modifier.fillMaxWidth().clickable { expanded = !expanded }) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Pill(if (allOk) "$healthy/$total live" else "$healthy/$total live",
+                if (allOk) Bull else Warn)
+            Spacer(Modifier.width(10.dp))
+            Text(if (allOk) "All news feeds responding"
+                 else "${degraded!!.length()} feed(s) not responding",
+                color = Muted, fontSize = 11.sp, modifier = Modifier.weight(1f))
+            Text(if (expanded) "▲" else "▼", color = Muted, fontSize = 10.sp)
+        }
+        if (!allOk && !expanded) {
+            Spacer(Modifier.height(4.dp))
+            Text("Tap for detail. Others cover the gap — the pool just shrinks.",
+                color = Muted, fontSize = 10.sp)
+        }
+        if (expanded) {
+            Spacer(Modifier.height(8.dp))
+            arr(h, "sources")?.let { rows ->
+                for (i in 0 until rows.length()) {
+                    val r = rows.optJSONObject(i) ?: continue
+                    val ok = r.optBoolean("ok")
+                    Row(Modifier.fillMaxWidth().padding(vertical = 2.dp),
+                        verticalAlignment = Alignment.CenterVertically) {
+                        Text(if (ok) "●" else "●", color = if (ok) Bull else Bear, fontSize = 9.sp)
+                        Spacer(Modifier.width(8.dp))
+                        Text(r.optString("name"), color = OnBg.copy(alpha = 0.85f),
+                            fontSize = 11.sp, modifier = Modifier.weight(1f), maxLines = 1)
+                        Text(if (ok) "${r.optInt("items")} · ${r.optInt("ms")}ms"
+                             else r.optString("error").take(28),
+                            color = Muted, fontSize = 10.sp)
+                    }
+                }
+            }
+        }
+    }
 }
 
 @Composable

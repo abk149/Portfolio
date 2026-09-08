@@ -370,6 +370,32 @@ def api_portfolio_benchmark(body: dict | None = None):
         return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
 
+# ---------------- news source diagnostics ----------------
+@app.get("/api/news/health")
+def api_news_health(refresh: bool = False):
+    """Per-source status for the news backbone, plus Reddit's gate state.
+
+    Exists so a degraded feed is visible in the UI instead of silently shrinking
+    the evidence pool — a source that returns nothing looks exactly like "no
+    news today" unless something says otherwise.
+    """
+    out: dict = {"ok": True}
+    try:
+        from src.tools.news_sources import fetch_all, health_report
+        if refresh:
+            fetch_all(limit_per_source=4, days=3)
+        out["news"] = health_report()
+    except Exception as e:
+        out["ok"] = False
+        out["news"] = {"error": f"{type(e).__name__}: {e}"}
+    try:
+        from src.tools.reddit import health as reddit_health
+        out["reddit"] = reddit_health()
+    except Exception as e:
+        out["reddit"] = {"available": False, "last_error": str(e)}
+    return _scrub_for_json(out)
+
+
 # ---------------- market calendar ----------------
 _CAL_CACHE: dict = {"data": None, "at": 0.0}
 

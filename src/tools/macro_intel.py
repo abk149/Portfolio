@@ -65,6 +65,8 @@ _RSS_FEEDS = [
 
 
 def _fetch_rss(url: str, limit: int = 8) -> list[dict]:
+    """Deprecated shim — `news_sources` owns feed fetching now. Kept because
+    market_calendar imports it for the RBI feed."""
     """Generic RSS/Atom reader → [{title, url, published}]. Best-effort."""
     import re
     import requests
@@ -115,9 +117,17 @@ def _parse_pub(pub: Optional[str]) -> Optional[datetime]:
 
 
 def gather_signals(days: int = 14, per_query: int = 5) -> dict:
-    """Collect recent, dated macro signals. Every source is best-effort."""
-    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    """Collect recent, dated macro signals. Every source is best-effort.
 
+    News comes from the shared backbone in `news_sources` (dozens of feeds,
+    fetched in parallel with per-source health tracking) rather than a private
+    list here — the old list had three sources that had been silently returning
+    nothing for a while.
+
+    Reddit is included ONLY where a post is independently corroborated by that
+    news pool. Anonymous chatter that nothing else confirms is discarded before
+    the model ever sees it, and the count of what was dropped is reported.
+    """
     macro = {}
     try:
         from src.tools.macro import MacroSnapshot
@@ -126,60 +136,37 @@ def gather_signals(days: int = 14, per_query: int = 5) -> dict:
         log.debug(f"macro snapshot failed: {e}")
 
     news: list[dict] = []
-    seen_titles: set = set()
-
-    def _add_news(topic, title, source, published, snippet):
-        if not title:
-            return
-        key = title.strip().lower()[:80]
-        if key in seen_titles:
-            return
-        dt = _parse_pub(published)
-        if dt and dt < cutoff:
-            return                                # too old → drop (no stale bias)
-        seen_titles.add(key)
-        news.append({"topic": topic, "title": title, "source": source,
-                     "published": published, "snippet": (snippet or "")[:240]})
-
-    # Source 1: Google News RSS over curated macro queries.
+    health: dict = {}
     try:
-        from src.tools.google_news import google_news_rss
-        for q in _QUERIES:
-            for it in (google_news_rss(q, limit=per_query) or []):
-                _add_news(q, it.get("title"), it.get("source"),
-                          it.get("published"), it.get("snippet"))
+        from src.tools.news_sources import fetch_all
+        pool = fetch_all(limit_per_source=per_query + 1, days=days)
+        news = pool["items"]
+        health = pool["health"]
     except Exception as e:
-        log.debug(f"google news failed: {e}")
-
-    # Sources 2-14: distinct financial-news RSS feeds.
-    for name, url in _RSS_FEEDS:
-        if not url:
-            continue
-        for it in _fetch_rss(url, limit=6):
-            _add_news(name, it.get("title"), name, it.get("published"), it.get("snippet"))
+        log.warning(f"news backbone failed: {e}")
 
     reddit: list[dict] = []
+    reddit_report: dict = {}
     try:
-        from src.tools.reddit import _do_search
-        for sub, q in _SUBREDDITS:
-            for it in (_do_search(q, sub, 6, sort="new") or []):
-                cu = it.get("created_utc")
-                if cu and datetime.fromtimestamp(cu, tz=timezone.utc) < cutoff:
-                    continue
-                reddit.append({
-                    "subreddit": it.get("subreddit"), "title": it.get("title"),
-                    "score": it.get("score"), "snippet": (it.get("snippet") or "")[:200],
-                })
+        from src.tools.reddit import fetch_verified
+        vr = fetch_verified(news_items=news, limit=25, total_budget_s=20.0)
+        reddit = vr["verified"]
+        reddit_report = {"counts": vr["counts"], "note": vr["note"],
+                         "health": vr.get("reddit_health", {})}
     except Exception as e:
         log.debug(f"reddit gather failed: {e}")
+        reddit_report = {"note": f"Reddit unavailable ({e}). Skipped — it is an "
+                                 f"optional, cross-checked sentiment source."}
 
     return {
         "as_of": datetime.now().isoformat(timespec="minutes"),
         "window_days": days,
         "macro": macro,
         "news": news[:90],
-        "reddit": reddit[:30],
-        "sources_used": len([u for _, u in _RSS_FEEDS if u]) + 1 + len(_SUBREDDITS),
+        "reddit": reddit[:20],
+        "reddit_report": reddit_report,
+        "source_health": health,
+        "sources_used": health.get("healthy", 0),
     }
 
 
@@ -237,7 +224,11 @@ def build_macro_themes(days: int = 14, max_themes: int = 6) -> dict:
         for u in universe)
     news_str = "\n".join(f"- [{n.get('published') or '?'}] {n['title']} ({n.get('source')})"
                          for n in signals["news"][:50])
-    reddit_str = "\n".join(f"- r/{r['subreddit']}: {r['title']}" for r in signals["reddit"][:20])
+    reddit_str = "\n".join(
+        f"- r/{r.get('subreddit')}: {r.get('title')}"
+        + (f"  [corroborated by {', '.join(sorted({e['source'] for e in r['corroboration']['sources']}))}]"
+           if r.get("corroboration") else "")
+        for r in signals["reddit"][:20])
     macro = signals.get("macro") or {}
     macro_str = (f"VIX {macro.get('india_vix')} · PCR {macro.get('nifty_pcr')} · "
                  f"USDINR {macro.get('usdinr')} · mode {macro.get('mode')}\n"
@@ -258,8 +249,9 @@ MACRO SNAPSHOT:
 RECENT NEWS (domestic + global affecting India, {len(signals['news'])} items from {signals.get('sources_used')} sources):
 {news_str or '(none)'}
 
-RETAIL CHATTER (Reddit):
-{reddit_str or '(none)'}
+RETAIL CHATTER (Reddit — ONLY posts independently corroborated by a named news
+source are listed; uncorroborated chatter has been discarded):
+{reddit_str or '(none — nothing from social passed cross-verification)'}
 
 DR-QUANT validated this run: {', '.join(quant) or '(none)'}
 

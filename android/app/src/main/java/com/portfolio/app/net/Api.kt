@@ -107,6 +107,8 @@ object Api {
         post("/api/calendar", JSONObject()
             .put("days_ahead", daysAhead).put("days_back", daysBack).put("refresh", refresh))
     suspend fun calendarCached() = get("/api/calendar/cached")
+    suspend fun newsHealth(refresh: Boolean = false) =
+        get("/api/news/health" + if (refresh) "?refresh=true" else "")
 
     // ── AI applications (all job-based; poll /api/jobs/{id}) ──
     suspend fun aiBrief() = post("/api/ai/brief")

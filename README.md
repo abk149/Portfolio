@@ -49,11 +49,19 @@ the desktop and the phone.
   **resumable**: it checkpoints to disk as it goes and reuses anything still
   fresh, so a first full‑NSE build can be interrupted and picked up later
   instead of starting over.
-- **Macro Ideas** — ingests **recent, date‑filtered** signals from ~20 sources
-  (financial‑news RSS, Google News, Reddit) + a live macro snapshot (VIX / PCR /
-  USDINR), then an LLM weighs **all** factors into one *holistic* view and
-  returns 3–7 conviction‑ranked picks — each with sector, a **quant entry
-  price**, and a detailed multi‑factor thesis.
+- **Macro Ideas** — ingests **recent, date‑filtered** signals from **40+ live
+  sources** — business dailies, wires, and primary feeds from SEBI, RBI, PIB,
+  NSE and BSE — fetched in parallel with **per‑source health tracking**, plus a
+  live macro snapshot (VIX / PCR / USD‑INR). An LLM then weighs **all** factors
+  into one *holistic* view and returns 3–7 conviction‑ranked picks, each with
+  sector, a **quant entry price**, and a multi‑factor thesis.
+- **Social claims are cross‑verified, never trusted** — Reddit is included only
+  where a post is independently corroborated by a named news source. Matching
+  requires a shared *phrase* **and** a shared *named entity*, so a coincidental
+  word can't launder an anonymous pump post into an apparent fact. Whatever
+  fails the check is discarded before the model sees it, and the drop is
+  reported rather than silent. Covered by regression tests built from real
+  false positives.
 - **Deep dive** — for any stock: pulls the last two quarters' results /
   earnings‑call PDFs, extracts the text, and produces a skeptical equity‑research
   read (financial‑health issues, valuation, red flags) plus a technical entry
@@ -142,6 +150,7 @@ NVIDIA NIM (OpenAI‑compatible) · Upstox & Groww trading APIs.
 | `src/tools/` | Fundamentals, news/RSS, Reddit, macro snapshot, market calendar, deep‑dive, PDF |
 | `src/dashboard/` | FastAPI app + web UI |
 | `android/` | Native Jetpack Compose app (runs the Python backend on‑device) |
+| `tests/` | Regression tests for the corroboration matcher and trade analysis |
 | `main.py` | Typer CLI entrypoint |
 
 Every module is independent — import and use any piece without the CLI or agents.

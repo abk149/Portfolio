@@ -31,12 +31,55 @@ class IntradayAnalyzer:
         df = pd.DataFrame(rows)
         if df.empty:
             return df
-        df["trade_date"] = pd.to_datetime(df.get("trade_date") or df.get("order_timestamp")).dt.date
-        df["qty"] = df["quantity"].astype(float)
-        df["price"] = df["price"].astype(float)
-        df["signed_qty"] = np.where(df["transaction_type"] == "BUY", df["qty"], -df["qty"])
-        df["cashflow"] = -df["signed_qty"] * df["price"]
-        return df
+        return self._normalise(df)
+
+    # Brokers disagree on field names, and a missing one used to raise a bare
+    # KeyError halfway through. Resolve every column explicitly, from the first
+    # alias actually present.
+    _ALIASES = {
+        "trade_date": ("trade_date", "order_timestamp", "exchange_time", "trade_time"),
+        "quantity":   ("quantity", "trade_qty", "qty", "filled_quantity"),
+        "price":      ("price", "trade_price", "average_price", "avg_price"),
+        "side":       ("transaction_type", "trade_type", "side", "buy_sell"),
+        "symbol":     ("tradingsymbol", "trading_symbol", "symbol", "scrip_name"),
+    }
+
+    @classmethod
+    def _pick(cls, df: pd.DataFrame, field: str) -> Optional[str]:
+        for name in cls._ALIASES[field]:
+            if name in df.columns:
+                return name
+        return None
+
+    @classmethod
+    def _normalise(cls, df: pd.DataFrame) -> pd.DataFrame:
+        """Map a broker's trade rows onto the columns the analysis expects."""
+        cols = {f: cls._pick(df, f) for f in cls._ALIASES}
+        missing = [f for f, c in cols.items() if c is None]
+        if missing:
+            raise ValueError(
+                "Trade history is missing required field(s): "
+                + ", ".join(missing)
+                + f". Broker returned columns: {', '.join(map(str, df.columns))}")
+
+        out = df.copy()
+        # NOTE: `df.get(a) or df.get(b)` looks harmless but calls bool() on a
+        # Series, which raises "The truth value of a Series is ambiguous".
+        # Column selection must be done on names, never by truthiness.
+        out["trade_date"] = pd.to_datetime(
+            out[cols["trade_date"]], errors="coerce", format="mixed").dt.date
+        out["qty"] = pd.to_numeric(out[cols["quantity"]], errors="coerce").astype(float)
+        out["price"] = pd.to_numeric(out[cols["price"]], errors="coerce").astype(float)
+        out["tradingsymbol"] = out[cols["symbol"]].astype(str)
+
+        side = out[cols["side"]].astype(str).str.upper().str.strip()
+        is_buy = side.str.startswith("B")          # BUY / B / BOT
+        out["signed_qty"] = np.where(is_buy, out["qty"], -out["qty"])
+        out["cashflow"] = -out["signed_qty"] * out["price"]
+
+        # A row with no date, quantity or price can't be paired into a
+        # round-trip; drop it rather than let NaN poison the aggregates.
+        return out.dropna(subset=["trade_date", "qty", "price"]).reset_index(drop=True)
 
     def _close_out_intraday(self, df: pd.DataFrame) -> pd.DataFrame:
         """Pair BUY/SELL within same symbol+date → realised round-trips."""
@@ -69,6 +112,7 @@ class IntradayAnalyzer:
 
         wins = rt[rt["pnl"] > 0]
         losses = rt[rt["pnl"] <= 0]
+        loss_sum = abs(losses["pnl"].sum()) if not losses.empty else 0.0
 
         stats = {
             "window_days": days,
@@ -77,7 +121,8 @@ class IntradayAnalyzer:
             "avg_win": round(wins["pnl"].mean(), 2) if not wins.empty else 0,
             "avg_loss": round(losses["pnl"].mean(), 2) if not losses.empty else 0,
             "expectancy": round(rt["pnl"].mean(), 2),
-            "profit_factor": round(wins["pnl"].sum() / abs(losses["pnl"].sum()), 2) if not losses.empty and losses["pnl"].sum() != 0 else None,
+            "profit_factor": (round(wins["pnl"].sum() / loss_sum, 2)
+                              if loss_sum > 0 else None),
             "total_pnl": round(rt["pnl"].sum(), 2),
             "best": rt.nlargest(5, "pnl")[["date", "symbol", "pnl", "pnl_pct"]].to_dict("records"),
             "worst": rt.nsmallest(5, "pnl")[["date", "symbol", "pnl", "pnl_pct"]].to_dict("records"),

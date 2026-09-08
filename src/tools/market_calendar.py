@@ -326,52 +326,28 @@ def _is_market_news(title: str) -> bool:
 
 
 def bulletin(days_back: int = 5, limit: int = 40) -> list[dict]:
-    """Recent, date-filtered market-moving headlines from the macro feeds."""
-    from src.tools.macro_intel import _RSS_FEEDS, _fetch_rss, _parse_pub
-    cutoff = datetime.now(timezone.utc) - timedelta(days=days_back)
-    seen: set[str] = set()
+    """Recent, date-filtered, market-relevant headlines.
+
+    Sourced from the shared `news_sources` backbone — dozens of feeds fetched in
+    parallel with per-source health tracking — rather than a private feed list.
+    """
     out: list[dict] = []
-
-    def add(title, source, published, snippet, region="India"):
-        if not title:
-            return
-        key = title.strip().lower()[:80]
-        if key in seen:
-            return
-        dt = _parse_pub(published)
-        if dt and dt < cutoff:
-            return                                   # stale → drop
-        if not _is_market_news(title):
-            return                                   # not market news → drop
-        seen.add(key)
-        out.append({"title": title[:200], "source": source, "region": region,
-                    "published": published, "snippet": (snippet or "")[:220]})
-
-    for name, url in _RSS_FEEDS:
-        if not url:
-            continue
-        for it in _fetch_rss(url, limit=5):
-            add(it.get("title"), name, it.get("published"), it.get("snippet"))
-
-    # Global macro angle via Google News, so the bulletin isn't India-only.
     try:
-        from src.tools.google_news import google_news_rss
-        for q, region in [("Federal Reserve rate decision", "US"),
-                          ("US inflation CPI report", "US"),
-                          ("crude oil price OPEC", "Global"),
-                          ("FII DII flows Indian equities", "India"),
-                          ("RBI monetary policy repo rate", "India")]:
-            for it in (google_news_rss(q, limit=4) or []):
-                add(it.get("title"), it.get("source") or "Google News",
-                    it.get("published"), it.get("snippet"), region)
+        from src.tools.news_sources import fetch_all
+        pool = fetch_all(limit_per_source=5, days=max(days_back, 2))
+        for it in pool["items"]:
+            if not _is_market_news(it.get("title", "")):
+                continue                                 # not market news → drop
+            out.append({
+                "title": (it.get("title") or "")[:200],
+                "source": it.get("source", "?"),
+                "region": it.get("region", "India"),
+                "published": it.get("published_dt") or it.get("published"),
+                "url": it.get("url", ""),
+                "snippet": (it.get("snippet") or "")[:220],
+            })
     except Exception as e:
-        log.debug(f"bulletin google news failed: {e}")
-
-    def _key(item):
-        dt = _parse_pub(item.get("published"))
-        return dt or datetime.min.replace(tzinfo=timezone.utc)
-
-    out.sort(key=_key, reverse=True)
+        log.warning(f"bulletin backbone failed: {e}")
     return _interleave(out, limit)
 
 
@@ -444,10 +420,14 @@ def build_calendar(days_ahead: int = 60, days_back: int = 7,
     except Exception as e:
         log.warning(f"recurring source failed: {e}")
 
+    source_health: dict = {}
     if with_bulletin:
         try:
             news += bulletin(days_back=max(days_back, 5))
-            sources.append("13 financial RSS feeds + Google News")
+            from src.tools.news_sources import health_report
+            source_health = health_report()
+            sources.append(f"{source_health.get('healthy', 0)} live news feeds "
+                           f"(of {source_health.get('total', 0)} tried)")
         except Exception as e:
             log.warning(f"bulletin failed: {e}")
     news = _interleave(news, 40)
@@ -473,6 +453,7 @@ def build_calendar(days_ahead: int = 60, days_back: int = 7,
         "next_high_impact": [e for e in upcoming if e["importance"] == "HIGH"][:5],
         "bulletin": news[:40],
         "sources": sources,
+        "source_health": source_health,
         "counts": {
             "events": len(events),
             "upcoming": len(upcoming),
