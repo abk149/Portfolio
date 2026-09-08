@@ -88,14 +88,21 @@ def _run_job(job_id: str, fn, *args, **kwargs):
 
 
 def _df(o):
+    """DataFrame → JSON-safe list of records.
+
+    The obvious `clean.where(pd.notnull(clean), None)` does NOT work, which is
+    what this used to do: you cannot store None in a float64 column, so pandas
+    silently coerces it straight back to NaN. Non-float columns were cleaned and
+    float columns — exactly the ones that carry missing fundamentals — were not,
+    so any screener result with a missing P/E or ROE reached Starlette as NaN
+    and 500'd with "Out of range float values are not JSON compliant".
+
+    Scrubbing the records after conversion is the reliable order, and it picks
+    up numpy scalars (np.int64, np.bool_) in the same pass.
+    """
     if isinstance(o, pd.DataFrame):
-        import numpy as np
-        # Replace ±Inf → NaN → None so Starlette's strict JSON encoder (which
-        # rejects NaN/Infinity) doesn't 500. pd.notnull keeps Inf, so the
-        # explicit Inf→NaN step is required.
-        clean = o.replace([np.inf, -np.inf], np.nan)
-        return clean.where(pd.notnull(clean), None).to_dict("records")
-    return o
+        return _scrub_for_json(o.to_dict("records"))
+    return _scrub_for_json(o)
 
 
 # ---------------- views ----------------
@@ -637,12 +644,12 @@ def api_screener(body: dict):
                                   tech_min=body.get("tech_min", 60.0))
         full = eng.fundamental_scan(tech, fund_min=body.get("fund_min", 50.0)) \
             if not tech.empty else pd.DataFrame()
-        return {
+        return _scrub_for_json({
             "technical_count": len(tech),
             "final_count": len(full),
             "technical": _df(tech.head(100)),
             "results": _df(full),
-        }
+        })
 
     _run_job(job_id, _do)
     return {"job_id": job_id}
