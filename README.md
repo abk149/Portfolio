@@ -20,10 +20,15 @@ the desktop and the phone.
 - **Performance & attribution** — reconstructs your portfolio value **over time**
   from executed orders, money‑weighted return (**XIRR**), winners/losers, and
   "sold‑too‑early" opportunity misses.
-- **Ghost portfolio (paper trading)** — take any recommendation on paper with one
-  tap; it books at the **live price** (you don't get to pick the fill, or the
-  record proves nothing) and is then tracked with the same machinery as the real
-  book. Two charts: your real book, the paper book and the two combined; and the
+- **Ghost portfolio (paper trading)** — the point is to score the *engines*, not
+  your own instincts, so recommendations arrive on their own: every pick from
+  Macro Ideas, the DR-Quant funnel and the cash optimiser lands in a queue with
+  a **Buy** button and the amount the engine itself proposed. Each position keeps
+  its provenance, so a **scorecard by engine** shows which one is actually worth
+  listening to — P&L, return and hit rate per source, with your own manual picks
+  tracked separately so they can't be credited to an engine. Positions book at
+  the **live price** (you don't get to pick the fill, or the record proves
+  nothing) and are then tracked with the same machinery as the real book. Two charts: your real book, the paper book and the two combined; and the
   ghost book standalone. Closed positions keep their realised P&L, so the track
   record includes what went wrong. A **sell review** runs the same exit
   discipline a real position gets — RSI, moving averages, give-back from the

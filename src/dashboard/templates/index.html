@@ -274,12 +274,36 @@
   </div>
 
   <div class="card">
-    <h3>👻 Take a paper position</h3>
+    <h3>📥 Recommendations to test <span id="ghost-rec-count" style="color:var(--muted);font-weight:400"></span></h3>
+    <div style="color:var(--muted); font-size:12px; margin-top:4px; line-height:1.55">
+      Everything the engines have suggested — Macro Ideas, the DR-Quant funnel and
+      the cash optimiser — lands here on its own. Buy from this list rather than
+      typing symbols in, so the track record measures the <b>system's</b> calls
+      and not your own.
+    </div>
+    <div id="ghost-recs" style="margin-top:12px"></div>
+    <span id="ghost-msg" class="status"></span>
+  </div>
+
+  <div class="card" style="margin-top:16px">
+    <h3>🏁 Scorecard by engine</h3>
+    <div style="color:var(--muted); font-size:12px; margin-top:4px">
+      Paper P&L split by which engine suggested the position — the number this
+      whole exercise exists to produce.
+    </div>
+    <div id="ghost-attrib" style="margin-top:12px"></div>
+  </div>
+
+  <div class="card" style="margin-top:16px">
+    <h3>Add your own pick</h3>
+    <div style="color:var(--muted); font-size:11px; margin-top:4px">
+      Outside the queue, and tracked separately in the scorecard so it can't be
+      confused with the engines' record.
+    </div>
     <div class="row" style="margin-top:10px">
       <label>Symbol <input type="text" id="ghost-sym" placeholder="RELIANCE" style="width:140px"></label>
       <label>Amount (₹) <input type="number" id="ghost-amt" value="25000" min="500" step="500" style="width:120px"></label>
-      <button class="primary" onclick="ghostBuy()">Invest</button>
-      <span id="ghost-msg" class="status"></span>
+      <button onclick="ghostBuy()">Invest</button>
     </div>
   </div>
 

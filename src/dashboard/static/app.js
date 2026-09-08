@@ -1836,6 +1836,8 @@ async function ghostLoad() {
       ])
     : "<div style='color:var(--muted)'>No open paper positions.</div>";
 
+  ghostAttribution(d);
+
   $("ghost-closed").innerHTML = (d.closed || []).length
     ? table(d.closed, [
         {key: "symbol"}, {key: "qty", title: "Qty"},
@@ -1954,5 +1956,85 @@ async function ghostReview() {
 }
 
 document.querySelector('[data-tab="ghost"]')?.addEventListener("click", () => {
-  if (!window._ghostInited) { window._ghostInited = true; ghostLoad(); }
+  if (!window._ghostInited) { window._ghostInited = true; ghostLoad(); ghostRecs(); }
 });
+
+// --- recommendation queue → ghost book ---------------------------------------
+async function ghostRecs() {
+  const d = await fetch("/api/recommendations").then(r => r.json()).catch(() => null);
+  if (!d) return;
+  const pending = (d.items || []).filter(i => i.status === "pending");
+  const c = d.counts || {};
+  $("ghost-rec-count").textContent =
+    `(${pending.length} pending · ${c.taken || 0} taken · ${c.dismissed || 0} skipped)`;
+
+  $("ghost-recs").innerHTML = pending.length ? pending.map(r => {
+    const bits = [
+      r.suggested_entry != null ? `suggested entry ${inr(r.suggested_entry)}` : null,
+      r.suggested_amount != null ? `suggested ${inr(r.suggested_amount)}` : null,
+      r.suggested_shares ? `${r.suggested_shares} shares` : null,
+    ].filter(Boolean).join(" · ");
+    return `
+      <div class="vcard">
+        <div class="vcard-head">
+          <div>
+            <div class="vcard-sym">${escapeHtml(r.symbol)}</div>
+            <div class="vcard-sector">${escapeHtml(r.source_label)}${
+              r.sector && r.sector !== "null" ? " · " + escapeHtml(r.sector) : ""}</div>
+          </div>
+          ${r.conviction && r.conviction !== "null"
+            ? `<span class="cal-tag" style="color:#3fb950;border-color:#3fb950">${escapeHtml(r.conviction)}</span>`
+            : ""}
+        </div>
+        ${r.rationale && r.rationale !== "null"
+          ? `<div class="vcard-thesis">${escapeHtml(r.rationale)}</div>` : ""}
+        ${bits ? `<div style="color:var(--muted);font-size:11px;margin-top:8px">${bits}</div>` : ""}
+        <div class="row" style="margin-top:10px">
+          <input type="number" id="recamt-${r.id}" value="${Math.round(r.suggested_amount || 25000)}"
+                 min="500" step="500" style="width:120px">
+          <button class="primary" onclick="ghostTake('${r.id}')">Buy</button>
+          <button onclick="ghostSkip('${r.id}')">Skip</button>
+        </div>
+      </div>`;
+  }).join("")
+    : `<div style="color:var(--muted)">Nothing waiting. Run Macro Ideas, the
+       DR-Quant funnel or the cash optimiser and their picks appear here.</div>`;
+}
+
+async function ghostTake(id) {
+  const amount = parseFloat(($(`recamt-${id}`) || {}).value);
+  $("ghost-msg").textContent = "Getting the live price…";
+  const r = await fetch("/api/recommendations/take", {
+    method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({id, amount}),
+  }).then(r => r.json());
+  $("ghost-msg").innerHTML = r.error
+    ? `<span class="neg">${escapeHtml(r.error)}</span>`
+    : `<span class="pos">Bought ${r.position.qty} ${r.position.symbol} at ${inr(r.position.entry_price)}</span>`;
+  ghostRecs(); ghostLoad();
+}
+
+async function ghostSkip(id) {
+  await fetch("/api/recommendations/dismiss", {
+    method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({id}),
+  });
+  ghostRecs();
+}
+
+function ghostAttribution(d) {
+  const rows = ((d.attribution || {}).by_source) || [];
+  $("ghost-attrib").innerHTML = rows.length
+    ? table(rows, [
+        {key: "label", title: "Engine"},
+        {key: "n_total", title: "Picks"},
+        {key: "invested", title: "Put in", fmt: v => inr(v)},
+        {key: "total_pnl", title: "P&L", fmt: v => inr(v), cls: v => cls(v)},
+        {key: "return_pct", title: "Return", fmt: v => v == null ? "—" : fmt(v) + "%",
+         cls: v => cls(v)},
+        {key: "hit_rate_pct", title: "Hit rate",
+         fmt: (v, r) => v == null ? "—" : `${fmt(v, 0)}% (${r.n_closed} closed)`},
+      ]) + `<div style="color:var(--muted);font-size:11px;margin-top:8px">${
+        escapeHtml((d.attribution || {}).note || "")}</div>`
+    : "<div style='color:var(--muted)'>No paper positions yet.</div>";
+}

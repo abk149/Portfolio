@@ -27,13 +27,46 @@ import org.json.JSONObject
 object GhostBus {
     var snapshot by mutableStateOf<JSONObject?>(null)
         private set
+    /** Pending engine recommendations waiting to be taken or dismissed. */
+    var recommendations by mutableStateOf<JSONObject?>(null)
+        private set
     var lastMessage by mutableStateOf<String?>(null)
+    var busyId by mutableStateOf<String?>(null)
+        private set
 
     private val scope = kotlinx.coroutines.CoroutineScope(
         kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Main.immediate)
 
     fun refresh() {
-        scope.launch { Api.ghost().objOrNull()?.let { snapshot = it } }
+        scope.launch {
+            Api.ghost().objOrNull()?.let { snapshot = it }
+            Api.recommendations().objOrNull()?.let { recommendations = it }
+        }
+    }
+
+    /** Buy a recommendation into the ghost book, keeping its provenance. */
+    fun take(id: String, amount: Double?) {
+        if (busyId != null) return
+        busyId = id
+        scope.launch {
+            lastMessage = when (val r = Api.recommendationTake(id, amount)) {
+                is Api.Resp.Err -> "Couldn't invest: ${r.message}"
+                is Api.Resp.Ok -> {
+                    val err = r.body.optString("error")
+                    if (err.isNotBlank()) err else {
+                        val p = r.body.optJSONObject("position")
+                        "Bought ${p?.optInt("qty")} ${p?.optString("symbol")} " +
+                            "at ₹${p?.optDouble("entry_price")}"
+                    }
+                }
+            }
+            busyId = null
+            refresh()
+        }
+    }
+
+    fun dismiss(id: String) {
+        scope.launch { Api.recommendationDismiss(id); refresh() }
     }
 
     fun buy(symbol: String, amount: Double, source: String, onDone: (String) -> Unit = {}) {
@@ -129,34 +162,66 @@ fun GhostScreen() {
 
         SectionCard("Ghost portfolio", AccentHi) {
             Text("Paper positions, treated exactly like real ones — same prices, " +
-                "same technicals, same calendar, same sell discipline. Test the " +
-                "system's ideas here before trusting them with money.",
+                "same technicals, same calendar, same sell discipline.\n\n" +
+                "Buy from the queue below rather than typing symbols in: the " +
+                "engines' picks arrive here on their own, so what you end up " +
+                "measuring is the system's judgement rather than your own.",
                 color = Muted, fontSize = 12.sp, lineHeight = 17.sp)
-            Spacer(Modifier.height(12.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                OutlinedTextField(symInput, { symInput = it.uppercase() },
-                    label = { Text("Symbol") }, singleLine = true,
-                    modifier = Modifier.weight(1.1f))
-                Spacer(Modifier.width(8.dp))
-                OutlinedTextField(amtInput, { amtInput = it.filter { c -> c.isDigit() } },
-                    label = { Text("₹") }, singleLine = true, modifier = Modifier.weight(1f))
-                Spacer(Modifier.width(8.dp))
-                Button(
-                    onClick = {
-                        val amt = amtInput.toDoubleOrNull() ?: 0.0
-                        if (symInput.isNotBlank() && amt > 0) {
-                            GhostBus.buy(symInput.trim(), amt, "manual")
-                            symInput = ""
-                        }
-                    },
-                    enabled = symInput.isNotBlank() && amtInput.isNotBlank(),
-                ) { Text("Invest") }
-            }
             GhostBus.lastMessage?.let {
-                Spacer(Modifier.height(8.dp))
+                Spacer(Modifier.height(10.dp))
                 StatusBanner(it, if (it.startsWith("Bought")) Bull else Bear)
             }
         }
+
+        // ── The queue: what the ENGINES suggested, waiting to be tested ──
+        val recs = GhostBus.recommendations
+        val pending = ArrayList<JSONObject>()
+        arr(recs, "items")?.let { items ->
+            for (i in 0 until items.length()) {
+                val it0 = items.optJSONObject(i) ?: continue
+                if (it0.optString("status") == "pending") pending.add(it0)
+            }
+        }
+        SectionCard("Recommendations to test (${pending.size})", Bull) {
+            Text("Everything the engines have suggested — Macro Ideas, the " +
+                "DR-Quant funnel and the cash optimiser — lands here on its own. " +
+                "Buy them from this list rather than typing symbols in, so the " +
+                "track record measures the system's calls and not your own.",
+                color = Muted, fontSize = 12.sp, lineHeight = 17.sp)
+            if (pending.isEmpty()) {
+                Spacer(Modifier.height(10.dp))
+                StatusBanner("Nothing waiting. Run Macro Ideas, the DR-Quant " +
+                    "funnel, or the cash optimiser and their picks will appear here.",
+                    Muted)
+            } else {
+                Spacer(Modifier.height(6.dp))
+                pending.forEach { RecommendationCard(it) }
+            }
+            recs?.optJSONObject("counts")?.let { c ->
+                Spacer(Modifier.height(10.dp))
+                Text("${c.optInt("taken")} taken · ${c.optInt("dismissed")} dismissed " +
+                    "· ${c.optInt("pending")} pending", color = Muted, fontSize = 10.sp)
+            }
+        }
+
+        // ── Which engine is actually worth listening to ──
+        arr(snap?.optJSONObject("attribution"), "by_source")
+            ?.takeIf { it.length() > 0 }?.let { rows ->
+                SectionCard("Scorecard by engine", AccentHi) {
+                    Text("Paper P&L split by which engine suggested the position. " +
+                        "This is the number the whole exercise exists to produce.",
+                        color = Muted, fontSize = 11.sp, lineHeight = 16.sp)
+                    Spacer(Modifier.height(10.dp))
+                    for (i in 0 until rows.length()) {
+                        rows.optJSONObject(i)?.let { EngineScoreRow(it) }
+                    }
+                    snap?.optJSONObject("attribution")?.optString("note")
+                        ?.takeIf { it.isNotBlank() }?.let {
+                            Spacer(Modifier.height(10.dp))
+                            Text(it, color = Muted, fontSize = 10.sp, lineHeight = 15.sp)
+                        }
+                }
+            }
 
         snap?.optJSONObject("summary")?.let { s ->
             fun d(k: String) = (s.opt(k) as? Number)?.toDouble() ?: 0.0
@@ -333,6 +398,33 @@ fun GhostScreen() {
             }
         }
 
+        SectionCard("Add your own pick", Muted) {
+            Text("Outside the queue. Tracked separately in the scorecard as " +
+                "\"Your own pick\", so it can't be confused with the engines' " +
+                "record — which is the thing being tested.",
+                color = Muted, fontSize = 11.sp, lineHeight = 16.sp)
+            Spacer(Modifier.height(10.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                OutlinedTextField(symInput, { symInput = it.uppercase() },
+                    label = { Text("Symbol") }, singleLine = true,
+                    modifier = Modifier.weight(1.1f))
+                Spacer(Modifier.width(8.dp))
+                OutlinedTextField(amtInput, { amtInput = it.filter { c -> c.isDigit() } },
+                    label = { Text("₹") }, singleLine = true, modifier = Modifier.weight(1f))
+                Spacer(Modifier.width(8.dp))
+                Button(
+                    onClick = {
+                        val amt = amtInput.toDoubleOrNull() ?: 0.0
+                        if (symInput.isNotBlank() && amt > 0) {
+                            GhostBus.buy(symInput.trim(), amt, "manual")
+                            symInput = ""
+                        }
+                    },
+                    enabled = symInput.isNotBlank() && amtInput.isNotBlank(),
+                ) { Text("Invest") }
+            }
+        }
+
         if (snap != null && ((arr(snap, "open")?.length() ?: 0) > 0 ||
                 (arr(snap, "closed")?.length() ?: 0) > 0)) {
             SectionCard("Reset", Muted) {
@@ -358,6 +450,97 @@ fun GhostScreen() {
             }
         }
         Spacer(Modifier.height(24.dp))
+    }
+}
+
+/** One pending engine recommendation, with Buy and Dismiss. */
+@Composable
+private fun RecommendationCard(r: JSONObject) {
+    val id = r.optString("id")
+    val suggested = (r.opt("suggested_amount") as? Number)?.toDouble()
+    var amount by remember(id) {
+        mutableStateOf(suggested?.let { "%.0f".format(it) } ?: "25000")
+    }
+    val busy = GhostBus.busyId == id
+    val conv = r.optString("conviction").takeIf { it.isNotBlank() && it != "null" }
+
+    Column(
+        Modifier.fillMaxWidth().padding(vertical = 5.dp)
+            .clip(RoundedCornerShape(10.dp)).background(Panel2)
+            .border(1.dp, BorderCol.copy(alpha = 0.6f), RoundedCornerShape(10.dp))
+            .padding(12.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(r.optString("symbol"), color = OnBg, fontSize = 15.sp,
+                    fontWeight = FontWeight.Bold)
+                Text(r.optString("source_label") +
+                    (r.optString("sector").takeIf { it.isNotBlank() && it != "null" }
+                        ?.let { " · $it" } ?: ""),
+                    color = AccentHi, fontSize = 10.5.sp)
+            }
+            conv?.let { Pill(it, if (it == "HIGH") Bull else Muted) }
+        }
+        r.optString("rationale").takeIf { it.isNotBlank() && it != "null" }?.let {
+            Spacer(Modifier.height(8.dp))
+            Text(it, color = OnBg.copy(alpha = 0.88f), fontSize = 12.sp, lineHeight = 17.sp)
+        }
+        // What the engine itself proposed — shown so you can take its call
+        // verbatim instead of substituting your own judgement.
+        val entry = (r.opt("suggested_entry") as? Number)?.toDouble()
+        val shares = (r.opt("suggested_shares") as? Number)?.toInt()
+        if (entry != null || suggested != null) {
+            Spacer(Modifier.height(8.dp))
+            Text(listOfNotNull(
+                entry?.let { "suggested entry ₹${fmtNum(it)}" },
+                suggested?.let { "suggested ₹${fmtCompact(it)}" },
+                shares?.takeIf { it > 0 }?.let { "$it shares" },
+            ).joinToString("  ·  "), color = Muted, fontSize = 10.5.sp)
+        }
+        Spacer(Modifier.height(10.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            OutlinedTextField(
+                value = amount,
+                onValueChange = { amount = it.filter { c -> c.isDigit() } },
+                label = { Text("₹") }, singleLine = true,
+                modifier = Modifier.weight(1f),
+            )
+            Spacer(Modifier.width(8.dp))
+            Button(
+                onClick = { GhostBus.take(id, amount.toDoubleOrNull()) },
+                enabled = !busy && BackendBus.running && amount.isNotBlank(),
+                colors = ButtonDefaults.buttonColors(containerColor = Bull),
+            ) { Text(if (busy) "…" else "Buy") }
+            Spacer(Modifier.width(4.dp))
+            TextButton(onClick = { GhostBus.dismiss(id) }, enabled = !busy) {
+                Text("Skip", color = Muted, fontSize = 12.sp)
+            }
+        }
+    }
+}
+
+/** One engine's paper track record. */
+@Composable
+private fun EngineScoreRow(r: JSONObject) {
+    val pnl = (r.opt("total_pnl") as? Number)?.toDouble() ?: 0.0
+    val col = if (pnl >= 0) Bull else Bear
+    Column(Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(r.optString("label"), color = OnBg, fontSize = 13.sp,
+                fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+            Text("₹" + fmtCompact(r.opt("total_pnl")), color = col,
+                fontSize = 14.sp, fontWeight = FontWeight.Bold)
+        }
+        Spacer(Modifier.height(3.dp))
+        val ret = (r.opt("return_pct") as? Number)?.toDouble()
+        val hit = (r.opt("hit_rate_pct") as? Number)?.toDouble()
+        Text(listOfNotNull(
+            "${r.optInt("n_total")} position(s)",
+            "₹${fmtCompact(r.opt("invested"))} put in",
+            ret?.let { "%.2f%% return".format(it) },
+            hit?.let { "%.0f%% hit rate (%d closed)".format(it, r.optInt("n_closed")) },
+        ).joinToString("  ·  "), color = Muted, fontSize = 10.5.sp)
+        Divider(color = BorderCol.copy(alpha = 0.5f), modifier = Modifier.padding(top = 8.dp))
     }
 }
 

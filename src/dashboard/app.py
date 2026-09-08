@@ -250,6 +250,17 @@ def api_portfolio_deploy_cash(body: dict):
     if res.get("error"):
         return res
     res["universe_candidates_considered"] = len(candidates)
+    _capture_recommendations("optimizer", [
+        {"symbol": (b.get("ticker") or "").replace(".NS", "").replace(".BO", ""),
+         "suggested_amount": b.get("buy_inr"),
+         "suggested_shares": b.get("shares"),
+         "suggested_entry": b.get("price"),
+         "rationale": ("New position — the optimiser wants "
+                       f"{b.get('final_weight_pct')}% of the book here."
+                       if b.get("is_new_position") else
+                       f"Top-up to {b.get('final_weight_pct')}% of the book.")}
+        for b in (res.get("buys") or [])
+    ])
 
     # Enrich each buy with a live price and a whole-share count (amount → shares).
     try:
@@ -435,12 +446,72 @@ def api_portfolio_benchmark(body: dict | None = None):
         return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
 
+# ---------------- recommendations → ghost portfolio ----------------
+def _capture_recommendations(source: str, items: list[dict],
+                             run_id: str | None = None) -> None:
+    """Record what an engine just suggested. Never let this break the engine."""
+    try:
+        from src.portfolio.recommendations import record
+        record([i for i in items if i.get("symbol")], source, run_id)
+    except Exception as e:
+        get_logger("dashboard").debug(f"recommendation capture failed: {e}")
+
+
+@app.get("/api/recommendations")
+def api_recommendations(status: str | None = None):
+    """Everything the engines have suggested, newest first."""
+    from src.portfolio.recommendations import list_all
+    return _scrub_for_json(list_all(status))
+
+
+@app.post("/api/recommendations/take")
+def api_recommendation_take(body: dict):
+    """Buy a recommendation into the ghost book, keeping its provenance."""
+    from src.portfolio.ghost import buy
+    from src.portfolio.recommendations import list_all, set_status
+
+    rec_id = body.get("id", "")
+    rec = next((i for i in list_all()["items"] if i["id"] == rec_id), None)
+    if not rec:
+        return {"error": "Recommendation not found."}
+
+    amount = body.get("amount") or rec.get("suggested_amount")
+    if not amount:
+        return {"error": "No amount given, and this recommendation didn't "
+                         "suggest one — enter how much to put in."}
+    res = buy(symbol=rec["symbol"], amount=float(amount),
+              source=rec["source"],
+              note=f"{rec['source_label']} · {(rec.get('rationale') or '')[:120]}")
+    if res.get("error"):
+        return res
+    set_status(rec_id, "taken", ghost_id=res["position"]["id"])
+    return _scrub_for_json(res)
+
+
+@app.post("/api/recommendations/dismiss")
+def api_recommendation_dismiss(body: dict):
+    from src.portfolio.recommendations import set_status
+    return _scrub_for_json(set_status(body.get("id", ""), "dismissed"))
+
+
+@app.post("/api/recommendations/clear")
+def api_recommendations_clear(body: dict | None = None):
+    from src.portfolio.recommendations import clear
+    return clear((body or {}).get("which", "dismissed"))
+
+
 # ---------------- ghost (paper) portfolio ----------------
 @app.get("/api/ghost")
 def api_ghost():
-    """Open + closed paper positions, marked to market."""
+    """Open + closed paper positions, marked to market, split by engine."""
     from src.portfolio.ghost import snapshot
-    return _scrub_for_json(snapshot())
+    snap = snapshot()
+    try:
+        from src.portfolio.recommendations import attribution
+        snap["attribution"] = attribution(snap)
+    except Exception as e:
+        get_logger("dashboard").debug(f"attribution failed: {e}")
+    return _scrub_for_json(snap)
 
 
 @app.post("/api/ghost/buy")
@@ -745,7 +816,14 @@ def api_themes(body: dict):
 
     def _do():
         from src.tools.macro_intel import build_macro_themes
-        return build_macro_themes(days=days, max_themes=max_themes)
+        res = build_macro_themes(days=days, max_themes=max_themes)
+        _capture_recommendations("macro-ideas", [
+            {"symbol": p.get("symbol"), "sector": p.get("sector"),
+             "conviction": p.get("conviction"), "rationale": p.get("thesis"),
+             "suggested_entry": (p.get("entry") or {}).get("suggested_entry")}
+            for p in (res.get("picks") or [])
+        ], run_id=res.get("as_of"))
+        return res
 
     _run_job(job_id, _do)
     return {"job_id": job_id}
@@ -2021,8 +2099,19 @@ def api_job(job_id: str):
         if rc == 0 and qj["result"].exists():
             import json as _j
             try:
-                return {"status": "done",
-                        "result": _j.loads(qj["result"].read_text()),
+                result = _j.loads(qj["result"].read_text())
+                # DR-Quant runs in a subprocess, so this is the one place its
+                # output crosses back into the app. Capture here rather than
+                # asking the user to retype names they were just shown.
+                _capture_recommendations("dr-quant", [
+                    {"symbol": v.get("symbol") or v.get("ticker"),
+                     "sector": v.get("sector"),
+                     "conviction": ("HIGH" if (v.get("health_score") or 0) >= 70
+                                    else "MEDIUM"),
+                     "rationale": v.get("thesis")}
+                    for v in (result.get("validated") or [])
+                ], run_id=result.get("run_id"))
+                return {"status": "done", "result": result,
                         "error": None, "exit_code": rc}
             except Exception as e:
                 return {"status": "error", "result": None,

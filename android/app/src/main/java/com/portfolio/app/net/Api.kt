@@ -136,6 +136,18 @@ object Api {
     suspend fun aiEventImpact(event: JSONObject) =
         post("/api/ai/event-impact", JSONObject().put("event", event))
 
+    // ── Recommendations queue (engine output → ghost book) ──
+    suspend fun recommendations(status: String? = null) =
+        get("/api/recommendations" + (status?.let { "?status=$it" } ?: ""))
+    suspend fun recommendationTake(id: String, amount: Double?) =
+        post("/api/recommendations/take", JSONObject().put("id", id).apply {
+            if (amount != null) put("amount", amount)
+        })
+    suspend fun recommendationDismiss(id: String) =
+        post("/api/recommendations/dismiss", JSONObject().put("id", id))
+    suspend fun recommendationsClear(which: String = "dismissed") =
+        post("/api/recommendations/clear", JSONObject().put("which", which))
+
     // ── Ghost (paper) portfolio ──
     suspend fun ghost() = get("/api/ghost")
     suspend fun ghostBuy(symbol: String, amount: Double, source: String, note: String = "") =
