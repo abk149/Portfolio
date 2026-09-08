@@ -313,3 +313,17 @@ private fun inline(s: String): AnnotatedString = buildAnnotatedString {
         i = close + 2
     }
 }
+
+
+/**
+ * "as of 3 days ago" for a restored result.
+ *
+ * Shown wherever an engine's output is loaded from disk rather than just run,
+ * so a stale answer is never mistaken for a fresh one.
+ */
+@Composable
+fun FreshnessLine(key: String) {
+    val age = JobBus.age(key) ?: return
+    Text("Showing the last run from $age — re-run for current data.",
+        color = Muted, fontSize = 10.sp, lineHeight = 14.sp)
+}

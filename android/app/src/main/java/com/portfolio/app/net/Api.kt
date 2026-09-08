@@ -145,8 +145,15 @@ object Api {
         })
     suspend fun recommendationDismiss(id: String) =
         post("/api/recommendations/dismiss", JSONObject().put("id", id))
+    suspend fun recommendationsOptimize(cash: Double, maxWeight: Double = 0.25) =
+        post("/api/recommendations/optimize",
+            JSONObject().put("cash", cash).put("max_weight", maxWeight))
     suspend fun recommendationsClear(which: String = "dismissed") =
         post("/api/recommendations/clear", JSONObject().put("which", which))
+
+    // ── Persisted engine results (survive a restart) ──
+    suspend fun results() = get("/api/results")
+    suspend fun result(kind: String) = get("/api/results/$kind")
 
     // ── Ghost (paper) portfolio ──
     suspend fun ghost() = get("/api/ghost")

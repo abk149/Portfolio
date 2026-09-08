@@ -109,9 +109,21 @@ def record(items: list[dict], source: str, run_id: Optional[str] = None) -> dict
     return {"added": added, "source": source}
 
 
-def list_all(status: Optional[str] = None) -> dict:
+def list_all(status: Optional[str] = None, max_age_days: int = 60) -> dict:
+    prune(max_age_days)
     data = _load()
     items = data.get("items", [])
+    now = datetime.now()
+    for i in items:
+        try:
+            age = (now - datetime.fromisoformat(i["created_at"])).total_seconds() / 86400
+            i["age_days"] = round(age, 2)
+            i["age_label"] = ("just now" if age < 1 / 24 else
+                              f"{int(age * 24)}h ago" if age < 1 else
+                              "yesterday" if int(age) == 1 else f"{int(age)} days ago")
+        except Exception:
+            i["age_days"] = None
+            i["age_label"] = None
     if status:
         items = [i for i in items if i.get("status") == status]
     items = sorted(items, key=lambda i: i.get("created_at", ""), reverse=True)
@@ -120,6 +132,66 @@ def list_all(status: Optional[str] = None) -> dict:
         counts[i.get("status", "pending")] = counts.get(i.get("status", "pending"), 0) + 1
     return {"items": items, "counts": counts,
             "sources": sorted({i.get("source") for i in data.get("items", [])})}
+
+
+def apply_sizing(sized: dict, cash: float, max_weight: float) -> dict:
+    """Write portfolio-aware position sizes back onto the pending queue.
+
+    Engines size their own ideas inconsistently — the cash optimiser thinks in
+    weights of your book, Macro Ideas and DR-Quant don't size at all, so the UI
+    fell back to a flat default. Running the whole queue through the optimiser
+    against your real holdings gives every recommendation the same currency:
+    an amount, a share count, and what it would be as a share of the book.
+
+    A symbol the optimiser funds at zero keeps a note saying so. That is a real
+    answer — "good idea, but not alongside what you already own" — and it would
+    be lost if we silently left the old flat default in place.
+    """
+    stamp = datetime.now().isoformat(timespec="seconds")
+    with _LOCK:
+        data = _load()
+        touched = 0
+        for i in data["items"]:
+            if i.get("status") != "pending":
+                continue
+            fit = sized.get(i["symbol"])
+            if fit is None:
+                continue
+            i["suggested_amount"] = fit.get("amount")
+            i["suggested_shares"] = fit.get("shares")
+            i["suggested_weight_pct"] = fit.get("weight_pct")
+            i["suggested_entry"] = fit.get("price") or i.get("suggested_entry")
+            i["sizing_note"] = fit.get("note")
+            i["sized_at"] = stamp
+            i["sized_for_cash"] = cash
+            i["sized_max_weight"] = max_weight
+            touched += 1
+        if touched:
+            _save(data)
+    return {"ok": True, "sized": touched, "cash": cash}
+
+
+def prune(max_age_days: int = 60) -> dict:
+    """Drop recommendations past their shelf life.
+
+    A two-month-old "buy this now" is not a recommendation, it's a fossil.
+    """
+    from datetime import timedelta
+    cutoff = datetime.now() - timedelta(days=max_age_days)
+    with _LOCK:
+        data = _load()
+        before = len(data["items"])
+        kept = []
+        for i in data["items"]:
+            try:
+                if datetime.fromisoformat(i["created_at"]) >= cutoff:
+                    kept.append(i)
+            except Exception:
+                kept.append(i)              # unparseable date — keep it
+        data["items"] = kept
+        if len(kept) != before:
+            _save(data)
+    return {"removed": before - len(kept), "max_age_days": max_age_days}
 
 
 def set_status(rec_id: str, status: str, ghost_id: Optional[str] = None) -> dict:

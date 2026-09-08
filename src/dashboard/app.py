@@ -273,7 +273,7 @@ def api_portfolio_deploy_cash(body: dict):
                 b["shares"] = int(b.get("buy_inr", 0) // px)
     except Exception as e:
         get_logger("dashboard").debug(f"deploy-cash share enrich failed: {e}")
-    return _scrub_for_json(res)
+    return _persist("deploy_cash", _scrub_for_json(res))
 
 
 @app.post("/api/portfolio/upload_trades")
@@ -404,7 +404,7 @@ def api_portfolio_performance():
         from src.portfolio import PerformanceAnalyzer
         result = PerformanceAnalyzer().full_report()
         _PERF_CACHE["data"] = result
-        return _scrub_for_json(result)
+        return _persist("performance", _scrub_for_json(result))
 
     _run_job(job_id, _do)
     return {"job_id": job_id}
@@ -412,7 +412,19 @@ def api_portfolio_performance():
 
 @app.get("/api/portfolio/performance/cached")
 def api_portfolio_performance_cached():
-    """Return cached performance data (avoids re-computation on tab switch)."""
+    """Last performance report — from memory, or restored from disk.
+
+    The in-memory cache alone meant every backend restart (on a phone, whenever
+    Android reclaims the process) lost a report that takes minutes to rebuild.
+    """
+    if not _PERF_CACHE["data"]:
+        from src.data.results_store import load
+        got = load("performance")
+        if got:
+            _PERF_CACHE["data"] = got["payload"]
+            return {"ok": True, "data": _scrub_for_json(got["payload"]),
+                    "age_label": got["age_label"], "age_days": got["age_days"],
+                    "restored": True}
     if _PERF_CACHE["data"]:
         return {"ok": True, "data": _scrub_for_json(_PERF_CACHE["data"])}
     return {"ok": False, "error": "No cached performance data. Click Analyze first."}
@@ -457,6 +469,35 @@ def _capture_recommendations(source: str, items: list[dict],
         get_logger("dashboard").debug(f"recommendation capture failed: {e}")
 
 
+def _persist(kind: str, payload):
+    """Store an engine's result so a restart doesn't throw it away."""
+    try:
+        from src.data.results_store import save
+        save(kind, payload)
+    except Exception as e:
+        get_logger("dashboard").debug(f"persist {kind} failed: {e}")
+    return payload
+
+
+@app.get("/api/results")
+def api_results():
+    """What's stored, and how old — drives the freshness line on each screen."""
+    from src.data.results_store import summary
+    return _scrub_for_json(summary())
+
+
+@app.get("/api/results/{kind}")
+def api_result(kind: str):
+    """Restore one engine's last result (or nothing, if it aged out)."""
+    from src.data.results_store import load
+    got = load(kind)
+    if not got:
+        return {"ok": False, "kind": kind,
+                "error": "Nothing stored for this yet, or it was older than 60 "
+                         "days and has been discarded."}
+    return {"ok": True, **_scrub_for_json(got)}
+
+
 def _capture_quant(result: dict) -> dict:
     """Record a DR-Quant run's validated names.
 
@@ -476,7 +517,7 @@ def _capture_quant(result: dict) -> dict:
         ], run_id=(result or {}).get("run_id"))
     except Exception as e:
         get_logger("dashboard").debug(f"quant capture failed: {e}")
-    return result
+    return _persist("quant", result)
 
 
 @app.get("/api/recommendations")
@@ -508,6 +549,100 @@ def api_recommendation_take(body: dict):
         return res
     set_status(rec_id, "taken", ghost_id=res["position"]["id"])
     return _scrub_for_json(res)
+
+
+@app.post("/api/recommendations/optimize")
+def api_recommendations_optimize(body: dict):
+    """Size the whole pending queue against the portfolio you actually hold.
+
+    Engines size their ideas inconsistently — the cash optimiser thinks in
+    weights of your book, Macro Ideas and DR-Quant don't size at all — so the
+    queue mixed "₹25,000" (a UI default) with real allocations. This runs every
+    pending name through the same buy-only optimiser, against your real
+    holdings, and writes one consistent size back onto each.
+    """
+    cash = float(body.get("cash") or 0)
+    if cash <= 0:
+        return {"error": "How much are you putting in? Give an amount to size against."}
+    max_weight = float(body.get("max_weight", 0.25))
+    job_id = uuid.uuid4().hex[:8]
+
+    def _do():
+        from src.portfolio import PortfolioManager, PortfolioOptimizer
+        from src.portfolio.recommendations import apply_sizing, list_all
+
+        pending = [i for i in list_all("pending")["items"]]
+        symbols = sorted({i["symbol"] for i in pending})
+        if not symbols:
+            return {"error": "Nothing pending to size. Run an engine first."}
+
+        try:
+            snap = PortfolioManager().snapshot()
+        except _need_upstox() as e:
+            return {"error": f"Broker not authenticated — reconnect to size "
+                             f"against your holdings. ({e})"}
+
+        held = {}
+        if not snap.holdings.empty:
+            for _, row in snap.holdings.iterrows():
+                sym = row.get("tradingsymbol", "")
+                if sym:
+                    held[f"{sym}.NS"] = float(row.get("current_value", 0) or 0)
+
+        res = PortfolioOptimizer().deploy_cash(
+            current_value_by_yf=held,
+            cash_to_deploy=cash,
+            candidates_extra=[f"{s}.NS" for s in symbols],
+            max_weight=max_weight,
+        )
+        if res.get("error"):
+            return res
+
+        # Price each buy so the queue can show whole shares, not just rupees.
+        try:
+            from src.data import MarketData
+            md = MarketData()
+        except Exception:
+            md = None
+
+        funded = {}
+        for b in (res.get("buys") or []):
+            sym = (b.get("ticker") or "").replace(".NS", "").replace(".BO", "")
+            amount = float(b.get("buy_inr") or 0)
+            px = None
+            if md is not None:
+                try:
+                    px = md.ltp(b.get("ticker", ""))
+                except Exception:
+                    px = None
+            funded[sym] = {
+                "amount": round(amount, 0),
+                "price": round(float(px), 2) if px else None,
+                "shares": int(amount // px) if px and px > 0 else None,
+                "weight_pct": b.get("final_weight_pct"),
+                "note": None,
+            }
+
+        # A name the optimiser wouldn't fund is a real answer, not a gap.
+        for sym in symbols:
+            if sym not in funded:
+                funded[sym] = {
+                    "amount": 0, "price": None, "shares": 0, "weight_pct": 0.0,
+                    "note": "The optimiser wouldn't fund this alongside what you "
+                            "already hold — it adds risk without enough return.",
+                }
+
+        apply_sizing(funded, cash, max_weight)
+        return _scrub_for_json({
+            "ok": True, "cash": cash, "max_weight": max_weight,
+            "sized": len(funded),
+            "funded": sum(1 for f in funded.values() if (f["amount"] or 0) > 0),
+            "before": res.get("before"), "after": res.get("after"),
+            "sharpe_uplift": res.get("sharpe_uplift"),
+        })
+
+    _run_job(job_id, _do)
+    return {"job_id": job_id}
 
 
 @app.post("/api/recommendations/dismiss")
@@ -637,10 +772,20 @@ def _calendar(days_ahead: int = 60, days_back: int = 7, max_age_s: int = 1800) -
     cached = _CAL_CACHE.get("data")
     if cached and (now - _CAL_CACHE.get("at", 0)) < max_age_s:
         return cached
+    # Survive a restart: the calendar costs ~20 network calls to rebuild.
+    if not cached:
+        from src.data.results_store import load
+        got = load("calendar", max_age_days=2)      # events go stale quickly
+        if got:
+            _CAL_CACHE["data"] = got["payload"]
+            _CAL_CACHE["at"] = now
+            return got["payload"]
+
     from src.tools.market_calendar import build_calendar
     data = build_calendar(days_ahead=days_ahead, days_back=days_back)
     _CAL_CACHE["data"] = data
     _CAL_CACHE["at"] = now
+    _persist("calendar", data)
     return data
 
 
@@ -845,7 +990,7 @@ def api_themes(body: dict):
              "suggested_entry": (p.get("entry") or {}).get("suggested_entry")}
             for p in (res.get("picks") or [])
         ], run_id=res.get("as_of"))
-        return res
+        return _persist("themes", res)
 
     _run_job(job_id, _do)
     return {"job_id": job_id}

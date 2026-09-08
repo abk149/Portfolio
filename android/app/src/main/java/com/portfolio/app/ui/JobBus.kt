@@ -119,6 +119,36 @@ object JobBus {
         if (!s.running && s.result == null) { s.result = result; s.status = null }
     }
 
+    /** How old the seeded result is ("3 days ago"), when restored from disk. */
+    private val ages = mutableStateMapOf<String, String>()
+
+    fun age(key: String): String? = ages[key]
+
+    /**
+     * Restore an engine's last result from the backend's durable store.
+     *
+     * These runs take minutes and cost network and LLM calls, and used to live
+     * only in the in-memory job table — so a backend restart (on a phone,
+     * whenever Android reclaims the process) blanked every screen. Results
+     * older than 60 days are discarded by the backend rather than shown, since
+     * a stale answer that looks current is worse than none.
+     */
+    fun restore(key: String, kind: String) {
+        val s = state(key)
+        if (s.running || s.result != null) return
+        scope.launch {
+            val body = Api.result(kind).objOrNull() ?: return@launch
+            if (!body.optBoolean("ok", false)) return@launch
+            val payload = body.optJSONObject("payload") ?: return@launch
+            if (!s.running && s.result == null) {
+                s.result = payload
+                s.status = null
+                body.optString("age_label").takeIf { it.isNotBlank() }
+                    ?.let { ages[key] = it }
+            }
+        }
+    }
+
     fun clear(key: String) {
         state(key).apply { result = null; status = null }
     }

@@ -204,6 +204,8 @@ fun QuantScreen() {
 
     LaunchedEffect(Unit) { if (BackendBus.running) macro = Api.macro().objOrNull() }
 
+    LaunchedEffect(BackendBus.running) { if (BackendBus.running) JobBus.restore("quant", "quant") }
+
     ScreenScaffold(title = "DR-Quant", loading = job.running, onRefresh = null) {
         if (!BackendBus.running) { BackendOfflineHint(); return@ScreenScaffold }
         SectionCard("Deep dive a stock", AccentHi) {
@@ -240,6 +242,7 @@ fun QuantScreen() {
             val p = res.optJSONObject("portfolio")
             val validated = arr(res, "validated")
             SectionCard("Result", Bull) {
+                FreshnessLine("quant")
                 KpiGrid(listOf(
                     Triple("Candidates", fmtNum(res.opt("candidates")), OnBg),
                     Triple("Validated", fmtNum(validated?.length() ?: 0), Bull),
@@ -433,6 +436,10 @@ fun ThemesScreen() {
     val scope = rememberCoroutineScope()
 
 
+    // Bring back the last run rather than showing an empty screen after a
+    // restart — these cost minutes and a pile of network calls to rebuild.
+    LaunchedEffect(BackendBus.running) { if (BackendBus.running) JobBus.restore("themes", "themes") }
+
     ScreenScaffold(title = "Macro Ideas", loading = job.running, onRefresh = null) {
         if (!BackendBus.running) { BackendOfflineHint(); return@ScreenScaffold }
         SectionCard("Generate ideas", AccentHi) {
@@ -483,6 +490,7 @@ fun ThemesScreen() {
                     color = Muted, fontSize = 12.sp) }
             } else {
                 SectionCard("Top picks (${picks.length()})", Bull) {
+                    FreshnessLine("themes")
                     Text("All factors weighed together. Tap a stock for the full deep dive.",
                         color = Muted, fontSize = 11.sp)
                 }
@@ -1185,6 +1193,10 @@ private fun xyPct(o: JSONObject?): Pair<Float, Float>? {
 }
 
 @Composable private fun OptimizeTab() {
+    // Restore the last allocation so a restart doesn't blank the tab.
+    LaunchedEffect(BackendBus.running) {
+        if (BackendBus.running) JobBus.restore("deploy_cash", "deploy_cash")
+    }
     var mode by remember { mutableStateOf("max_sharpe") }
     var maxW by remember { mutableStateOf(25) }
     val job = JobBus.state("optimize")
@@ -1220,6 +1232,7 @@ private fun xyPct(o: JSONObject?): Pair<Float, Float>? {
             deployJob.result?.let { d ->
                 val before = d.optJSONObject("before"); val after = d.optJSONObject("after")
                 Spacer(Modifier.height(10.dp))
+                FreshnessLine("deploy_cash")
                 KpiGrid(listOf(
                     Triple("Sharpe now", fmtNum(before?.opt("sharpe")), OnBg),
                     Triple("Sharpe after", fmtNum(after?.opt("sharpe")), Bull),

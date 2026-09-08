@@ -25,7 +25,11 @@ the desktop and the phone.
   Macro Ideas, the DR-Quant funnel and the cash optimiser lands in a queue with
   a **Buy** button and the amount the engine itself proposed. Each position keeps
   its provenance, so a **scorecard by engine** shows which one is actually worth
-  listening to — P&L, return and hit rate per source, with your own manual picks
+  listening to. The queue can be **sized against your real holdings** — every
+  pending idea goes through the same buy-only optimiser, so a Macro Ideas pick
+  and an optimiser pick are quoted in one currency (₹, whole shares, and share
+  of the book) instead of a flat default beside a real allocation. A name the
+  optimiser won't fund alongside what you own says so, which is an answer — P&L, return and hit rate per source, with your own manual picks
   tracked separately so they can't be credited to an engine. Positions book at
   the **live price** (you don't get to pick the fill, or the record proves
   nothing) and are then tracked with the same machinery as the real book. Two charts: your real book, the paper book and the two combined; and the
@@ -173,6 +177,15 @@ NVIDIA NIM (OpenAI‑compatible) · Upstox & Groww trading APIs.
 | `main.py` | Typer CLI entrypoint |
 
 Every module is independent — import and use any piece without the CLI or agents.
+
+## Durability
+
+Engine results (Macro Ideas, DR-Quant, cash allocation, performance, calendar)
+are written to disk as they're produced and restored on open with their age
+shown — these take minutes and cost network and LLM calls, and used to live only
+in an in-memory job table, so any restart threw them away. Anything older than
+**60 days is deleted rather than shown**: a two-month-old "current" view is
+worse than an empty screen, because it looks fresh.
 
 ## Testing
 

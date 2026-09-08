@@ -152,6 +152,7 @@ fun GhostScreen() {
     val reviewJob = JobBus.state("ghost_review")
     var symInput by remember { mutableStateOf("") }
     var amtInput by remember { mutableStateOf("25000") }
+    var sizeCash by remember { mutableStateOf("50000") }
     var confirmReset by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
@@ -203,6 +204,55 @@ fun GhostScreen() {
                 "Buy them from this list rather than typing symbols in, so the " +
                 "track record measures the system's calls and not your own.",
                 color = Muted, fontSize = 12.sp, lineHeight = 17.sp)
+            // Engines size their ideas inconsistently — the optimiser thinks
+            // in weights of your book, the others don't size at all. This puts
+            // every pending name through the same optimiser against your real
+            // holdings, so the queue speaks one language.
+            if (pending.isNotEmpty()) {
+                Spacer(Modifier.height(12.dp))
+                val sizeJob = JobBus.state("size_recs")
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    OutlinedTextField(
+                        value = sizeCash,
+                        onValueChange = { sizeCash = it.filter { c -> c.isDigit() } },
+                        label = { Text("Deploy ₹") }, singleLine = true,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Button(
+                        onClick = {
+                            val amt = sizeCash.toDoubleOrNull() ?: 0.0
+                            if (amt > 0) {
+                                JobBus.clear("size_recs")
+                                JobBus.run("size_recs",
+                                    "Sizing every pending idea against your holdings…",
+                                    maxSecs = 300) { Api.recommendationsOptimize(amt) }
+                            }
+                        },
+                        enabled = !sizeJob.running && BackendBus.running,
+                    ) { Text(if (sizeJob.running) "…" else "⚖ Size these") }
+                }
+                Text("Runs the whole queue through the buy-only optimiser against " +
+                    "the portfolio you already hold, and gives each one an amount, " +
+                    "a share count and a share of the book.",
+                    color = Muted, fontSize = 10.sp, lineHeight = 14.sp)
+                sizeJob.status?.let {
+                    Spacer(Modifier.height(6.dp))
+                    StatusBanner(it, if (sizeJob.running) Warn else Bear)
+                }
+                sizeJob.result?.let { r ->
+                    LaunchedEffect(sizeJob.finishedAt) { GhostBus.refresh() }
+                    Spacer(Modifier.height(8.dp))
+                    val up = (r.opt("sharpe_uplift") as? Number)?.toDouble()
+                    StatusBanner("Sized ${r.optInt("sized")} idea(s); " +
+                        "${r.optInt("funded")} got funding out of ₹${fmtCompact(r.opt("cash"))}." +
+                        (up?.let { "\nSharpe would go from " +
+                            "${fmtNum(r.optJSONObject("before")?.opt("sharpe"))} to " +
+                            "${fmtNum(r.optJSONObject("after")?.opt("sharpe"))} (+${fmtNum(it)})." } ?: ""),
+                        Bull)
+                }
+            }
+
             if (pending.isEmpty()) {
                 Spacer(Modifier.height(10.dp))
                 val everRan = (recs?.optJSONObject("counts")?.length() ?: 0) > 0
@@ -511,17 +561,30 @@ private fun RecommendationCard(r: JSONObject) {
             Spacer(Modifier.height(8.dp))
             Text(it, color = OnBg.copy(alpha = 0.88f), fontSize = 12.sp, lineHeight = 17.sp)
         }
-        // What the engine itself proposed — shown so you can take its call
-        // verbatim instead of substituting your own judgement.
+        // What to actually buy. After sizing this is the optimiser's answer
+        // against your real book; before it, whatever the engine offered.
         val entry = (r.opt("suggested_entry") as? Number)?.toDouble()
         val shares = (r.opt("suggested_shares") as? Number)?.toInt()
-        if (entry != null || suggested != null) {
+        val weight = (r.opt("suggested_weight_pct") as? Number)?.toDouble()
+        val sized = r.optString("sized_at").isNotBlank()
+        if (entry != null || suggested != null || weight != null) {
             Spacer(Modifier.height(8.dp))
             Text(listOfNotNull(
-                entry?.let { "suggested entry ₹${fmtNum(it)}" },
-                suggested?.let { "suggested ₹${fmtCompact(it)}" },
+                suggested?.let { "₹${fmtCompact(it)}" },
+                weight?.let { "%.1f%% of book".format(it) },
                 shares?.takeIf { it > 0 }?.let { "$it shares" },
-            ).joinToString("  ·  "), color = Muted, fontSize = 10.5.sp)
+                entry?.let { "at ₹${fmtNum(it)}" },
+            ).joinToString("  ·  "),
+                color = if (sized) AccentHi else Muted, fontSize = 11.sp)
+            if (sized) Text("sized against your holdings", color = Muted, fontSize = 9.5.sp)
+        }
+        r.optString("sizing_note").takeIf { it.isNotBlank() && it != "null" }?.let {
+            Spacer(Modifier.height(6.dp))
+            StatusBanner(it, Warn)
+        }
+        r.optString("age_label").takeIf { it.isNotBlank() && it != "null" }?.let {
+            Spacer(Modifier.height(6.dp))
+            Text("suggested $it", color = Muted, fontSize = 9.5.sp)
         }
         Spacer(Modifier.height(10.dp))
         Row(verticalAlignment = Alignment.CenterVertically) {
