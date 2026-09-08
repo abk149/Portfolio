@@ -330,18 +330,73 @@ async function killQuant() {
   toast(r.ok ? "⏹ kill signal sent" : ("✗ " + r.error));
 }
 
+/**
+ * Validated picks as cards rather than a wide table.
+ *
+ * The dossier carries a prose thesis and an array of risks alongside the
+ * numbers; forcing those into table columns made the most important output in
+ * the app unreadable. Two of the old columns (FCF, promoter pledging) aren't
+ * even in the dossier schema any more, so they rendered as dashes for every row.
+ */
+function validatedCards(rows) {
+  if (!rows.length) return "<div style='color:var(--muted)'>No names survived the funnel.</div>";
+  const num = (v, suffix = "", signed = false) =>
+    (v == null || isNaN(v)) ? null
+      : (signed && v >= 0 ? "+" : "") + Number(v).toFixed(1) + suffix;
+
+  return rows.map(v => {
+    const score = v.health_score;
+    const scoreCls = score == null ? "" : (score >= 70 ? "pos" : score >= 50 ? "" : "neg");
+    const metrics = [
+      ["P/E", num(v.pe)], ["ROE", num(v.roe_pct, "%")],
+      ["D/E", num(v.debt_to_equity)],
+      ["Sales", num(v.sales_growth_pct, "%", true)],
+      ["Profit", num(v.profit_growth_pct, "%", true)],
+    ].filter(([, val]) => val != null);
+
+    const risks = (v.key_risks || []).filter(r => r && r !== "null");
+    return `
+      <div class="vcard">
+        <div class="vcard-head">
+          <div>
+            <div class="vcard-sym">${escapeHtml(v.symbol || "—")}</div>
+            ${v.sector && v.sector !== "null"
+              ? `<div class="vcard-sector">${escapeHtml(v.sector)}</div>` : ""}
+          </div>
+          <div class="vcard-score ${scoreCls}">
+            <div class="v">${score == null ? "—" : Math.round(score)}</div>
+            <div class="l">HEALTH</div>
+          </div>
+        </div>
+        ${v.thesis && v.thesis !== "null"
+          ? `<div class="vcard-thesis">${escapeHtml(v.thesis)}</div>` : ""}
+        ${metrics.length ? `<div class="vcard-metrics">` + metrics.map(([l, val]) =>
+            `<div><div class="l">${l}</div><div class="v">${val}</div></div>`).join("") +
+          `</div>` : ""}
+        ${risks.length ? `<div class="vcard-risks"><div class="l">KEY RISKS</div>` +
+            risks.map(r => `<div>• ${escapeHtml(r)}</div>`).join("") + `</div>` : ""}
+      </div>`;
+  }).join("");
+}
+
 async function loadMacro() {
   $("macro-kpis").innerHTML = "<span class='spin'></span> fetching macro …";
   const m = await fetch("/api/quant/macro").then(r=>r.json());
   const klass = m.mode === "BULLISH" ? "pos" : (m.mode === "BEARISH" ? "neg" : "");
+  const pctOrDash = (v) => v == null ? "—" : (v >= 0 ? "+" : "") + fmt(v, 2) + "%";
   $("macro-kpis").innerHTML = [
-    kpi("Market Mode", m.mode, klass),
-    kpi("India VIX", fmt(m.india_vix, 2)),
-    kpi("Nifty PCR", fmt(m.nifty_pcr, 2)),
-    kpi("USD/INR", fmt(m.usdinr, 2)),
-    kpi("Nifty %", (m.nifty_change_pct>=0?"+":"")+fmt(m.nifty_change_pct,2)+"%", cls(m.nifty_change_pct)),
+    kpi("Market Mode", m.mode || "—", klass),
+    kpi("India VIX", m.india_vix == null ? "—" : fmt(m.india_vix, 2)),
+    kpi("Nifty PCR", m.nifty_pcr == null ? "—" : fmt(m.nifty_pcr, 2)),
+    kpi("USD/INR", m.usdinr == null ? "—" : fmt(m.usdinr, 2)),
+    kpi("Nifty %", pctOrDash(m.nifty_change_pct), cls(m.nifty_change_pct)),
   ].join("") + "<div style='color:var(--muted);margin-top:8px'>" +
-    (m.reasons||[]).map(r=>"• "+r).join("<br>") + "</div>";
+    (m.reasons||[]).map(r=>"• "+escapeHtml(r)).join("<br>") + "</div>" +
+    // Say WHY a tile is blank. A dash with no explanation reads as a broken app
+    // and gives no way to tell a calm market from a dead feed.
+    ((m.notes||[]).length
+      ? `<div style="color:var(--muted); font-size:11px; margin-top:10px; line-height:1.5">` +
+        m.notes.map(n=>"⚠ "+escapeHtml(n)).join("<br>") + `</div>` : "");
 }
 
 function appendDebug(lines) {
@@ -433,15 +488,7 @@ async function runQuant() {
     return;
   }
 
-  $("quant-validated").innerHTML = table(r.validated||[], [
-    {key:"symbol"},
-    {key:"verdict", fmt:v=>`<span class="tag ${v==='KEEP'?'BUY':'SELL'}">${v}</span>`},
-    {key:"health_score", title:"Health", fmt:v=>fmt(v,1)},
-    {key:"debt_to_equity", title:"D/E", fmt:v=>fmt(v,2)},
-    {key:"free_cash_flow_cr", title:"FCF (cr)", fmt:v=>fmt(v,1)},
-    {key:"promoter_pledging_pct", title:"Pledge %", fmt:v=>fmt(v,1)+"%"},
-    {key:"thesis"},
-  ]);
+  $("quant-validated").innerHTML = validatedCards(r.validated || []);
 
   const p = r.portfolio || {};
   if (p.weights_pct) {

@@ -284,7 +284,10 @@ class PortfolioOptimizer:
                     "buy_inr": round(float(adds[i]), 0),
                     "current_inr": round(float(cur_arr[i]), 0),
                     "final_weight_pct": round(float(final_w[i]) * 100, 2),
-                    "is_new_position": cur_arr[i] == 0,
+                    # bool(), not the bare comparison: `cur_arr[i] == 0` on a
+                    # numpy array yields numpy.bool_, which FastAPI's encoder
+                    # cannot serialise — it 500s the whole response.
+                    "is_new_position": bool(cur_arr[i] == 0),
                 })
         buys.sort(key=lambda b: b["buy_inr"], reverse=True)
 

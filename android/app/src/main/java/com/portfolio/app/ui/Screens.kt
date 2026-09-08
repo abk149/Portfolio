@@ -1,6 +1,7 @@
 package com.portfolio.app.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -236,30 +237,188 @@ fun QuantScreen() {
             ) { Text(if (job.running) "Running…" else "▶ Run funnel") }
             job.status?.let { Spacer(Modifier.height(8.dp)); StatusBanner(it, if (job.running) Warn else Bear) }
         }
-        macro?.let { m ->
-            val kpis = listOf(
-                Triple("VIX", fmtNum(m.opt("india_vix")), OnBg),
-                Triple("NIFTY PCR", fmtNum(m.opt("nifty_pcr")), OnBg),
-                Triple("USDINR", fmtNum(m.opt("usdinr")), OnBg),
-                Triple("Regime", m.optString("regime", "—"), AccentHi),
-            )
-            SectionCard("Macro", Warn) { KpiGrid(kpis) }
-        }
+        macro?.let { m -> MacroCard(m) }
         job.result?.let { res ->
             val p = res.optJSONObject("portfolio")
+            val validated = arr(res, "validated")
             SectionCard("Result", Bull) {
                 KpiGrid(listOf(
                     Triple("Candidates", fmtNum(res.opt("candidates")), OnBg),
-                    Triple("Validated", fmtNum(arr(res, "validated")?.length() ?: 0), Bull),
+                    Triple("Validated", fmtNum(validated?.length() ?: 0), Bull),
                     Triple("Sharpe", fmtNum(p?.opt("sharpe")), AccentHi),
                 ))
+                arr(res, "rejected")?.takeIf { it.length() > 0 }?.let { rej ->
+                    Spacer(Modifier.height(10.dp))
+                    val names = (0 until rej.length()).joinToString(", ") { rej.optString(it) }
+                    Text("Rejected ${rej.length()}: $names", color = Muted,
+                        fontSize = 11.sp, lineHeight = 16.sp)
+                }
             }
-            SectionCard("Validated", Bull) { DataTable(arr(res, "validated")) }
+            if (validated != null && validated.length() > 0) {
+                SectionCard("Validated picks", Bull) {
+                    Text("The names that survived the funnel, with why each one passed.",
+                        color = Muted, fontSize = 11.sp)
+                    Spacer(Modifier.height(4.dp))
+                    for (i in 0 until validated.length()) {
+                        validated.optJSONObject(i)?.let { v ->
+                            ValidatedCard(v) { deepSym = v.optString("symbol") }
+                        }
+                    }
+                }
+            }
             arr(res, "intraday_alerts")?.takeIf { it.length() > 0 }?.let {
                 SectionCard("Intraday alerts", Warn) { DataTable(it) }
             }
         }
     }
+}
+
+/**
+ * The DR-Quant macro tiles.
+ *
+ * Values that genuinely can't be fetched show "—" with the backend's own
+ * explanation underneath, rather than a silent blank — a blank tile reads as a
+ * broken app, and gives no way to tell a calm market from a dead feed.
+ */
+@Composable
+private fun MacroCard(m: JSONObject) {
+    // The backend calls it "mode"; this used to read "regime" and so always
+    // showed the placeholder. Accept either.
+    val regime = m.optString("mode").ifBlank { m.optString("regime") }.ifBlank { "—" }
+    val regimeColor = when (regime) {
+        "BULLISH" -> Bull
+        "BEARISH" -> Bear
+        else -> Warn
+    }
+    fun tile(label: String, key: String, suffix: String = ""): Triple<String, String, Color> {
+        val v = m.opt(key)
+        val txt = if (v == null || v == JSONObject.NULL) "—" else fmtNum(v) + suffix
+        return Triple(label, txt, if (txt == "—") Muted else OnBg)
+    }
+    SectionCard("Market backdrop", Warn) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("Regime", color = Muted, fontSize = 11.sp)
+            Spacer(Modifier.width(10.dp))
+            Pill(regime, regimeColor)
+            Spacer(Modifier.weight(1f))
+            m.optString("as_of").takeIf { it.isNotBlank() }?.let {
+                Text(it.replace("T", " "), color = Muted, fontSize = 10.sp)
+            }
+        }
+        Spacer(Modifier.height(12.dp))
+        KpiGrid(listOf(
+            tile("India VIX", "india_vix"),
+            tile("Nifty today", "nifty_change_pct", "%"),
+            tile("USD/INR", "usdinr"),
+            tile("Nifty PCR", "nifty_pcr"),
+        ))
+        arr(m, "reasons")?.takeIf { it.length() > 0 }?.let { rs ->
+            Spacer(Modifier.height(12.dp))
+            for (i in 0 until rs.length())
+                Text("• " + rs.optString(i), color = Muted, fontSize = 11.sp,
+                    lineHeight = 16.sp, modifier = Modifier.padding(vertical = 1.dp))
+        }
+        arr(m, "notes")?.takeIf { it.length() > 0 }?.let { ns ->
+            Spacer(Modifier.height(10.dp))
+            for (i in 0 until ns.length()) StatusBanner(ns.optString(i), Muted)
+        }
+    }
+}
+
+/**
+ * One validated pick, as a readable card.
+ *
+ * This replaced a raw DataTable. The dossier has thirteen fields of mixed type
+ * — a prose thesis, an array of risks, an opaque instrument key — and rendering
+ * those as thirteen columns on a phone made the most valuable screen in the app
+ * unreadable. An investor wants: what is it, how strongly did it pass, why, on
+ * what numbers, and what could go wrong.
+ */
+@Composable
+private fun ValidatedCard(v: JSONObject, onDeepDive: () -> Unit) {
+    val score = (v.opt("health_score") as? Number)?.toDouble()
+    val scoreColor = when {
+        score == null -> Muted
+        score >= 70 -> Bull
+        score >= 50 -> Warn
+        else -> Bear
+    }
+    Column(
+        Modifier.fillMaxWidth().padding(vertical = 6.dp)
+            .clip(androidx.compose.foundation.shape.RoundedCornerShape(12.dp))
+            .background(Panel2)
+            .border(1.dp, BorderCol.copy(alpha = 0.7f),
+                androidx.compose.foundation.shape.RoundedCornerShape(12.dp))
+            .padding(14.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(v.optString("symbol", "—"), color = OnBg,
+                    fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                v.optString("sector").takeIf { it.isNotBlank() && it != "null" }?.let {
+                    Text(it, color = Muted, fontSize = 11.sp)
+                }
+            }
+            Column(horizontalAlignment = Alignment.End) {
+                Text(score?.let { "%.0f".format(it) } ?: "—",
+                    color = scoreColor, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                Text("HEALTH", color = Muted, fontSize = 9.sp, letterSpacing = 0.6.sp)
+            }
+        }
+
+        v.optString("thesis").takeIf { it.isNotBlank() && it != "null" }?.let {
+            Spacer(Modifier.height(10.dp))
+            Text(it, color = OnBg.copy(alpha = 0.9f), fontSize = 12.5.sp, lineHeight = 18.sp)
+        }
+
+        // Only show metrics the model actually returned — a row of "null"s is
+        // noise, and worse, reads as a real value of zero.
+        val metrics = listOfNotNull(
+            metric(v, "pe", "P/E"),
+            metric(v, "roe_pct", "ROE", "%"),
+            metric(v, "debt_to_equity", "D/E"),
+            metric(v, "sales_growth_pct", "Sales", "%", signed = true),
+            metric(v, "profit_growth_pct", "Profit", "%", signed = true),
+        )
+        if (metrics.isNotEmpty()) {
+            Spacer(Modifier.height(12.dp))
+            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                metrics.forEach { (label, value) ->
+                    Column {
+                        Text(label, color = Muted, fontSize = 9.5.sp, letterSpacing = 0.5.sp)
+                        Spacer(Modifier.height(2.dp))
+                        Text(value, color = OnBg, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                    }
+                }
+            }
+        }
+
+        arr(v, "key_risks")?.takeIf { it.length() > 0 }?.let { risks ->
+            Spacer(Modifier.height(12.dp))
+            Text("KEY RISKS", color = Muted, fontSize = 9.5.sp, letterSpacing = 0.6.sp)
+            Spacer(Modifier.height(4.dp))
+            for (i in 0 until risks.length()) {
+                val r = risks.optString(i)
+                if (r.isNotBlank() && r != "null")
+                    Text("• $r", color = Warn.copy(alpha = 0.92f), fontSize = 11.5.sp,
+                        lineHeight = 16.sp, modifier = Modifier.padding(vertical = 1.dp))
+            }
+        }
+
+        Spacer(Modifier.height(12.dp))
+        TextButton(onClick = onDeepDive, contentPadding = PaddingValues(0.dp)) {
+            Text("🔍 Deep dive ${v.optString("symbol")}", color = AccentHi, fontSize = 12.sp)
+        }
+    }
+}
+
+/** (label, formatted value) for a metric, or null when the model returned nothing. */
+private fun metric(v: JSONObject, key: String, label: String,
+                   suffix: String = "", signed: Boolean = false): Pair<String, String>? {
+    val n = (v.opt(key) as? Number)?.toDouble() ?: return null
+    val body = if (signed) "%+.1f".format(n) else "%.1f".format(n)
+    return label to (body + suffix)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

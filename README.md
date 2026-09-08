@@ -37,7 +37,11 @@ the desktop and the phone.
 - **Screener** — a two‑stage funnel: technical (RSI/MACD/EMA/ATR/volume) →
   fundamental (P/E, ROE, D/E, growth) scoring with buy/hold/avoid calls.
 - **DR‑Quant funnel** — a multi‑stage, LLM‑assisted research pipeline over a
-  scored stock universe.
+  scored stock universe. Survivors are presented as per‑stock dossier cards
+  (health score, thesis, the metrics the model actually returned, key risks),
+  not a wide table, alongside a market‑backdrop panel (India VIX, USD/INR,
+  Nifty move, PCR) that says *why* a reading is missing rather than showing a
+  blank tile.
 - **Universe Map** — a crawler that scores the whole universe (technical +
   fundamental) into a persistent knowledge base, visualized as a four‑quadrant
   map of balance‑sheet quality against price action (*Leaders · Momentum only ·

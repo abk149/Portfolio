@@ -14,6 +14,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 import com.portfolio.app.net.Api
 import kotlinx.coroutines.delay
@@ -509,6 +510,23 @@ fun LoginDialog(onDismiss: () -> Unit) {
                     enabled = !busy && token.isNotBlank() && BackendBus.running,
                     modifier = Modifier.fillMaxWidth(),
                 ) { Text("Apply & test token") }
+            }
+
+            // Read from the package at runtime rather than BuildConfig, so this
+            // needs no extra Gradle buildFeatures flag. Handy for confirming
+            // which build is actually installed after an upgrade.
+            val version = remember {
+                runCatching {
+                    ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName
+                }.getOrNull() ?: "?"
+            }
+            SectionCard("About", Muted) {
+                Text("Portfolio Quant v$version", color = OnBg, fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold)
+                Spacer(Modifier.height(4.dp))
+                Text("Python engine runs on-device. Broker, LLM and Telegram " +
+                    "credentials are stored only in this app's private storage.",
+                    color = Muted, fontSize = 11.sp, lineHeight = 16.sp)
             }
         },
     )

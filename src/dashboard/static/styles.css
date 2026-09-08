@@ -230,3 +230,30 @@ tr:hover td { background: rgba(47,129,247,.04); }
 .cal-news { padding: 9px 0; border-bottom: 1px solid var(--border); }
 .cal-news:last-child { border-bottom: none; }
 .cal-news .src { color: var(--muted); font-size: 10.5px; margin-top: 3px; }
+
+/* ── DR-Quant validated picks (cards, not a wide table) ──────────────────── */
+.vcard {
+  background: var(--panel-2, #161b22);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 14px 16px;
+  margin: 10px 0;
+}
+.vcard-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.vcard-sym { font-size: 17px; font-weight: 700; color: var(--text); }
+.vcard-sector { font-size: 11px; color: var(--muted); margin-top: 2px; }
+.vcard-score { text-align: right; }
+.vcard-score .v { font-size: 23px; font-weight: 700; line-height: 1.1; }
+.vcard-score .l { font-size: 9px; letter-spacing: .07em; color: var(--muted); }
+.vcard-thesis { margin-top: 10px; font-size: 13px; line-height: 1.6; color: var(--text); }
+.vcard-metrics {
+  margin-top: 12px; display: flex; flex-wrap: wrap; gap: 20px;
+  padding-top: 10px; border-top: 1px solid var(--border);
+}
+.vcard-metrics .l { font-size: 9.5px; letter-spacing: .05em; color: var(--muted); }
+.vcard-metrics .v { font-size: 14px; font-weight: 600; color: var(--text); margin-top: 2px; }
+.vcard-risks { margin-top: 12px; font-size: 12px; line-height: 1.6; color: #d29922; }
+.vcard-risks .l {
+  font-size: 9.5px; letter-spacing: .06em; color: var(--muted);
+  margin-bottom: 3px; display: block;
+}

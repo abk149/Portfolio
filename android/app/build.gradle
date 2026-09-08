@@ -12,8 +12,10 @@ android {
         applicationId "com.portfolio.app"
         minSdk 24
         targetSdk 34
-        versionCode 1
-        versionName "1.0"
+        // versionCode must strictly increase for an in-place upgrade install.
+        // Scheme: major*100 + minor*10 + patch, so 1.2 -> 120.
+        versionCode 120
+        versionName "1.2"
 
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         

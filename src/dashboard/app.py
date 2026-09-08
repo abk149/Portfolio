@@ -197,7 +197,7 @@ def api_portfolio_deploy_cash(body: dict):
                 b["shares"] = int(b.get("buy_inr", 0) // px)
     except Exception as e:
         get_logger("dashboard").debug(f"deploy-cash share enrich failed: {e}")
-    return res
+    return _scrub_for_json(res)
 
 
 @app.post("/api/portfolio/upload_trades")
@@ -298,7 +298,7 @@ def api_portfolio_optimize(body: dict):
                         "weight_pct": round(float(w[t]) * 100, 2),
                     })
 
-        return {
+        return _scrub_for_json({
             "mode": mode,
             "expected_return_pct": round(res.expected_return * 100, 2),
             "volatility_pct": round(res.volatility * 100, 2),
@@ -309,7 +309,7 @@ def api_portfolio_optimize(body: dict):
             "frontier": _df(frontier),
             "current_portfolio": cur_point,
             "per_name": per_name,
-        }
+        })
 
     _run_job(job_id, _do)
     return {"job_id": job_id}
@@ -1557,16 +1557,34 @@ def api_umap_reset():
 
 
 def _scrub_for_json(v):
-    """Strip NaN/±Inf so Starlette's strict JSON serializer doesn't 500."""
+    """Make a payload safe for Starlette's strict JSON serializer.
+
+    Two distinct hazards, both of which have 500'd this API before:
+
+      * NaN / ±Inf floats, which the encoder rejects outright;
+      * numpy scalar types. Anything that has been near pandas or numpy leaks
+        np.float64 / np.int64 / np.bool_ into plain dicts, and FastAPI's
+        jsonable_encoder has no rule for them — it falls back to dict(obj) then
+        vars(obj) and raises "'numpy.bool_' object is not iterable". np.float64
+        happens to subclass float so it slips through; np.bool_ and np.int64 do
+        not, and those are the ones that bite.
+    """
     import math
+
+    import numpy as np
+
     if v is None:
         return None
+    if isinstance(v, np.generic):          # any numpy scalar → Python native
+        v = v.item()
     if isinstance(v, float):
         return None if (math.isnan(v) or math.isinf(v)) else v
     if isinstance(v, dict):
         return {k: _scrub_for_json(x) for k, x in v.items()}
-    if isinstance(v, list):
+    if isinstance(v, (list, tuple)):
         return [_scrub_for_json(x) for x in v]
+    if isinstance(v, np.ndarray):
+        return [_scrub_for_json(x) for x in v.tolist()]
     return v
 
 

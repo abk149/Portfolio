@@ -59,8 +59,9 @@ def _candidates(ticker: str) -> list[str]:
     t = (ticker or "").strip().upper()
     if not t:
         return []
-    # An index (^NSEI) or an alias for one — never append an exchange suffix.
-    if t.startswith("^"):
+    # An index (^NSEI), an FX pair (USDINR=X) or a futures symbol — none of
+    # these take an exchange suffix.
+    if t.startswith("^") or "=" in t:
         return [t]
     mapped = INDEX_TICKERS.get(t.replace(" ", ""))
     if mapped:
