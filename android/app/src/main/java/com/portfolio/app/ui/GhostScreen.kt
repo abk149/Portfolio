@@ -232,10 +232,14 @@ fun GhostScreen() {
         // ── The queue: what the ENGINES suggested, waiting to be tested ──
         val recs = GhostBus.recommendations
         val pending = ArrayList<JSONObject>()
+        val blocked = ArrayList<JSONObject>()
         arr(recs, "items")?.let { items ->
             for (i in 0 until items.length()) {
                 val it0 = items.optJSONObject(i) ?: continue
-                if (it0.optString("status") == "pending") pending.add(it0)
+                when (it0.optString("status")) {
+                    "pending" -> pending.add(it0)
+                    "blocked" -> blocked.add(it0)
+                }
             }
         }
         SectionCard("Recommendations to test (${pending.size})", Bull) {
@@ -343,6 +347,18 @@ fun GhostScreen() {
                 Spacer(Modifier.height(10.dp))
                 Text("${c.optInt("taken")} taken · ${c.optInt("dismissed")} dismissed " +
                     "· ${c.optInt("pending")} pending", color = Muted, fontSize = 10.sp)
+            }
+        }
+
+        if (blocked.isNotEmpty()) {
+            SectionCard("Rejected by the checks (${blocked.size})", Bear) {
+                Text("These were suggested by an engine but failed a required " +
+                    "test, so they aren't offered. Kept visible — the system " +
+                    "looking at something and saying no is worth seeing, and you " +
+                    "can still take one deliberately.",
+                    color = Muted, fontSize = 11.sp, lineHeight = 16.sp)
+                Spacer(Modifier.height(8.dp))
+                blocked.forEach { RecommendationCard(it, blocked = true) }
             }
         }
 
@@ -597,7 +613,7 @@ fun GhostScreen() {
 
 /** One pending engine recommendation, with Buy and Dismiss. */
 @Composable
-private fun RecommendationCard(r: JSONObject) {
+private fun RecommendationCard(r: JSONObject, blocked: Boolean = false) {
     val id = r.optString("id")
     val suggested = (r.opt("suggested_amount") as? Number)?.toDouble()
     var amount by remember(id) {
@@ -622,6 +638,20 @@ private fun RecommendationCard(r: JSONObject) {
                     color = AccentHi, fontSize = 10.5.sp)
             }
             conv?.let { Pill(it, if (it == "HIGH") Bull else Muted) }
+        }
+        if (blocked) {
+            r.optString("blocked_reason").takeIf { it.isNotBlank() && it != "null" }?.let {
+                Spacer(Modifier.height(8.dp))
+                StatusBanner(it, Bear)
+            }
+            arr(r, "blocked_checks")?.let { bc ->
+                for (i in 0 until bc.length()) {
+                    val c = bc.optJSONObject(i) ?: continue
+                    Text("• ${c.optString("label")}: ${c.optString("detail")}",
+                        color = Bear.copy(alpha = 0.9f), fontSize = 11.sp,
+                        lineHeight = 16.sp, modifier = Modifier.padding(top = 3.dp))
+                }
+            }
         }
         r.optString("rationale").takeIf { it.isNotBlank() && it != "null" }?.let {
             Spacer(Modifier.height(8.dp))
@@ -666,8 +696,9 @@ private fun RecommendationCard(r: JSONObject) {
             Button(
                 onClick = { GhostBus.take(id, amount.toDoubleOrNull()) },
                 enabled = !busy && BackendBus.running && amount.isNotBlank(),
-                colors = ButtonDefaults.buttonColors(containerColor = Bull),
-            ) { Text(if (busy) "…" else "Buy") }
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = if (blocked) Muted else Bull),
+            ) { Text(if (busy) "…" else if (blocked) "Buy anyway" else "Buy") }
             Spacer(Modifier.width(4.dp))
             TextButton(onClick = { GhostBus.dismiss(id) }, enabled = !busy) {
                 Text("Skip", color = Muted, fontSize = 12.sp)
@@ -796,13 +827,103 @@ private fun ResearchPanel(res: JSONObject, recId: String) {
         }
     }
 
+    para("Is the move still ahead?", v?.optString("move_left"))
+    bullets("What could re-rate it", v?.optJSONArray("catalysts"), Bull)
     para("The company itself", v?.optString("micro_view"))
-    para("Buying into this market", v?.optString("macro_view"))
+    para("What the measured sensitivities mean", v?.optString("macro_view"))
     para("Timing", v?.optString("timing"))
     para("What people are saying", v?.optString("what_people_say"))
     bullets("Key risks", v?.optJSONArray("key_risks"), Warn)
     bullets("What would change this view", v?.optJSONArray("what_would_change_my_mind"), AccentHi)
     para("Confidence", v?.optString("confidence_note"))
+
+    // ---- the uniform channels: identical for every stock ----
+    res.optJSONObject("gate")?.takeIf { it.has("checks") }?.let { g ->
+        Spacer(Modifier.height(12.dp))
+        Text("REQUIRED CHECKS (${g.optInt("n_passed")}/${g.optInt("n_total")})",
+            color = Muted, fontSize = 9.5.sp, letterSpacing = 0.6.sp)
+        arr(g, "checks")?.let { cs ->
+            for (i in 0 until cs.length()) {
+                val c = cs.optJSONObject(i) ?: continue
+                val st = c.optString("status")
+                val col = when (st) { "pass" -> Bull; "fail" -> Bear; else -> Muted }
+                Row(Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
+                    Text(when (st) { "pass" -> "✓"; "fail" -> "✗"; else -> "–" },
+                        color = col, fontSize = 11.sp)
+                    Spacer(Modifier.width(8.dp))
+                    Column {
+                        Text(c.optString("label") +
+                            (if (c.optBoolean("required")) "" else "  (context)"),
+                            color = OnBg.copy(alpha = 0.9f), fontSize = 11.sp)
+                        Text(c.optString("detail"), color = Muted, fontSize = 10.sp,
+                            lineHeight = 14.sp)
+                    }
+                }
+            }
+        }
+    }
+
+    res.optJSONObject("runway")?.takeIf { !it.has("error") }?.let { rw ->
+        Spacer(Modifier.height(12.dp))
+        Text("HOW MUCH MOVE IS LEFT", color = Muted, fontSize = 9.5.sp, letterSpacing = 0.6.sp)
+        Spacer(Modifier.height(3.dp))
+        val stance = rw.optString("stance")
+        Pill("$stance · ${fmtNum(rw.opt("runway_score"))}/100",
+            if (stance == "room left") Bull else if (stance == "move largely made") Bear else Warn)
+        Spacer(Modifier.height(6.dp))
+        Text("3m ${fmtNum(rw.opt("ret_3m"))}% · 6m ${fmtNum(rw.opt("ret_6m"))}% · " +
+            "${fmtNum(rw.opt("from_52w_high_pct"))}% from the 52-week high · " +
+            "RSI ${fmtNum(rw.opt("rsi"))}",
+            color = OnBg.copy(alpha = 0.85f), fontSize = 11.sp, lineHeight = 16.sp)
+        Text(rw.optString("reading"), color = Muted, fontSize = 10.5.sp, lineHeight = 15.sp)
+    }
+
+    res.optJSONObject("factors")?.takeIf { !it.has("error") }?.let { fo ->
+        Spacer(Modifier.height(12.dp))
+        Text("WHAT DRIVES IT", color = Muted, fontSize = 9.5.sp, letterSpacing = 0.6.sp)
+        arr(fo, "factors")?.let { fs ->
+            for (i in 0 until fs.length()) {
+                val f = fs.optJSONObject(i) ?: continue
+                val beta = (f.opt("beta") as? Number)?.toDouble() ?: 0.0
+                val material = f.optBoolean("material")
+                Row(Modifier.fillMaxWidth().padding(vertical = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically) {
+                    Text(if (material) "●" else "○",
+                        color = if (material) AccentHi else Muted, fontSize = 9.sp)
+                    Spacer(Modifier.width(8.dp))
+                    Text(f.optString("label"), color = OnBg.copy(alpha = 0.9f),
+                        fontSize = 11.sp, modifier = Modifier.weight(1f))
+                    Text("%+.2f".format(beta),
+                        color = if (beta >= 0) Bull else Bear, fontSize = 11.sp)
+                }
+            }
+        }
+        Text(fo.optString("reading"), color = Muted, fontSize = 10.5.sp, lineHeight = 15.sp,
+            modifier = Modifier.padding(top = 4.dp))
+    }
+
+    res.optJSONObject("seasonality")?.takeIf { !it.has("error") }?.let { se ->
+        Spacer(Modifier.height(12.dp))
+        Text("SEASONALITY", color = Muted, fontSize = 9.5.sp, letterSpacing = 0.6.sp)
+        Spacer(Modifier.height(4.dp))
+        val labels = ArrayList<String>(); val avgs = ArrayList<Float>()
+        val wins = ArrayList<Float?>()
+        arr(se, "by_month")?.let { ms ->
+            for (i in 0 until ms.length()) {
+                val m = ms.optJSONObject(i) ?: continue
+                labels.add(m.optString("label"))
+                avgs.add((m.opt("avg") as? Number)?.toFloat() ?: Float.NaN)
+                wins.add((m.opt("win_rate") as? Number)?.toFloat())
+            }
+        }
+        if (labels.isNotEmpty()) SeasonalityChart(labels, avgs, wins)
+        Text(se.optString("reading"), color = Muted, fontSize = 10.5.sp, lineHeight = 15.sp,
+            modifier = Modifier.padding(top = 6.dp))
+        TextButton(onClick = { UiNav.open(UiNav.Screen.DeepDive(res.optString("symbol"))) },
+            contentPadding = PaddingValues(0.dp)) {
+            Text("Full cyclicality & deep dive →", color = AccentHi, fontSize = 11.sp)
+        }
+    }
 
     // The evidence, so the judgement can be checked rather than trusted.
     res.optJSONObject("entry")?.let { e ->

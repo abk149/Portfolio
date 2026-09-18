@@ -163,6 +163,33 @@ def research(symbol: str, macro: Optional[dict] = None,
     fundamentals = dd.get("fundamentals") or {}
     events = _events_for(symbol, fundamentals.get("sector"), calendar)
 
+    # ---- the uniform channels: identical for every candidate ----
+    #
+    # Whatever engine suggested this name, it now gets the same four analyses,
+    # so the ghost track record measures the IDEAS rather than which door they
+    # came through.
+    if scope in ("all", "documents") or not prev.get("factors"):
+        factors = _safe("factor exposure", lambda: __import__(
+            "src.portfolio.factors", fromlist=["sensitivities"]
+        ).sensitivities(symbol, years=3), gaps, status, default={}) or {}
+        runway_d = _safe("runway", lambda: __import__(
+            "src.portfolio.factors", fromlist=["runway"]
+        ).runway(symbol), gaps, status, default={}) or {}
+        season = _safe("seasonality", lambda: __import__(
+            "src.portfolio.seasonality", fromlist=["seasonality"]
+        ).seasonality(symbol, years=5), gaps, status, default={}) or {}
+    else:
+        factors = prev.get("factors") or {}
+        runway_d = prev.get("runway") or {}
+        season = prev.get("seasonality") or {}
+        for k in ("factor exposure", "runway", "seasonality"):
+            status[k] = (prev.get("sections") or {}).get(k, {"ok": True})
+
+    gate = _safe("screening gate", lambda: __import__(
+        "src.portfolio.screening", fromlist=["uniform_gate"]
+    ).uniform_gate(symbol, fundamentals, runway_d, factors, macro),
+        gaps, status, default={}) or {}
+
     dossier = {
         "symbol": symbol,
         "as_of": datetime.now().isoformat(timespec="minutes"),
@@ -176,6 +203,10 @@ def research(symbol: str, macro: Optional[dict] = None,
         "social": social[:6],
         "macro": macro,
         "events": events,
+        "factors": factors,
+        "runway": runway_d,
+        "seasonality": season,
+        "gate": gate,
         "gaps": gaps,
         "sections": status,
         "counts": {"news": len(news_items), "social": len(social),
@@ -224,6 +255,20 @@ def _synthesise(d: dict) -> dict:
     e = d.get("entry") or {}
     ca = d.get("company_analysis") or {}
     m = d.get("macro") or {}
+    fa = d.get("factors") or {}
+    rw = d.get("runway") or {}
+    se = d.get("seasonality") or {}
+    ga = d.get("gate") or {}
+
+    def _fmt_factors(fo: dict) -> str:
+        rows = (fo.get("factors") or [])
+        if not rows:
+            return "  (not measured)"
+        return "\n".join(
+            f"  - {r['label']}: {r['beta']:+.2f} beta"
+            f" (joint {r.get('beta_joint')}), corr {r['correlation']:+.2f},"
+            f" t={r.get('t_stat')}{'  <- material' if r.get('material') else ''}"
+            for r in rows)
 
     def _fmt_list(rows, key_a, key_b=None, n=8):
         out = []
@@ -237,13 +282,22 @@ def _synthesise(d: dict) -> dict:
     system = (
         "You are an analyst signing off on a position before it is taken. You "
         "are given a full dossier: fundamentals, the last filings, a technical "
-        "entry model, the macro regime, scheduled events, news, and social "
-        "chatter that has ALREADY been checked against named news sources. "
-        "Weigh it as ONE picture — a stock can look fine on fundamentals and "
-        "still be a poor buy into next week's rate decision. Use only what is "
-        "here; where the dossier says a section is missing, say the view is "
-        "weaker for it rather than filling the gap from memory. Never invent a "
-        "number, a date or a filing. Output STRICT JSON only.")
+        "entry model, measured macro sensitivities, how much of the move has "
+        "already happened, month-by-month seasonality, the macro regime, "
+        "scheduled events, news, and social chatter that has ALREADY been "
+        "checked against named news sources.\n\n"
+        "Your job is FORWARD-LOOKING. Explaining why a stock rose is worthless "
+        "— by the time a reason is in the news it is in the price. Reason about "
+        "what could happen NEXT: which of the listed events or macro moves "
+        "would re-rate this name, in which direction, and what is not yet "
+        "priced in. Where the dossier says the move has largely been made, say "
+        "so plainly and do not dress up a chase as a thesis.\n\n"
+        "Use the measured sensitivities rather than assumptions about what a "
+        "sector 'should' do — if the numbers say this stock falls when the "
+        "rupee weakens, that is the fact, whatever the textbook says. Weigh it "
+        "as ONE picture. Use only what is here; where a section is missing, say "
+        "the view is weaker for it rather than filling the gap from memory. "
+        "Never invent a number, a date or a filing. Output STRICT JSON only.")
 
     prompt = f"""DOSSIER — {d['symbol']} (as of {d['as_of']})
 
@@ -269,6 +323,22 @@ RSI {e.get('rsi')} · suggested entry {e.get('suggested_entry')}
 MACRO REGIME: {m.get('mode')} · VIX {m.get('india_vix')} · USD/INR {m.get('usdinr')} ·
 Nifty {m.get('nifty_change_pct')}% today
 
+MEASURED MACRO SENSITIVITY (from {fa.get('weeks', '?')} weeks of returns; these
+are what the data says, not what the sector is supposed to do):
+{_fmt_factors(fa)}
+  R-squared {fa.get('r_squared')} — how much of its weekly moves the factors explain.
+
+HOW MUCH OF THE MOVE IS ALREADY DONE:
+  {rw.get('stance', 'unknown')} (score {rw.get('runway_score')}/100)
+  3m {rw.get('ret_3m')}% · 6m {rw.get('ret_6m')}% · {rw.get('from_52w_high_pct')}% from
+  the 52-week high · RSI {rw.get('rsi')} · {rw.get('above_200dma_pct')}% above its 200-DMA
+  {rw.get('reading', '')}
+
+SEASONALITY: {se.get('verdict', 'unknown')} — {se.get('reading', '')}
+
+REQUIRED-CHECK RESULT: {ga.get('summary', 'not run')}
+{chr(10).join('  - ' + c['label'] + ': ' + c['status'] + ' (' + str(c.get('detail'))[:90] + ')' for c in (ga.get('checks') or [])[:8])}
+
 SCHEDULED EVENTS AHEAD:
 {_fmt_list(d.get('events') or [], 'title', 'date')}
 
@@ -283,9 +353,11 @@ COULD NOT GATHER: {', '.join(d.get('gaps') or []) or 'nothing — all sections p
 Return STRICT JSON, no prose:
 {{"verdict":"BUY|ACCUMULATE|WATCH|AVOID",
 "conviction":"HIGH|MEDIUM|LOW",
-"thesis":"3-5 sentences weighing micro, macro, price and timing TOGETHER",
+"thesis":"3-5 sentences on what could happen NEXT and why it isn't priced in yet",
 "micro_view":"what the company's own numbers and filings say",
-"macro_view":"what buying this into the current regime means",
+"macro_view":"what the MEASURED sensitivities mean for this name from here",
+"move_left":"honest read on whether the move has already happened",
+"catalysts":["specific things that could re-rate this, with direction"],
 "timing":"what the calendar implies for entry timing",
 "what_people_say":"what the corroborated coverage adds, or that it adds nothing",
 "key_risks":["..."],

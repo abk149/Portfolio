@@ -172,13 +172,20 @@ def apply_sizing(sized: dict, cash: float, max_weight: float) -> dict:
 
 
 def attach_research(dossiers: dict) -> dict:
-    """Store a full research dossier alongside each pending recommendation."""
+    """Store a dossier against each pending recommendation, and block failures.
+
+    A name that fails a REQUIRED check is moved to `blocked` rather than left in
+    the buy queue — the whole point of a uniform gate is that it can say no. It
+    stays visible with its reason, because "the system looked at this and
+    rejected it" is worth seeing, and a blocked name can still be taken
+    deliberately if you disagree.
+    """
     stamp = datetime.now().isoformat(timespec="seconds")
     with _LOCK:
         data = _load()
-        n = 0
+        n = blocked = unblocked = 0
         for i in data["items"]:
-            if i.get("status") != "pending":
+            if i.get("status") not in ("pending", "blocked"):
                 continue
             d = dossiers.get(i["symbol"])
             if not d:
@@ -186,9 +193,24 @@ def attach_research(dossiers: dict) -> dict:
             i["research"] = d
             i["researched_at"] = stamp
             n += 1
+
+            gate = d.get("gate") or {}
+            if gate.get("checks"):
+                if gate.get("passed"):
+                    if i["status"] == "blocked":
+                        i["status"] = "pending"      # a later run cleared it
+                        i.pop("blocked_reason", None)
+                        unblocked += 1
+                else:
+                    i["status"] = "blocked"
+                    i["blocked_reason"] = gate.get("summary")
+                    i["blocked_checks"] = gate.get("blocking")
+                    blocked += 1
         if n:
             _save(data)
-    return {"ok": True, "attached": n}
+    if blocked or unblocked:
+        log.info(f"gate: blocked {blocked}, re-opened {unblocked}")
+    return {"ok": True, "attached": n, "blocked": blocked, "unblocked": unblocked}
 
 
 def prune(max_age_days: int = 60) -> dict:

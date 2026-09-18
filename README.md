@@ -38,6 +38,22 @@ the desktop and the phone.
   lot with its risks and what would change it. Each section reports its own
   status, so a dossier that lost only its final judgement can be repaired in
   seconds with **↻ Re-run judgement** instead of re-fetching every filing.
+- **One pipeline for every candidate** — whatever engine suggested a name, it
+  runs the same gate: data sufficiency, leverage, returns on capital, growth,
+  and *how much of the move is already gone*. Checks that fail are **blocking** —
+  the name is moved out of the buy queue and shown with its reason, because a
+  system that can't say no isn't screening. Without this, a stock's scrutiny
+  depended on which door it came through, and the paper record would have
+  measured the doors.
+- **Don't buy after the move** — the scanner used to add up to 25 points for
+  recent returns plus 10 for sitting at the 52-week high, so it systematically
+  surfaced names *after* they ran. Momentum is now rewarded in a band and
+  punished at the extremes: on the same synthetic pair, a parabolic stock fell
+  from **80 → 18** and a paused uptrend rose from **36 → 59**.
+- **What actually drives a stock** — weekly returns regressed on the Nifty,
+  USD/INR, crude and US 10-year yields, reported as "falls about 1.4% for each
+  1% move in USD/INR", with simple *and* joint betas so a raw correlation that
+  is really market risk-off can be told apart from a genuine currency exposure.
 - **Seasonality** — month-by-month behaviour over 3/5/10 years, to answer "is
   this cyclical?". Deliberately hard to fool: twelve monthly averages drawn from
   a handful of years will always show some months looking strong, so a month is

@@ -691,8 +691,13 @@ def api_recommendations_optimize(body: dict):
             except Exception as e:
                 get_logger("dashboard").debug(f"research {sym} failed: {e}")
                 researched[sym] = {"symbol": sym, "error": str(e)[:200]}
-        attach_research(researched)
+        gate_result = attach_research(researched)
         out["researched"] = len(researched)
+        out["blocked"] = gate_result.get("blocked", 0)
+        out["blocked_names"] = [
+            sym for sym, d in researched.items()
+            if (d.get("gate") or {}).get("checks") and not (d.get("gate") or {}).get("passed")
+        ]
         _progress(stage="done", pct=100,
                   message=f"Sized {len(funded)} and researched {total}.")
         return _scrub_for_json(out)
