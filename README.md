@@ -35,7 +35,17 @@ the desktop and the phone.
   builds a **full research dossier** per name: fundamentals with provenance, the
   last filings, the quant entry model, the macro regime, scheduled events, news,
   and social that named sources corroborate, ending in one judgement over the
-  lot with its risks and what would change it. A name the optimiser won't fund
+  lot with its risks and what would change it. Each section reports its own
+  status, so a dossier that lost only its final judgement can be repaired in
+  seconds with **↻ Re-run judgement** instead of re-fetching every filing.
+- **Seasonality** — month-by-month behaviour over 3/5/10 years, to answer "is
+  this cyclical?". Deliberately hard to fool: twelve monthly averages drawn from
+  a handful of years will always show some months looking strong, so a month is
+  only called a standout if its **median** move is large (robust to one dramatic
+  year), it went the same way in most years, and the average is large next to
+  its own scatter. Thresholds were calibrated against simulated noise — at the
+  shipped settings, 0% of pure-noise series are called seasonal while a planted
+  pattern is still found every time. A name the optimiser won't fund
   alongside what you own says so, which is an answer — P&L, return and hit rate per source, with your own manual picks
   tracked separately so they can't be credited to an engine. Positions book at
   the **live price** (you don't get to pick the fill, or the record proves

@@ -701,6 +701,67 @@ def api_recommendations_optimize(body: dict):
     return {"job_id": job_id}
 
 
+@app.post("/api/recommendations/research")
+def api_recommendation_research(body: dict):
+    """Re-run the analysis for ONE stock, optionally only the part that failed.
+
+    A full pass fetches filings and coverage and takes about a minute, so
+    rebuilding everything because the model was briefly unavailable is waste.
+    `scope` targets the repair:
+
+      documents — filings and fundamentals only
+      news      — coverage only
+      judgement — just the final synthesis over what's already stored (seconds)
+      all       — the lot
+    """
+    from src.portfolio.recommendations import list_all
+
+    symbol = (body.get("symbol") or "").upper().strip()
+    rec_id = body.get("id")
+    scope = (body.get("scope") or "all").lower()
+
+    items = list_all()["items"]
+    rec = next((i for i in items if i["id"] == rec_id), None) if rec_id else None
+    if rec is None and symbol:
+        rec = next((i for i in items
+                    if i["symbol"] == symbol and i.get("status") == "pending"), None)
+    if rec is None:
+        return {"error": "Recommendation not found — it may have been taken "
+                         "or skipped already."}
+
+    from src.portfolio.research import SCOPES
+    if scope not in SCOPES:
+        return {"error": f"scope must be one of {', '.join(SCOPES)}"}
+
+    job_id = uuid.uuid4().hex[:8]
+
+    def _progress(**kw):
+        _REC_PROGRESS[job_id] = {**_REC_PROGRESS.get(job_id, {}), **kw}
+
+    def _do():
+        from src.portfolio.recommendations import attach_research
+        from src.portfolio.research import research
+        _progress(stage="research", pct=5, symbol=rec["symbol"],
+                  message=f"Re-running {scope} for {rec['symbol']}…")
+        macro = None
+        try:
+            from src.tools.macro import MacroSnapshot
+            macro = MacroSnapshot().market_mode()
+        except Exception as e:
+            get_logger("dashboard").debug(f"macro for retry failed: {e}")
+        out = research(rec["symbol"], macro=macro, calendar=_CAL_CACHE.get("data"),
+                       scope=scope, previous=rec.get("research"))
+        attach_research({rec["symbol"]: out})
+        _progress(stage="done", pct=100,
+                  message=("Done." if out.get("complete")
+                           else "Still incomplete: " + ", ".join(out.get("failed_sections") or [])))
+        return _scrub_for_json({"ok": True, "symbol": rec["symbol"],
+                                "scope": scope, "research": out})
+
+    _run_job(job_id, _do)
+    return {"job_id": job_id}
+
+
 @app.post("/api/recommendations/dismiss")
 def api_recommendation_dismiss(body: dict):
     from src.portfolio.recommendations import set_status
@@ -711,6 +772,23 @@ def api_recommendation_dismiss(body: dict):
 def api_recommendations_clear(body: dict | None = None):
     from src.portfolio.recommendations import clear
     return clear((body or {}).get("which", "dismissed"))
+
+
+@app.get("/api/seasonality")
+def api_seasonality(symbol: str, years: int = 5):
+    """Month-by-month behaviour over several years — is this stock cyclical?
+
+    Cached: it's a price fetch plus arithmetic, and the answer only changes
+    once a month.
+    """
+    from src.data.cache import get_or_set
+    from src.portfolio.seasonality import seasonality
+    sym = (symbol or "").upper().strip()
+    if not sym:
+        return {"error": "symbol required"}
+    data = get_or_set("seasonality", f"{sym}_{years}", ttl_seconds=60 * 60 * 12,
+                      fn=lambda: seasonality(sym, years))
+    return _scrub_for_json(data)
 
 
 # ---------------- ghost (paper) portfolio ----------------

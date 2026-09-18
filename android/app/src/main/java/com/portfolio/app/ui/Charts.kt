@@ -528,3 +528,76 @@ fun BarPairChart(
         }
     }
 }
+
+/**
+ * Average return by calendar month, for spotting a cyclical stock.
+ *
+ * Bars are signed around zero, and shaded by how CONSISTENT the month was
+ * across years rather than by size alone — a +6% average that happened once is
+ * not the same as +3% in four years out of five, and colouring by magnitude
+ * would make them look identical.
+ */
+@Composable
+fun SeasonalityChart(
+    labels: List<String>,
+    averages: List<Float>,
+    winRates: List<Float?>,
+    modifier: Modifier = Modifier,
+) {
+    val n = minOf(labels.size, averages.size)
+    val finite = averages.take(n).filter { it.isFinite() }
+    if (finite.isEmpty()) {
+        Text("No monthly history yet.", color = Muted, fontSize = 12.sp); return
+    }
+    val ticks = niceTicks(minOf(finite.min(), 0f), maxOf(finite.max(), 0f))
+    val lo = ticks.first(); val hi = ticks.last()
+    val range = (hi - lo).takeIf { it > 0f } ?: 1f
+
+    Column(modifier.fillMaxWidth()) {
+        Canvas(Modifier.fillMaxWidth().height(200.dp)) {
+            val padL = 40.dp.toPx(); val padR = 4.dp.toPx()
+            val padT = 8.dp.toPx(); val padB = 22.dp.toPx()
+            val w = size.width - padL - padR
+            val h = size.height - padT - padB
+            fun py(v: Float) = padT + h - ((v - lo) / range) * h
+            val slot = w / n
+            val barW = (slot * 0.62f).coerceAtMost(22.dp.toPx())
+
+            val paint = android.graphics.Paint().apply {
+                color = android.graphics.Color.argb(190, 139, 148, 158)
+                textSize = 9.sp.toPx(); isAntiAlias = true
+            }
+            ticks.forEach { t ->
+                val y = py(t)
+                drawLine(BorderCol.copy(alpha = if (t == 0f) 0.9f else 0.32f),
+                    Offset(padL, y), Offset(padL + w, y), if (t == 0f) 1.5f else 1f)
+                drawContext.canvas.nativeCanvas.drawText(
+                    "%.0f%%".format(t), 2f, y + paint.textSize / 3f, paint)
+            }
+
+            val zeroY = py(0f)
+            for (i in 0 until n) {
+                val v = averages[i]
+                if (!v.isFinite()) continue
+                val cx = padL + slot * (i + 0.5f)
+                val y = py(v)
+                // Consistency, not size, drives the opacity.
+                val wr = winRates.getOrNull(i)
+                val consistency = wr?.let {
+                    ((if (v >= 0f) it else 100f - it) - 50f) / 50f
+                }?.coerceIn(0f, 1f) ?: 0.5f
+                val col = if (v >= 0) Bull else Bear
+                drawRect(col.copy(alpha = 0.30f + 0.60f * consistency),
+                    topLeft = Offset(cx - barW / 2f, kotlin.math.min(y, zeroY)),
+                    size = Size(barW, kotlin.math.abs(y - zeroY).coerceAtLeast(1.5f)))
+                val t = labels[i]
+                drawContext.canvas.nativeCanvas.drawText(
+                    t, cx - paint.measureText(t) / 2f, size.height - 4f, paint)
+            }
+        }
+        Spacer(Modifier.height(6.dp))
+        Text("Solid bars = the month behaved the same way most years. " +
+            "Faint bars = the average comes from a couple of outliers.",
+            color = Muted, fontSize = 10.sp, lineHeight = 14.sp)
+    }
+}

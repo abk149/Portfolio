@@ -149,6 +149,10 @@ object Api {
                                        research: Boolean = true) =
         post("/api/recommendations/optimize", JSONObject()
             .put("cash", cash).put("max_weight", maxWeight).put("research", research))
+    /** Re-run one stock's analysis; scope = all | documents | news | judgement. */
+    suspend fun recommendationResearch(id: String, scope: String = "all") =
+        post("/api/recommendations/research",
+            JSONObject().put("id", id).put("scope", scope))
     suspend fun recommendationsProgress(jobId: String) =
         get("/api/recommendations/progress/$jobId")
     suspend fun recommendationsClear(which: String = "dismissed") =
@@ -157,6 +161,10 @@ object Api {
     // ── Persisted engine results (survive a restart) ──
     suspend fun results() = get("/api/results")
     suspend fun result(kind: String) = get("/api/results/$kind")
+
+    // ── Seasonality (is this stock cyclical?) ──
+    suspend fun seasonality(symbol: String, years: Int = 5) =
+        get("/api/seasonality?symbol=$symbol&years=$years")
 
     // ── Ghost (paper) portfolio ──
     suspend fun ghost() = get("/api/ghost")

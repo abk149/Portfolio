@@ -30,12 +30,22 @@ from src.utils.logger import get_logger
 log = get_logger("portfolio.research")
 
 
-def _safe(section: str, fn: Callable, gaps: list[str], default=None):
+def _safe(section: str, fn: Callable, gaps: list[str], status: dict, default=None):
+    """Run one section, recording whether it worked.
+
+    Per-section status exists so a partial dossier can be repaired instead of
+    rebuilt: fetching filings and news takes about a minute, and losing all of
+    it because the model was briefly unavailable is pure waste. It also lets the
+    UI offer a retry on exactly the part that broke.
+    """
     try:
-        return fn()
+        out = fn()
+        status[section] = {"ok": True}
+        return out
     except Exception as e:
         log.debug(f"{section} failed: {e}")
         gaps.append(f"{section} ({type(e).__name__})")
+        status[section] = {"ok": False, "error": f"{type(e).__name__}: {e}"[:200]}
         return default
 
 
@@ -63,44 +73,92 @@ def _events_for(symbol: str, sector: Optional[str], calendar: Optional[dict],
     return out
 
 
+# Which parts of a dossier can be rebuilt on their own.
+SCOPES = ("all", "documents", "news", "judgement")
+
+
 def research(symbol: str, macro: Optional[dict] = None,
              calendar: Optional[dict] = None, max_docs: int = 2,
-             with_llm: bool = True) -> dict:
-    """Assemble everything known about one stock, then synthesise it."""
+             with_llm: bool = True, scope: str = "all",
+             previous: Optional[dict] = None) -> dict:
+    """Assemble everything known about one stock, then synthesise it.
+
+    `scope` allows repairing a partial dossier instead of rebuilding it:
+
+      * ``documents`` — re-fetch filings/fundamentals only (the slow part),
+      * ``news``      — re-fetch coverage only,
+      * ``judgement`` — re-run just the final synthesis over what's already
+        stored, which is seconds rather than a minute,
+      * ``all``       — everything.
+
+    Anything not in scope is carried over from `previous`, so a retry never
+    costs work that already succeeded.
+    """
     symbol = (symbol or "").upper().strip().replace(".NS", "").replace(".BO", "")
     if not symbol:
         return {"error": "no symbol"}
 
+    prev = previous or {}
     gaps: list[str] = []
+    status: dict = {}
+
+    # ---- judgement-only: reuse the stored dossier entirely ----
+    if scope == "judgement":
+        if not prev:
+            return {"error": "Nothing stored to re-judge — run the full "
+                             "analysis for this stock first."}
+        dossier = dict(prev)
+        dossier["verdict"] = _synthesise(dossier)
+        dossier["sections"] = dict(prev.get("sections") or {})
+        dossier["sections"]["judgement"] = (
+            {"ok": False, "error": dossier["verdict"].get("error")}
+            if dossier["verdict"].get("error") else {"ok": True})
+        dossier["as_of"] = datetime.now().isoformat(timespec="minutes")
+        return _finalise(dossier)
 
     # ---- micro: fundamentals, filings, entry model, first-pass analysis ----
-    dd = _safe("company analysis", lambda: __import__(
-        "src.tools.deep_dive", fromlist=["deep_dive"]
-    ).deep_dive(symbol, max_docs=max_docs), gaps, default={}) or {}
+    if scope in ("all", "documents") or not prev:
+        dd = _safe("company analysis", lambda: __import__(
+            "src.tools.deep_dive", fromlist=["deep_dive"]
+        ).deep_dive(symbol, max_docs=max_docs), gaps, status, default={}) or {}
+    else:
+        dd = {"fundamentals": prev.get("fundamentals"),
+              "fundamentals_provenance": prev.get("fundamentals_provenance"),
+              "fundamentals_missing": prev.get("fundamentals_missing"),
+              "entry": prev.get("entry"), "analysis": prev.get("company_analysis"),
+              "sources": prev.get("reports") or []}
+        status["company analysis"] = (prev.get("sections") or {}).get(
+            "company analysis", {"ok": True})
 
     # ---- news + corroborated social ----
-    news_items: list[dict] = []
-    social: list[dict] = []
-    dropped_social = 0
+    if scope in ("all", "news") or not prev:
+        news_items: list[dict] = []
+        social: list[dict] = []
 
-    def _gather_news():
-        from src.tools.web_search import WebSearcher
-        return WebSearcher(max_results=6).news_for(symbol) or []
+        def _gather_news():
+            from src.tools.web_search import WebSearcher
+            return WebSearcher(max_results=6).news_for(symbol) or []
 
-    for item in (_safe("news", _gather_news, gaps, default=[]) or []):
-        src = str(item.get("source") or "")
-        if src.lower().startswith("reddit"):
-            # news_for already drops uncorroborated posts; anything that
-            # survives carries its corroboration in the source label.
-            social.append(item)
-        else:
-            news_items.append(item)
+        for item in (_safe("news", _gather_news, gaps, status, default=[]) or []):
+            src = str(item.get("source") or "")
+            if src.lower().startswith("reddit"):
+                # news_for already drops uncorroborated posts; anything that
+                # survives carries its corroboration in the source label.
+                social.append(item)
+            else:
+                news_items.append(item)
+    else:
+        news_items = list(prev.get("news") or [])
+        social = list(prev.get("social") or [])
+        status["news"] = (prev.get("sections") or {}).get("news", {"ok": True})
 
     # ---- macro backdrop ----
     if macro is None:
         macro = _safe("macro snapshot", lambda: __import__(
             "src.tools.macro", fromlist=["MacroSnapshot"]
-        ).MacroSnapshot().market_mode(), gaps, default={}) or {}
+        ).MacroSnapshot().market_mode(), gaps, status, default={}) or {}
+    else:
+        status["macro snapshot"] = {"ok": True}
 
     fundamentals = dd.get("fundamentals") or {}
     events = _events_for(symbol, fundamentals.get("sector"), calendar)
@@ -119,6 +177,7 @@ def research(symbol: str, macro: Optional[dict] = None,
         "macro": macro,
         "events": events,
         "gaps": gaps,
+        "sections": status,
         "counts": {"news": len(news_items), "social": len(social),
                    "reports": len(dd.get("sources") or []),
                    "events": len(events)},
@@ -126,7 +185,29 @@ def research(symbol: str, macro: Optional[dict] = None,
 
     if with_llm:
         dossier["verdict"] = _synthesise(dossier)
-    return dossier
+        status["judgement"] = ({"ok": False, "error": dossier["verdict"].get("error")}
+                               if dossier["verdict"].get("error") else {"ok": True})
+    return _finalise(dossier)
+
+
+def _finalise(d: dict) -> dict:
+    """Mark whether the dossier is whole, and what still needs a retry.
+
+    Surfaced rather than inferred in the UI: a dossier missing its filings is
+    materially weaker than one missing only its final judgement, and the user
+    should be able to retry exactly the part that failed.
+    """
+    sections = d.get("sections") or {}
+    failed = [name for name, st in sections.items() if not st.get("ok")]
+    d["failed_sections"] = failed
+    d["complete"] = not failed
+    d["retryable"] = sorted({
+        "documents" if f == "company analysis" else
+        "news" if f == "news" else
+        "judgement" if f == "judgement" else "all"
+        for f in failed
+    })
+    return d
 
 
 def _synthesise(d: dict) -> dict:

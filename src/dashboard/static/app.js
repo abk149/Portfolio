@@ -2002,7 +2002,16 @@ async function ghostRecs() {
                  min="500" step="500" style="width:120px">
           <button class="primary" onclick="ghostTake('${r.id}')">Buy</button>
           <button onclick="ghostSkip('${r.id}')">Skip</button>
+          ${(r.research ? (r.research.retryable || []) : []).map(sc =>
+            `<button onclick="ghostRetry('${r.id}','${sc}')">↻ ${
+              sc === "judgement" ? "Re-run judgement" :
+              sc === "documents" ? "Re-fetch filings" :
+              sc === "news" ? "Re-fetch news" : "Re-run all"}</button>`).join("")}
+          <button onclick="ghostRetry('${r.id}','all')">↻ ${
+            r.research ? "Refresh analysis" : "Analyse"}</button>
+          <button onclick="ghostSeasonality('${r.symbol}')">📅 Seasonality</button>
         </div>
+        <div id="season-${escapeHtml(r.symbol)}"></div>
       </div>`;
   }).join("")
     : `<div style="color:var(--muted)">Nothing waiting. Run Macro Ideas, the
@@ -2130,6 +2139,10 @@ function researchHtml(res) {
         ${para("Buying into this market", v.macro_view)}
         ${para("Timing", v.timing)}
         ${para("What people are saying", v.what_people_say)}
+        ${(res.failed_sections || []).length
+          ? `<div style="color:#d29922;font-size:11px;margin:8px 0">
+               Incomplete: ${escapeHtml((res.failed_sections || []).join(", "))}
+             </div>` : ""}
         ${(v.key_risks || []).length ? `<h4>Key risks</h4><ul>${li(v.key_risks)}</ul>` : ""}
         ${(v.what_would_change_my_mind || []).length
           ? `<h4>What would change this view</h4><ul>${li(v.what_would_change_my_mind)}</ul>` : ""}
@@ -2137,4 +2150,74 @@ function researchHtml(res) {
         ${evidence}
       </div>
     </details>`;
+}
+
+/** Re-run one stock's analysis — optionally only the part that failed. */
+async function ghostRetry(id, scope) {
+  $("ghost-msg").innerHTML = `<span class='spin'></span> re-running ${escapeHtml(scope)} …`;
+  try {
+    const {job_id, error} = await fetch("/api/recommendations/research", {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({id, scope}),
+    }).then(r => r.json());
+    if (!job_id) { $("ghost-msg").innerHTML = `<span class="neg">${escapeHtml(error || "failed")}</span>`; return; }
+    const r = await pollJob(job_id);
+    const res = r.research || {};
+    $("ghost-msg").innerHTML = res.complete
+      ? `<span class="pos">${escapeHtml(r.symbol)}: analysis complete.</span>`
+      : `<span class="neg">${escapeHtml(r.symbol)}: still incomplete —
+         ${escapeHtml((res.failed_sections || []).join(", "))}</span>`;
+    ghostRecs();
+  } catch (e) {
+    $("ghost-msg").innerHTML = `<span class="neg">${e.message}</span>`;
+  }
+}
+
+/**
+ * Month-by-month history for one stock.
+ *
+ * Leads with how much evidence there is: twelve averages from a handful of
+ * years will always show some months looking strong, so the verdict and the
+ * sample size get as much room as the chart.
+ */
+let _seasonCharts = {};
+async function ghostSeasonality(symbol) {
+  const host = $(`season-${symbol}`);
+  if (!host) return;
+  if (host.innerHTML) { host.innerHTML = ""; return; }      // toggle
+  host.innerHTML = "<div style='color:var(--muted);margin-top:8px'>reading history…</div>";
+  const d = await fetch(`/api/seasonality?symbol=${encodeURIComponent(symbol)}&years=5`)
+    .then(r => r.json()).catch(() => null);
+  if (!d || d.error) {
+    host.innerHTML = `<div class="neg" style="margin-top:8px">${escapeHtml((d && d.error) || "failed")}</div>`;
+    return;
+  }
+  const id = `seasoncv-${symbol}`;
+  const verdictColor = d.verdict === "possible seasonality" ? "#3fb950"
+    : d.verdict === "not enough history" ? "#8b949e" : "#d29922";
+  host.innerHTML = `
+    <div style="margin-top:10px">
+      <div style="color:${verdictColor};font-size:12px;font-weight:600">${escapeHtml(d.verdict)}</div>
+      <div style="color:var(--muted);font-size:11px;margin-top:4px;line-height:1.5">${escapeHtml(d.reading)}</div>
+      <div style="position:relative;height:200px;margin-top:10px"><canvas id="${id}"></canvas></div>
+      <div style="color:var(--muted);font-size:10px;margin-top:6px;line-height:1.45">${escapeHtml(d.caveat)}</div>
+    </div>`;
+  const months = d.by_month || [];
+  _seasonCharts[symbol]?.destroy();
+  const cfg = _lineCfg(months.map(m => m.label), [], "%");
+  cfg.type = "bar";
+  cfg.data.datasets = [{
+    label: "Average return",
+    data: months.map(m => m.avg),
+    // Opacity tracks CONSISTENCY, not size: a +6% average that happened once
+    // must not look like +3% in four years out of five.
+    backgroundColor: months.map(m => {
+      const wr = m.win_rate;
+      const consistency = wr == null ? 0.5
+        : Math.max(0, Math.min(1, (((m.avg >= 0 ? wr : 100 - wr)) - 50) / 50));
+      const a = (0.3 + 0.6 * consistency).toFixed(2);
+      return (m.avg >= 0 ? `rgba(63,185,80,${a})` : `rgba(248,81,73,${a})`);
+    }),
+  }];
+  _seasonCharts[symbol] = new Chart($(id), cfg);
 }

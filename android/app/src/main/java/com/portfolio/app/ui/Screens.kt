@@ -1538,6 +1538,8 @@ fun DeepDiveScreen(symbol: String) {
                 GhostInvestRow(symbol, source = "deep-dive")
             }
 
+            SeasonalityCard(symbol)
+
             SectionCard("Quant entry", Bull) {
                 StatusBanner("CMP ₹${fmtNum(e.opt("current"))}  ·  50-DMA ₹${fmtNum(e.opt("dma50"))}  ·  " +
                     "RSI ${fmtNum(e.opt("rsi"))}\nSuggested entry ₹${fmtNum(e.opt("suggested_entry"))} " +
@@ -1572,6 +1574,84 @@ fun DeepDiveScreen(symbol: String) {
                 }
             }
             Spacer(Modifier.height(24.dp))
+        }
+    }
+}
+
+/**
+ * Month-by-month history, for "is this a cyclical stock I can time?".
+ *
+ * Deliberately leads with how much evidence there is. Twelve averages drawn
+ * from five years will always show some months looking strong — that is what
+ * randomness looks like — so the sample size, the win rate and the caveat are
+ * given the same prominence as the chart itself.
+ */
+@Composable
+private fun SeasonalityCard(symbol: String) {
+    var years by remember { mutableStateOf(5) }
+    val job = JobBus.state("seasonality:$symbol:$years")
+    LaunchedEffect(symbol, years) {
+        if (BackendBus.running && job.result == null && !job.running) {
+            JobBus.runSync("seasonality:$symbol:$years", "Reading $years years of history…") {
+                Api.seasonality(symbol, years)
+            }
+        }
+    }
+    SectionCard("Seasonality · is it cyclical?", Warn) {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            listOf(3, 5, 10).forEach { y ->
+                FilterChip(selected = years == y, onClick = { years = y },
+                    label = { Text("${y}y") })
+            }
+        }
+        job.status?.let { Spacer(Modifier.height(8.dp)); StatusBanner(it, if (job.running) Warn else Bear) }
+        job.result?.let { r ->
+            r.optString("error").takeIf { it.isNotBlank() }?.let {
+                StatusBanner(it, Warn); return@SectionCard
+            }
+            val months = arr(r, "by_month")
+            val labels = ArrayList<String>(); val avgs = ArrayList<Float>()
+            val wins = ArrayList<Float?>()
+            if (months != null) for (i in 0 until months.length()) {
+                val m = months.optJSONObject(i) ?: continue
+                labels.add(m.optString("label"))
+                avgs.add((m.opt("avg") as? Number)?.toFloat() ?: Float.NaN)
+                wins.add((m.opt("win_rate") as? Number)?.toFloat())
+            }
+            Spacer(Modifier.height(12.dp))
+            SeasonalityChart(labels, avgs, wins)
+
+            Spacer(Modifier.height(12.dp))
+            val verdict = r.optString("verdict")
+            StatusBanner(r.optString("reading"),
+                when (verdict) {
+                    "possible seasonality" -> Bull
+                    "not enough history" -> Muted
+                    else -> Warn
+                })
+
+            Spacer(Modifier.height(12.dp))
+            val best = r.optJSONObject("best_month")
+            val worst = r.optJSONObject("worst_month")
+            KpiGrid(listOf(
+                Triple("Strongest month",
+                    best?.let { "${it.optString("label")} ${"%+.1f%%".format(
+                        (it.opt("avg") as? Number)?.toDouble() ?: 0.0)}" } ?: "—", Bull),
+                Triple("Weakest month",
+                    worst?.let { "${it.optString("label")} ${"%+.1f%%".format(
+                        (worst.opt("avg") as? Number)?.toDouble() ?: 0.0)}" } ?: "—", Bear),
+                Triple("Years covered", fmtNum(r.opt("years_covered")), OnBg),
+                Triple("Samples per month", fmtNum(r.opt("observations_per_month")), Muted),
+            ))
+            best?.let {
+                Spacer(Modifier.height(8.dp))
+                Text("${it.optString("label")}: positive in ${fmtNum(it.opt("win_rate"))}% " +
+                    "of years, t-stat ${fmtNum(it.opt("t_stat"))} " +
+                    "(above ~2 is where a pattern starts to look real).",
+                    color = Muted, fontSize = 10.5.sp, lineHeight = 15.sp)
+            }
+            Spacer(Modifier.height(10.dp))
+            Text(r.optString("caveat"), color = Muted, fontSize = 10.sp, lineHeight = 14.sp)
         }
     }
 }

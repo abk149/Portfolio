@@ -70,6 +70,45 @@ object GhostBus {
         scope.launch { Api.recommendationDismiss(id); refresh() }
     }
 
+    /**
+     * Re-run the analysis for ONE recommendation, optionally only the part
+     * that failed. A full pass fetches filings and coverage and takes about a
+     * minute, so redoing all of it because the model blinked is waste.
+     */
+    fun retryResearch(id: String, scope0: String) {
+        if (busyId != null) return
+        busyId = id
+        scope.launch {
+            lastMessage = when (val r = Api.recommendationResearch(id, scope0)) {
+                is Api.Resp.Err -> "Retry failed: ${r.message}"
+                is Api.Resp.Ok -> {
+                    val jid = r.body.optString("job_id")
+                    if (jid.isBlank()) r.body.optString("error", "Couldn't start the retry.")
+                    else {
+                        var out: org.json.JSONObject? = null
+                        for (i in 0 until 240) {          // up to ~8 min
+                            kotlinx.coroutines.delay(2000)
+                            val j = Api.job(jid).objOrNull() ?: continue
+                            if (j.optString("status") != "running") { out = j; break }
+                        }
+                        val res = out?.optJSONObject("result")?.optJSONObject("research")
+                        when {
+                            out == null -> "Still running — check back shortly."
+                            res == null -> "Retry failed: ${out.optString("error", "unknown")}"
+                            res.optBoolean("complete") -> "Analysis complete."
+                            else -> "Still incomplete: " +
+                                (arr(res, "failed_sections")?.let { f ->
+                                    (0 until f.length()).joinToString(", ") { f.optString(it) }
+                                } ?: "unknown")
+                        }
+                    }
+                }
+            }
+            busyId = null
+            refresh()
+        }
+    }
+
     fun buy(symbol: String, amount: Double, source: String, onDone: (String) -> Unit = {}) {
         scope.launch {
             val msg = when (val r = Api.ghostBuy(symbol, amount, source)) {
@@ -614,7 +653,7 @@ private fun RecommendationCard(r: JSONObject) {
             Text("suggested $it", color = Muted, fontSize = 9.5.sp)
         }
 
-        r.optJSONObject("research")?.let { ResearchPanel(it) }
+        r.optJSONObject("research")?.let { ResearchPanel(it, id) }
         Spacer(Modifier.height(10.dp))
         Row(verticalAlignment = Alignment.CenterVertically) {
             OutlinedTextField(
@@ -645,7 +684,7 @@ private fun RecommendationCard(r: JSONObject) {
  * everything that went into the call is one tap away.
  */
 @Composable
-private fun ResearchPanel(res: JSONObject) {
+private fun ResearchPanel(res: JSONObject, recId: String) {
     var open by remember { mutableStateOf(false) }
     val v = res.optJSONObject("verdict")
     val counts = res.optJSONObject("counts")
@@ -684,6 +723,55 @@ private fun ResearchPanel(res: JSONObject) {
         Spacer(Modifier.height(6.dp))
         StatusBanner("Couldn't produce a final judgement: $it\nThe research " +
             "below is still complete.", Warn)
+    }
+
+    // Whatever failed gets its own retry, so a working dossier isn't thrown
+    // away to fix one broken part.
+    val failed = arr(res, "failed_sections")
+    val retryable = arr(res, "retryable")
+    if (failed != null && failed.length() > 0) {
+        Spacer(Modifier.height(8.dp))
+        Text("Incomplete: " + (0 until failed.length()).joinToString(", ") {
+            failed.optString(it) }, color = Warn, fontSize = 11.sp)
+        Spacer(Modifier.height(6.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            val busy = GhostBus.busyId == recId
+            if (retryable != null) for (i in 0 until retryable.length()) {
+                val sc = retryable.optString(i)
+                OutlinedButton(
+                    onClick = { GhostBus.retryResearch(recId, sc) },
+                    enabled = !busy && BackendBus.running,
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
+                ) {
+                    Text(when (sc) {
+                        "judgement" -> "↻ Re-run judgement"
+                        "documents" -> "↻ Re-fetch filings"
+                        "news" -> "↻ Re-fetch news"
+                        else -> "↻ Re-run all"
+                    }, fontSize = 11.sp)
+                }
+            }
+            OutlinedButton(
+                onClick = { GhostBus.retryResearch(recId, "all") },
+                enabled = !busy && BackendBus.running,
+                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
+            ) { Text(if (busy) "…" else "↻ Full re-run", fontSize = 11.sp) }
+        }
+    } else {
+        Spacer(Modifier.height(6.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            val busy = GhostBus.busyId == recId
+            OutlinedButton(
+                onClick = { GhostBus.retryResearch(recId, "judgement") },
+                enabled = !busy && BackendBus.running,
+                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
+            ) { Text("↻ Re-judge", fontSize = 11.sp) }
+            OutlinedButton(
+                onClick = { GhostBus.retryResearch(recId, "all") },
+                enabled = !busy && BackendBus.running,
+                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
+            ) { Text("↻ Refresh analysis", fontSize = 11.sp) }
+        }
     }
 
     if (!open) return
