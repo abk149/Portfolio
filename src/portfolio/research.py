@@ -78,7 +78,7 @@ SCOPES = ("all", "documents", "news", "judgement")
 
 
 def research(symbol: str, macro: Optional[dict] = None,
-             calendar: Optional[dict] = None, max_docs: int = 2,
+             calendar: Optional[dict] = None, max_docs: int = 3,
              with_llm: bool = True, scope: str = "all",
              previous: Optional[dict] = None) -> dict:
     """Assemble everything known about one stock, then synthesise it.
@@ -178,11 +178,19 @@ def research(symbol: str, macro: Optional[dict] = None,
         season = _safe("seasonality", lambda: __import__(
             "src.portfolio.seasonality", fromlist=["seasonality"]
         ).seasonality(symbol, years=5), gaps, status, default={}) or {}
+        # The last four quarters from the exchange's own filings. An annual
+        # report is up to a year stale by the time it is published; what
+        # matters before a trade is the latest quarter and how the three
+        # before it trended.
+        quarters = _safe("quarterly results", lambda: __import__(
+            "src.portfolio.quarters", fromlist=["quarterly_results"]
+        ).quarterly_results(symbol, n=4), gaps, status, default={}) or {}
     else:
         factors = prev.get("factors") or {}
         runway_d = prev.get("runway") or {}
         season = prev.get("seasonality") or {}
-        for k in ("factor exposure", "runway", "seasonality"):
+        quarters = prev.get("quarters") or {}
+        for k in ("factor exposure", "runway", "seasonality", "quarterly results"):
             status[k] = (prev.get("sections") or {}).get(k, {"ok": True})
 
     gate = _safe("screening gate", lambda: __import__(
@@ -206,6 +214,7 @@ def research(symbol: str, macro: Optional[dict] = None,
         "factors": factors,
         "runway": runway_d,
         "seasonality": season,
+        "quarters": quarters,
         "gate": gate,
         "gaps": gaps,
         "sections": status,
@@ -259,6 +268,18 @@ def _synthesise(d: dict) -> dict:
     rw = d.get("runway") or {}
     se = d.get("seasonality") or {}
     ga = d.get("gate") or {}
+    qs = d.get("quarters") or {}
+
+    def _fmt_quarters(q: dict) -> str:
+        rows = q.get("quarters") or []
+        if not rows:
+            return "  (no quarterly filings available)"
+        return "\n".join(
+            f"  - {r['label']}: revenue Rs {r.get('revenue_cr')}cr"
+            f" (YoY {r.get('revenue_yoy_pct')}%), PAT Rs {r.get('pat_cr')}cr"
+            f" (YoY {r.get('pat_yoy_pct')}%), margin {r.get('net_margin_pct')}%,"
+            f" EPS {r.get('eps')}"
+            for r in rows)
 
     def _fmt_factors(fo: dict) -> str:
         rows = (fo.get("factors") or [])
@@ -305,6 +326,11 @@ FUNDAMENTALS: P/E {f.get('pe')} · ROE {f.get('roe_pct')}% · D/E {f.get('debt_t
 sales growth {f.get('sales_growth_pct')}% · profit growth {f.get('profit_growth_pct')}% ·
 mcap {f.get('market_cap_cr')} cr · sector {f.get('sector')}
 Missing metrics: {', '.join(d.get('fundamentals_missing') or []) or 'none'}
+
+LAST FOUR QUARTERS (exchange filings, {qs.get('basis', '?')} basis):
+{_fmt_quarters(qs)}
+  {qs.get('freshness', '')}
+  Trend: {(qs.get('trend') or {}).get('reading', 'not established')}
 
 COMPANY ANALYSIS (from the filings):
   health: {ca.get('financial_health')}

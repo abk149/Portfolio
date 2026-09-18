@@ -2007,8 +2007,8 @@ async function ghostRecs() {
               sc === "judgement" ? "Re-run judgement" :
               sc === "documents" ? "Re-fetch filings" :
               sc === "news" ? "Re-fetch news" : "Re-run all"}</button>`).join("")}
-          <button onclick="ghostRetry('${r.id}','all')">↻ ${
-            r.research ? "Refresh analysis" : "Analyse"}</button>
+          <button ${r.research ? "" : 'class="primary"'} onclick="ghostRetry('${r.id}','all')">${
+            r.research ? "↻ Refresh analysis" : "🔬 Analyse this stock"}</button>
           <button onclick="ghostSeasonality('${r.symbol}')">📅 Seasonality</button>
         </div>
         <div id="season-${escapeHtml(r.symbol)}"></div>
@@ -2105,6 +2105,20 @@ async function ghostSizeAll() {
 /** The dossier behind a recommendation, collapsed by default. */
 function researchHtml(res) {
   if (!res) return "";
+  const qs = (res.quarters && res.quarters.quarters) || [];
+  const qHtml = qs.length ? `
+    <h4>Last four quarters (${escapeHtml(res.quarters.basis || "")})</h4>
+    ${table(qs, [
+      {key: "label", title: "Quarter"},
+      {key: "revenue_cr", title: "Revenue", fmt: v => v == null ? "—" : "₹" + fmt(v, 0) + "cr"},
+      {key: "revenue_yoy_pct", title: "YoY", fmt: v => v == null ? "—" : fmt(v, 1) + "%", cls: v => cls(v)},
+      {key: "pat_cr", title: "PAT", fmt: v => v == null ? "—" : "₹" + fmt(v, 0) + "cr"},
+      {key: "pat_yoy_pct", title: "YoY", fmt: v => v == null ? "—" : fmt(v, 1) + "%", cls: v => cls(v)},
+      {key: "net_margin_pct", title: "Margin", fmt: v => v == null ? "—" : fmt(v, 1) + "%"},
+    ])}
+    <p>${escapeHtml(((res.quarters || {}).trend || {}).reading || "")}</p>
+    <div style="color:${res.quarters.stale ? "#d29922" : "var(--muted)"};font-size:11px">
+      ${escapeHtml(res.quarters.freshness || "")}</div>` : "";
   const v = res.verdict || {};
   const c = res.counts || {};
   const li = (a) => (a || []).map(x => `<li>${escapeHtml(x)}</li>`).join("");
@@ -2135,6 +2149,9 @@ function researchHtml(res) {
         ${v.error ? `<div class="neg">Couldn't produce a final judgement: ${escapeHtml(v.error)}.
                      The research below is still complete.</div>` : ""}
         ${para("Thesis", v.thesis)}
+        ${para("Is the move still ahead?", v.move_left)}
+        ${(v.catalysts || []).length ? `<h4>What could re-rate it</h4><ul>${li(v.catalysts)}</ul>` : ""}
+        ${qHtml}
         ${para("The company itself", v.micro_view)}
         ${para("Buying into this market", v.macro_view)}
         ${para("Timing", v.timing)}

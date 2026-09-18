@@ -28,17 +28,31 @@ UA = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
                     "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"}
 
 # Priority — most analytically useful filing types first.
+# Recency beats breadth before a trade. An annual report is up to a year stale
+# by the time it is published, so quarterly results and the management
+# commentary around them rank ABOVE it — the previous order put "annual report"
+# first and reliably returned two-year-old documents as the company's "latest".
 _DOC_PRIORITY = [
-    ("annual report",        100),
-    ("financial year",        95),
-    ("financial result",      90),
-    ("earnings call",         85),
-    ("concall",               85),
-    ("investor presentation", 80),
-    ("analyst",               70),
-    ("acquisition",           60),
+    ("quarterly result",     100),
+    ("financial result",      98),
+    ("q1 ", 96), ("q2 ", 96), ("q3 ", 96), ("q4 ", 96),
+    ("earnings call",         94),
+    ("concall",               94),
+    ("investor presentation", 90),
+    ("outcome of board",      85),   # results are filed under this heading
+    ("annual report",         70),
+    ("financial year",        65),
+    ("analyst",               60),
+    ("acquisition",           55),
     ("media release",         40),
 ]
+
+
+def _year_hint(title: str) -> int:
+    """A year in the title, used to break ties towards the newest document."""
+    import re as _re
+    years = [int(y) for y in _re.findall(r"20\d{2}", title or "")]
+    return max(years) if years else 0
 
 
 def _doc_dir() -> Path:
@@ -155,7 +169,12 @@ def fetch_documents(
     """
     if not documents:
         return []
-    ranked = sorted(documents, key=lambda d: _rank(d.get("title", "")), reverse=True)
+    # Rank by kind first, then by the newest year mentioned — so "Q3 FY25
+    # results" beats "Q3 FY23 results", and both beat an annual report.
+    ranked = sorted(documents,
+                    key=lambda d: (_rank(d.get("title", "")),
+                                   _year_hint(d.get("title", ""))),
+                    reverse=True)
     out = []
     for doc in ranked[:max_docs]:
         url = doc.get("url")

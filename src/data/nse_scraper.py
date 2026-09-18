@@ -255,7 +255,13 @@ def financial_results(symbol: str, period: str = "Quarterly") -> list[dict]:
         out.append({
             "from_date": r.get("fromDate") or r.get("re_from_date"),
             "to_date": r.get("toDate") or r.get("re_to_date"),
-            "consolidated": "consolidat" in str(r.get("consolidated", "")).lower(),
+            # NSE sends "Consolidated" or "Non-Consolidated". A substring test
+            # for "consolidat" matches BOTH, so every standalone filing was
+            # being labelled consolidated — which put two filings per quarter
+            # into the "consolidated" series and let growth be computed across
+            # mismatched bases.
+            "consolidated": str(r.get("consolidated", "")).strip().lower()
+                            .startswith("consolidat"),
             "audited": r.get("audited"),
             "xbrl_url": r.get("xbrl_attachment") or r.get("xbrl") or r.get("naXbrl"),
             "attachment": r.get("na_attachment") or r.get("attachmentFile"),

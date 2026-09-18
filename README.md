@@ -38,6 +38,15 @@ the desktop and the phone.
   lot with its risks and what would change it. Each section reports its own
   status, so a dossier that lost only its final judgement can be repaired in
   seconds with **↻ Re-run judgement** instead of re-fetching every filing.
+- **Analyse any name on its own** — every recommendation carries an *Analyse
+  this stock* button whether or not it has been sized, so deciding *whether* you
+  want a name doesn't depend on first deciding *how much*.
+- **The last four quarters, not last year's annual report** — read straight from
+  the exchange's quarterly XBRL filings: revenue, PAT, EPS, net margin and
+  year-on-year growth per quarter, newest first, with a trend reading that
+  separates growth from margin pressure. The age of the newest available filing
+  is stated, because a year-old filing presented as "the latest quarter" defeats
+  the point of looking at quarters at all.
 - **One pipeline for every candidate** — whatever engine suggested a name, it
   runs the same gate: data sufficiency, leverage, returns on capital, growth,
   and *how much of the move is already gone*. Checks that fail are **blocking** —

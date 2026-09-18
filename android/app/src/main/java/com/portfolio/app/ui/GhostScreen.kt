@@ -683,7 +683,33 @@ private fun RecommendationCard(r: JSONObject, blocked: Boolean = false) {
             Text("suggested $it", color = Muted, fontSize = 9.5.sp)
         }
 
-        r.optJSONObject("research")?.let { ResearchPanel(it, id) }
+        // Analysis is available on EVERY recommendation, sized or not. It used
+        // to be reachable only through "Size these", so a single stock could
+        // not be looked at on its own — which is backwards, since deciding
+        // whether you want a name at all comes before deciding how much.
+        val research = r.optJSONObject("research")
+        if (research != null) {
+            ResearchPanel(research, id)
+        } else {
+            val busy = GhostBus.busyId == id
+            Spacer(Modifier.height(10.dp))
+            Divider(color = BorderCol.copy(alpha = 0.5f))
+            Spacer(Modifier.height(8.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Not analysed yet", color = Muted, fontSize = 11.sp,
+                    modifier = Modifier.weight(1f))
+                OutlinedButton(
+                    onClick = { GhostBus.retryResearch(id, "all") },
+                    enabled = !busy && BackendBus.running,
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 2.dp),
+                ) { Text(if (busy) "Analysing…" else "🔬 Analyse this stock", fontSize = 11.sp) }
+            }
+            Text("Runs the full pipeline for this one name — macro, the last " +
+                "four quarters, company reports, cyclicality and the required " +
+                "checks. About a minute.",
+                color = Muted, fontSize = 10.sp, lineHeight = 14.sp,
+                modifier = Modifier.padding(top = 4.dp))
+        }
         Spacer(Modifier.height(10.dp))
         Row(verticalAlignment = Alignment.CenterVertically) {
             OutlinedTextField(
@@ -900,6 +926,41 @@ private fun ResearchPanel(res: JSONObject, recId: String) {
         }
         Text(fo.optString("reading"), color = Muted, fontSize = 10.5.sp, lineHeight = 15.sp,
             modifier = Modifier.padding(top = 4.dp))
+    }
+
+    res.optJSONObject("quarters")?.takeIf { !it.has("error") }?.let { q ->
+        Spacer(Modifier.height(12.dp))
+        Text("LAST FOUR QUARTERS (${q.optString("basis")})", color = Muted,
+            fontSize = 9.5.sp, letterSpacing = 0.6.sp)
+        Spacer(Modifier.height(4.dp))
+        arr(q, "quarters")?.let { qs ->
+            for (i in 0 until qs.length()) {
+                val r0 = qs.optJSONObject(i) ?: continue
+                val yoyP = (r0.opt("pat_yoy_pct") as? Number)?.toDouble()
+                Row(Modifier.fillMaxWidth().padding(vertical = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically) {
+                    Text(r0.optString("label"), color = OnBg.copy(alpha = 0.9f),
+                        fontSize = 11.sp, modifier = Modifier.width(62.dp))
+                    Text("₹${fmtCompact(r0.opt("revenue_cr"))}cr",
+                        color = Muted, fontSize = 10.5.sp, modifier = Modifier.weight(1f))
+                    Text("PAT ₹${fmtCompact(r0.opt("pat_cr"))}cr",
+                        color = Muted, fontSize = 10.5.sp, modifier = Modifier.weight(1f))
+                    Text(yoyP?.let { "%+.0f%%".format(it) } ?: "—",
+                        color = if ((yoyP ?: 0.0) >= 0) Bull else Bear, fontSize = 11.sp)
+                }
+            }
+        }
+        (q.optJSONObject("trend"))?.optString("reading")?.takeIf { it.isNotBlank() }?.let {
+            Spacer(Modifier.height(4.dp))
+            Text(it, color = OnBg.copy(alpha = 0.85f), fontSize = 10.5.sp, lineHeight = 15.sp)
+        }
+        // Say how old the newest filing is — an exchange feed can lag badly,
+        // and "latest quarter" that is really a year old is misleading.
+        q.optString("freshness").takeIf { it.isNotBlank() }?.let {
+            Spacer(Modifier.height(4.dp))
+            Text(it, color = if (q.optBoolean("stale")) Warn else Muted,
+                fontSize = 10.sp, lineHeight = 14.sp)
+        }
     }
 
     res.optJSONObject("seasonality")?.takeIf { !it.has("error") }?.let { se ->
