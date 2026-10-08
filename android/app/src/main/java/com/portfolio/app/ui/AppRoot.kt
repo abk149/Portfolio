@@ -12,14 +12,10 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Chat
-import androidx.compose.material.icons.filled.Diamond
 import androidx.compose.material.icons.filled.Event
-import androidx.compose.material.icons.filled.Insights
-import androidx.compose.material.icons.filled.List
-import androidx.compose.material.icons.filled.Lock
-import androidx.compose.material.icons.filled.Map
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PieChart
-import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Science
 import androidx.compose.material.icons.filled.ShowChart
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -31,17 +27,44 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.activity.compose.BackHandler
 
-// Settings lives in the top bar rather than the bottom nav: adding Calendar to
-// a six-item bar would have squeezed every label, and Settings is the one
-// destination you visit rarely.
+// Five destinations, grouped by the question you are asking:
+//   Portfolio — what do I own?        Discover — what should I look at?
+//   Ghost     — how are the ideas doing?   Calendar — what is coming?
+//   Analysis  — how is my own book doing?
+// Seven tabs had squeezed every label to an abbreviation ("U-Map") and put
+// four idea engines side by side with no hint they answer the same question.
 private enum class Dest(val label: String, val icon: ImageVector) {
     HOME("Portfolio", Icons.Filled.PieChart),
-    IDEAS("Ideas", Icons.Filled.AutoAwesome),
+    DISCOVER("Discover", Icons.Filled.AutoAwesome),
+    GHOST("Ghost", Icons.Filled.Science),
     CALENDAR("Calendar", Icons.Filled.Event),
-    QUANT("DR-Quant", Icons.Filled.Insights),
-    GEMS("Gems", Icons.Filled.Diamond),
-    MAP("U-Map", Icons.Filled.Map),
     ANALYSIS("Analysis", Icons.Filled.ShowChart),
+}
+
+/** The idea engines, one hub. Each keeps its own state while you switch. */
+@Composable
+private fun DiscoverScreen() {
+    var sub by remember { mutableStateOf("Ideas") }
+    val tabs = listOf("Ideas", "DR-Quant", "Gems", "Universe map")
+    Column(Modifier.fillMaxSize()) {
+        ScrollableTabRow(
+            selectedTabIndex = tabs.indexOf(sub),
+            containerColor = Bg, edgePadding = 12.dp,
+        ) {
+            tabs.forEach { t ->
+                Tab(selected = sub == t, onClick = { sub = t },
+                    text = { Text(t, fontSize = Type.body) })
+            }
+        }
+        Box(Modifier.weight(1f)) {
+            when (sub) {
+                "DR-Quant" -> QuantScreen()
+                "Gems" -> GemsScreen()
+                "Universe map" -> MapScreen()
+                else -> ThemesScreen()
+            }
+        }
+    }
 }
 
 /**
@@ -77,7 +100,7 @@ fun AppRoot() {
                 },
                 title = {
                     if (overlay != null) {
-                        Text(UiNav.title, fontSize = 16.sp, fontWeight = FontWeight.Bold,
+                        Text(UiNav.title, fontSize = Type.heading, fontWeight = FontWeight.Bold,
                             maxLines = 1)
                     } else {
                         val (label, col) = when (BackendBus.state.value) {
@@ -97,17 +120,28 @@ fun AppRoot() {
                     }
                 },
                 actions = {
-                    IconButton(onClick = { UiNav.open(UiNav.Screen.Settings) }) {
-                        Icon(Icons.Filled.Settings, contentDescription = "Settings", tint = Muted)
-                    }
+                    // One prominent action (the assistant); the rarely used
+                    // screens live behind the overflow menu.
                     IconButton(onClick = { UiNav.open(UiNav.Screen.Chat) }) {
                         Icon(Icons.Filled.Chat, contentDescription = "AI Assistant", tint = AccentHi)
                     }
-                    IconButton(onClick = { UiNav.open(UiNav.Screen.Terminal) }) {
-                        Icon(Icons.Filled.List, contentDescription = "Terminal", tint = AccentHi)
-                    }
-                    IconButton(onClick = { UiNav.open(UiNav.Screen.Login) }) {
-                        Icon(Icons.Filled.Lock, contentDescription = "Login", tint = Bull)
+                    var menu by remember { mutableStateOf(false) }
+                    Box {
+                        IconButton(onClick = { menu = true }) {
+                            Icon(Icons.Filled.MoreVert, contentDescription = "More", tint = Muted)
+                        }
+                        DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                            listOf(
+                                "Broker login" to UiNav.Screen.Login,
+                                "Settings" to UiNav.Screen.Settings,
+                                "System terminal" to UiNav.Screen.Terminal,
+                            ).forEach { (label, screen) ->
+                                DropdownMenuItem(
+                                    text = { Text(label, fontSize = Type.body) },
+                                    onClick = { menu = false; UiNav.open(screen) },
+                                )
+                            }
+                        }
                     }
                 },
             )
@@ -139,11 +173,9 @@ fun AppRoot() {
                 when (overlay) {
                     null -> when (dest) {
                         Dest.HOME -> HomeScreen()
-                        Dest.IDEAS -> ThemesScreen()
+                        Dest.DISCOVER -> DiscoverScreen()
+                        Dest.GHOST -> GhostScreen()
                         Dest.CALENDAR -> CalendarScreen()
-                        Dest.QUANT -> QuantScreen()
-                        Dest.GEMS -> GemsScreen()
-                        Dest.MAP -> MapScreen()
                         Dest.ANALYSIS -> AnalysisScreen()
                     }
                     is UiNav.Screen.DeepDive -> DeepDiveScreen(overlay.symbol)

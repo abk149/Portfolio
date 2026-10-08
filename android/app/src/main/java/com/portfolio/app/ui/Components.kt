@@ -69,89 +69,25 @@ private fun isMoneyKey(k: String): Boolean {
 }
 
 // ── building blocks ───────────────────────────────────────────────────────────
+// The original building blocks now render through the design system
+// (Design.kt), so every existing screen picks up the new look at once.
 @Composable
 fun SectionCard(
     title: String? = null,
     accent: Color = AccentHi,
     trailing: @Composable (() -> Unit)? = null,
     content: @Composable ColumnScope.() -> Unit,
-) {
-    Column(
-        Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 14.dp, vertical = 7.dp)
-            .clip(RoundedCornerShape(14.dp))
-            .background(Panel)
-            .border(1.dp, BorderCol, RoundedCornerShape(14.dp))
-            .padding(16.dp)
-    ) {
-        if (title != null) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.size(3.dp, 14.dp).clip(RoundedCornerShape(2.dp)).background(accent))
-                Spacer(Modifier.width(8.dp))
-                Text(
-                    title.uppercase(), color = OnBg.copy(alpha = 0.92f), fontSize = 12.sp,
-                    fontWeight = FontWeight.SemiBold, letterSpacing = 0.7.sp,
-                    modifier = Modifier.weight(1f),
-                )
-                if (trailing != null) trailing()
-            }
-            Spacer(Modifier.height(12.dp))
-        }
-        content()
-    }
-}
+) = Card(title = title, accent = accent, trailing = trailing, content = content)
 
 @Composable
-fun Pill(text: String, color: Color) {
-    Box(
-        Modifier
-            .clip(RoundedCornerShape(999.dp))
-            .background(color.copy(alpha = 0.14f))
-            .border(1.dp, color.copy(alpha = 0.35f), RoundedCornerShape(999.dp))
-            .padding(horizontal = 10.dp, vertical = 4.dp)
-    ) { Text(text, color = color, fontSize = 11.sp, fontWeight = FontWeight.SemiBold) }
-}
+fun Pill(text: String, color: Color) = Tag(text, color)
 
 @Composable
-fun StatusBanner(text: String, color: Color = Muted) {
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(10.dp))
-            .background(color.copy(alpha = 0.10f))
-            .border(1.dp, color.copy(alpha = 0.25f), RoundedCornerShape(10.dp))
-            .padding(12.dp)
-    ) { Text(text, color = color.copy(alpha = 0.95f), fontSize = 12.sp, lineHeight = 17.sp) }
-}
+fun StatusBanner(text: String, color: Color = Muted) = Banner(text, color)
 
 /** KPI tiles in a flowing 2-up grid. */
 @Composable
-fun KpiGrid(pairs: List<Triple<String, String, Color>>) {
-    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        pairs.chunked(2).forEach { row ->
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                row.forEach { (label, value, color) ->
-                    Column(
-                        Modifier
-                            .weight(1f)
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(Panel2)
-                            .border(1.dp, BorderCol.copy(alpha = 0.6f), RoundedCornerShape(12.dp))
-                            .padding(horizontal = 13.dp, vertical = 11.dp)
-                    ) {
-                        Text(label.uppercase(), color = Muted, fontSize = 10.sp, letterSpacing = 0.6.sp,
-                            maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        Spacer(Modifier.height(5.dp))
-                        Text(value, color = color, fontSize = 19.sp, fontWeight = FontWeight.Bold,
-                            maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    }
-                }
-                if (row.size == 1) Spacer(Modifier.weight(1f))
-            }
-        }
-    }
-}
+fun KpiGrid(pairs: List<Triple<String, String, Color>>) = MetricGrid(pairs)
 
 /**
  * Generic native table from a JSON array of objects. Columns inferred from the

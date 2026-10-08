@@ -134,7 +134,7 @@ fun HomeScreen() {
             SectionCard("Not connected", Bear) {
                 StatusBanner(it, Bear)
                 Spacer(Modifier.height(8.dp))
-                Text("Open Login (top-right 🔒) to authenticate your broker.",
+                Text("Open ⋮ → Broker login (top-right) to authenticate your broker.",
                     color = Muted, fontSize = 12.sp)
             }
         }
@@ -168,7 +168,7 @@ fun HomeScreen() {
                 SectionCard("Positions", AccentHi) { DataTable(it) }
             }
             SectionCard("Allocation", AccentHi) {
-                DonutChart(allocationSlices(arr(d, "allocation")))
+                DonutChart(remember(d) { allocationSlices(arr(d, "allocation")) })
                 Spacer(Modifier.height(10.dp))
                 DataTable(arr(d, "allocation"))
             }
@@ -685,7 +685,7 @@ fun MapScreen() {
             }
         }
         arr(data, "stocks")?.takeIf { it.length() > 0 }?.let { stocks ->
-            val pts = universePoints(stocks)
+            val pts = remember(stocks) { universePoints(stocks) }
             SectionCard("Map · technical vs fundamental", AccentHi) {
                 Text("Where every stock sits on balance-sheet quality (→) against price " +
                     "action (↑). Both lines split at a score of 50, so the corner a " +
@@ -805,8 +805,9 @@ private fun filterByQuadrant(arr: JSONArray, q: Quadrant?): JSONArray {
 // ─────────────────────────────────────────────────────────────────────────────
 @Composable
 fun AnalysisScreen() {
-    var sub by remember { mutableStateOf("Ghost") }
-    val tabs = listOf("Ghost", "Optimize", "Screener", "Intraday", "Performance", "KB")
+    // Ghost has its own bottom tab now; Analysis is the tools for your own book.
+    var sub by remember { mutableStateOf("Performance") }
+    val tabs = listOf("Performance", "Optimize", "Screener", "Intraday", "KB")
     Column(Modifier.fillMaxSize()) {
         ScrollableTabRow(
             selectedTabIndex = tabs.indexOf(sub),
@@ -814,17 +815,16 @@ fun AnalysisScreen() {
         ) {
             tabs.forEach { t ->
                 Tab(selected = sub == t, onClick = { sub = t },
-                    text = { Text(t, fontSize = 13.sp) })
+                    text = { Text(t, fontSize = Type.body) })
             }
         }
         Box(Modifier.weight(1f)) {
             when (sub) {
-                "Ghost" -> GhostScreen()
                 "Optimize" -> OptimizeTab()
                 "Screener" -> ScreenerTab()
                 "Intraday" -> IntradayTab()
-                "Performance" -> PerformanceTab()
-                else -> KbTab()
+                "KB" -> KbTab()
+                else -> PerformanceTab()
             }
         }
     }
@@ -944,7 +944,7 @@ fun AnalysisScreen() {
                 }
             }
             val curve = arr(r, "equity_curve")
-            val ec = equitySeries(curve)
+            val ec = remember(curve) { equitySeries(curve) }
             val pv = ec.portfolio
             SectionCard("Portfolio value vs invested vs if-held", Bull) {
                 if (pv.size >= 2) {
@@ -1091,7 +1091,7 @@ private fun BenchmarkSection(report: JSONObject) {
             if (excess >= 0) Bull else Bear)
 
         Spacer(Modifier.height(14.dp))
-        val (pSeries, iSeries) = rebasedSeries(arr(b, "series"))
+        val (pSeries, iSeries) = remember(b) { rebasedSeries(arr(b, "series")) }
         if (pSeries.size >= 2) {
             Text("₹100 invested a year ago", color = Muted, fontSize = 11.sp)
             Spacer(Modifier.height(6.dp))
@@ -1125,7 +1125,7 @@ private fun BenchmarkSection(report: JSONObject) {
     }
 
     // Rolling trailing-1Y return — "moving return", the shape of your form.
-    val (rollLabels, rollP, rollI) = pairedPct(arr(b ?: JSONObject(), "rolling"), "date")
+    val (rollLabels, rollP, rollI) = remember(b) { pairedPct(arr(b ?: JSONObject(), "rolling"), "date") }
     if (rollP.size >= 2) {
         SectionCard("Rolling 1-year return", Bull) {
             Text("At every point, what you made over the previous 12 months versus " +
@@ -1139,7 +1139,7 @@ private fun BenchmarkSection(report: JSONObject) {
         }
     }
 
-    val (mLabels, mP, mI) = pairedPct(arr(b ?: JSONObject(), "monthly"), "month")
+    val (mLabels, mP, mI) = remember(b) { pairedPct(arr(b ?: JSONObject(), "monthly"), "month") }
     if (mP.isNotEmpty()) {
         SectionCard("Month by month", AccentHi) {
             BarPairChart(mLabels, mP, mI, "You", "Index")
@@ -1710,7 +1710,7 @@ fun ScreenScaffold(
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
         Row(Modifier.fillMaxWidth().padding(start = 16.dp, top = 12.dp, end = 12.dp),
             verticalAlignment = Alignment.CenterVertically) {
-            Text(title, color = OnBg, fontSize = 20.sp, fontWeight = FontWeight.Bold,
+            Text(title, color = OnBg, fontSize = Type.title, fontWeight = FontWeight.Bold,
                 modifier = Modifier.weight(1f))
             if (loading) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = AccentHi)
             else if (onRefresh != null) TextButton(onClick = onRefresh) { Text("Refresh") }
