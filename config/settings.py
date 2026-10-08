@@ -83,13 +83,13 @@ class Settings:
         return ROOT / p if p else ROOT / ".cache/upstox_token.json"
 
     @property
-    def llm_provider(self) -> str: return self._get("LLM_PROVIDER", "anthropic")
+    def llm_provider(self) -> str: return self._get("LLM_PROVIDER", "nvidia")
 
     @property
     def anthropic_api_key(self) -> str: return self._get("ANTHROPIC_API_KEY")
 
     @property
-    def anthropic_model(self) -> str: return self._get("ANTHROPIC_MODEL", "claude-opus-4-7")
+    def anthropic_model(self) -> str: return self._get("ANTHROPIC_MODEL", "claude-opus-5")
 
     @property
     def nvidia_api_key(self) -> str: return self._get("NVIDIA_API_KEY")

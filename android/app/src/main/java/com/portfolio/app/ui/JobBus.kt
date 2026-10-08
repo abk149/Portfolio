@@ -66,6 +66,7 @@ object JobBus {
         "deploy_cash" to "Cash allocation",
         "alloc_themes" to "Idea allocation",
         "screener" to "Screener scan",
+        "gems" to "Hidden gems scan",
         "intraday" to "Intraday analysis",
         "calendar" to "Market calendar",
         "ai_brief" to "AI morning brief",

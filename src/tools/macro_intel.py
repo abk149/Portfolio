@@ -65,9 +65,10 @@ _RSS_FEEDS = [
 
 
 def _fetch_rss(url: str, limit: int = 8) -> list[dict]:
-    """Deprecated shim — `news_sources` owns feed fetching now. Kept because
+    """Generic RSS/Atom reader → [{title, url, published}]. Best-effort.
+
+    Deprecated shim — `news_sources` owns feed fetching now. Kept because
     market_calendar imports it for the RBI feed."""
-    """Generic RSS/Atom reader → [{title, url, published}]. Best-effort."""
     import re
     import requests
     try:

@@ -18,21 +18,11 @@ android/captures/
 *.apk
 *.aab
 # The phone Python bundle is regenerated from src/ + config/ at build time
-# (Gradle syncPythonSource) — it is NOT source, and it contains a copied .env.
+# (Gradle syncPythonSource) — it is NOT source.
 android/app/src/main/python/
-
-# ── llama.cpp build tree + model blobs (huge, not source) ──
-llama.cpp_build/
-*.gguf
-llama-server
 
 # ── Stray nested repo (root-anchored; must NOT match com/portfolio/ package) ──
 /Portfolio/
-
-# ── Local dev notes (kept out of the public repo) ──
-task.md
-walkthrough.md
-build_llama_server.sh
 
 # ── Agent / tooling scratch ──
 .claude/

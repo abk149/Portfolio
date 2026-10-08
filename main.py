@@ -276,6 +276,40 @@ def refresh_instruments(exchange: str = "NSE"):
     print(f"Cached {len(df):,} {exchange} instruments.")
 
 
+# ---------- hidden gems ----------
+@app.command("gems")
+def gems_scan(
+    universe: str = "nifty50",
+    min_score: float = 45.0,
+    top: int = 25,
+    min_avg_volume: float = 50_000,
+):
+    """Hidden Gems: long-base stocks that haven't run, showing early technical
+    accumulation + fundamental inflection."""
+    from src.screener.hidden_gems import GemConfig, HiddenGemsEngine
+    eng = HiddenGemsEngine(cfg=GemConfig(min_avg_volume=min_avg_volume))
+    res = eng.scan(universe, min_score=min_score, max_results=top)
+    gems = res.get("gems") or []
+    if not gems:
+        print(f"No gems found ({res.get('scanned', 0)} scanned). "
+              "Try lowering --min-score or --min-avg-volume.")
+        return
+    rows = [{
+        "symbol": g["symbol"], "verdict": g["verdict"], "gem": g["gem_score"],
+        "price": g["price"],
+        "base_mo": (g.get("base") or {}).get("months"),
+        "off_high_%": g.get("distance_from_52w_high_pct"),
+        "r12m_%": g.get("return_12m_pct"),
+        "sector": g.get("sector"),
+    } for g in gems]
+    import pandas as _pd
+    print(_df_to_table(_pd.DataFrame(rows),
+                       f"Hidden Gems — {universe} (score≥{min_score}, "
+                       f"{res['scanned']} scanned in {res['elapsed_sec']}s)"))
+    for g in gems:
+        print(f"  • {g['symbol']} [{g['verdict']}] {g['summary']}")
+
+
 # ---------- intraday ----------
 @intra_app.command("analyze")
 def intraday_analyze(days: int = 90):

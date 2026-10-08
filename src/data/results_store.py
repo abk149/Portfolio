@@ -31,6 +31,7 @@ KINDS = {
     "performance": "Performance analysis",
     "calendar": "Market calendar",
     "benchmark": "Index comparison",
+    "gems": "Hidden Gems",
 }
 
 

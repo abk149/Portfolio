@@ -12,6 +12,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Chat
+import androidx.compose.material.icons.filled.Diamond
 import androidx.compose.material.icons.filled.Event
 import androidx.compose.material.icons.filled.Insights
 import androidx.compose.material.icons.filled.List
@@ -38,6 +39,7 @@ private enum class Dest(val label: String, val icon: ImageVector) {
     IDEAS("Ideas", Icons.Filled.AutoAwesome),
     CALENDAR("Calendar", Icons.Filled.Event),
     QUANT("DR-Quant", Icons.Filled.Insights),
+    GEMS("Gems", Icons.Filled.Diamond),
     MAP("U-Map", Icons.Filled.Map),
     ANALYSIS("Analysis", Icons.Filled.ShowChart),
 }
@@ -140,6 +142,7 @@ fun AppRoot() {
                         Dest.IDEAS -> ThemesScreen()
                         Dest.CALENDAR -> CalendarScreen()
                         Dest.QUANT -> QuantScreen()
+                        Dest.GEMS -> GemsScreen()
                         Dest.MAP -> MapScreen()
                         Dest.ANALYSIS -> AnalysisScreen()
                     }

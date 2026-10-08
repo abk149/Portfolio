@@ -1049,6 +1049,44 @@ def api_screener(body: dict):
     return {"job_id": job_id}
 
 
+# ---------------- hidden gems ----------------
+@app.post("/api/gems/scan")
+def api_gems_scan(body: dict | None = None):
+    """Hidden Gems: stocks in long sideways bases that have NOT had their bull
+    run, but show early technical accumulation + fundamental inflection.
+    Job-based like every heavy scan — poll /api/jobs/{id}."""
+    job_id = uuid.uuid4().hex[:8]
+    body = body or {}
+
+    def _do():
+        from src.screener.hidden_gems import GemConfig, HiddenGemsEngine
+        cfg = GemConfig(min_avg_volume=float(body.get("min_avg_volume", 50_000)))
+        eng = HiddenGemsEngine(cfg=cfg)
+        res = eng.scan(body.get("universe", "nifty50"),
+                       min_score=float(body.get("min_score", 45.0)),
+                       max_results=int(body.get("max_results", 25)))
+        return _persist("gems", _scrub_for_json(res))
+
+    _run_job(job_id, _do)
+    return {"job_id": job_id}
+
+
+@app.get("/api/gems/last")
+def api_gems_last():
+    """The last Hidden Gems result, restored from disk — same shape as the
+    scan job's result, plus saved_at/age so a stale answer is never mistaken
+    for a fresh one."""
+    from src.data.results_store import load
+    got = load("gems")
+    if not got:
+        return {"ok": False,
+                "error": "No hidden-gems scan stored yet. Run a scan first."}
+    return _scrub_for_json({"ok": True, **(got.get("payload") or {}),
+                            "saved_at": got.get("saved_at"),
+                            "age_days": got.get("age_days"),
+                            "age_label": got.get("age_label")})
+
+
 # ---------------- intraday ----------------
 @app.post("/api/intraday/analyze")
 def api_intraday_analyze(body: dict):

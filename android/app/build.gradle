@@ -164,10 +164,19 @@ tasks.register('syncPythonSource') {
             from "../../main.py"
             into "${pythonSrcDir}"
         }
-        if (file("../../.env").exists()) {
+        // SECURITY: the repo-root .env (live broker/LLM API keys) must NOT be
+        // bundled — anything in src/main/python ships inside the APK, where
+        // apktool can extract it in seconds. The app doesn't need it anyway:
+        // PortfolioService.startServers() injects every credential from
+        // SharedPreferences into Python's os.environ at runtime, and
+        // load_dotenv(override=False) never overwrites those.
+        // Copy the keyless template instead, as on-device documentation of
+        // which variables the backend understands.
+        if (file("../../.env.example").exists()) {
             copy {
-                from "../../.env"
+                from "../../.env.example"
                 into "${pythonSrcDir}"
+                rename { ".env.example" }
             }
         }
     }

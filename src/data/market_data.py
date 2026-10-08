@@ -1,4 +1,12 @@
-"""Unified market data — Upstox only. yfinance has been removed.
+"""Unified market data over the active broker, with a Yahoo Finance fallback.
+
+Data-source chain: the active broker (Upstox OR Groww, resolved via
+src/brokers.get_broker) is tried first; anything it can't serve falls back to
+the free public Yahoo source (src/data/yahoo.py). A process-wide circuit
+breaker (_DataBreaker) counts consecutive broker failures — after 3, it OPENS
+and every subsequent price/candle request skips the broker and goes straight
+to Yahoo for the rest of the run, so a long job doesn't keep hammering a
+broker that clearly can't serve data. Any broker success closes it again.
 
 Upstox v2 endpoints we use (docs: https://upstox.com/developer/api-documentation):
 

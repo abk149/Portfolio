@@ -35,6 +35,7 @@ SOURCES = {
     "dr-quant": "DR-Quant funnel",
     "optimizer": "Cash optimiser",
     "deep-dive": "Deep dive",
+    "hidden_gems": "Hidden Gems",
     "manual": "Your own pick",
 }
 

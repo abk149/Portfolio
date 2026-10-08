@@ -196,6 +196,13 @@ object Api {
         post("/api/quant/run", JSONObject().put("universe", universe))
     suspend fun job(jobId: String) = get("/api/jobs/$jobId")
 
+    // ── Hidden gems (job-based; poll /api/jobs/{id}) ──
+    // Stocks that haven't had their bull run yet — long bases far from 52w
+    // highs — but showing early accumulation and a fundamental inflection.
+    suspend fun gemsScan() = post("/api/gems/scan")
+    /** Cached result of the last scan, for instant display on screen open. */
+    suspend fun gemsLast() = get("/api/gems/last")
+
     // ── Universe map ──
     suspend fun umapBuild(universe: String, maxAgeDays: Double = 7.0) =
         post("/api/universe-map/build",
