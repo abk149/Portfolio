@@ -202,6 +202,8 @@ object Api {
     suspend fun gemsScan() = post("/api/gems/scan")
     /** Cached result of the last scan, for instant display on screen open. */
     suspend fun gemsLast() = get("/api/gems/last")
+    /** Queue the last scan's picks for ghost testing (idempotent). */
+    suspend fun gemsQueue() = post("/api/gems/queue")
 
     // ── Universe map ──
     suspend fun umapBuild(universe: String, maxAgeDays: Double = 7.0) =

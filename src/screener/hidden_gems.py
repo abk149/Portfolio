@@ -40,6 +40,9 @@ ENGINE = "hidden_gems"
 # Verdict thresholds on the 0-100 gem score.
 VERDICTS = ((75.0, "STRONG_GEM"), (60.0, "GEM"), (45.0, "WATCH"))
 
+# How a verdict reads in the ghost queue, which every engine shares.
+_CONVICTION = {"STRONG_GEM": "HIGH", "GEM": "MEDIUM", "WATCH": "LOW"}
+
 # Block weights when combining into gem_score.
 W_BASE, W_TECH, W_FUND = 0.35, 0.40, 0.25
 
@@ -390,6 +393,30 @@ def _summary(c: dict) -> str:
     return ("Hasn't run — " + parts[0] + ". " + ". ".join(p[0].upper() + p[1:] for p in parts[1:]) + ".")
 
 
+def queue_gems(gems: list[dict], run_id: Optional[str] = None) -> dict:
+    """Put gem picks in the ghost queue, alongside every other engine's.
+
+    Idempotent per scan day: a pick that is already queued — or that you have
+    since bought or dismissed — is left alone rather than resurrected.
+    """
+    try:
+        from src.portfolio import recommendations as rec
+        return rec.record([
+            {"symbol": g["symbol"], "sector": g.get("sector"),
+             # The queue speaks HIGH/MEDIUM/LOW like every other engine;
+             # the gem's own verdict stays in the rationale.
+             "conviction": _CONVICTION.get(g.get("verdict"), "LOW"),
+             "rationale": (f"{str(g.get('verdict') or 'gem').replace('_', ' ').title()} "
+                           f"(gem score {float(g.get('gem_score') or 0):.0f}). "
+                           f"{g.get('summary') or ''}").strip(),
+             "suggested_entry": g.get("price")}
+            for g in gems if g.get("symbol")
+        ], ENGINE, run_id=run_id)
+    except Exception as e:
+        log.warning(f"could not queue gem recommendations: {e}")
+        return {"added": 0, "error": str(e)}
+
+
 # ---------------------------------------------------------------------------
 # the engine: universe → candidates → gate → recommendations
 # ---------------------------------------------------------------------------
@@ -502,16 +529,7 @@ class HiddenGemsEngine:
         }
 
         if record and gems:
-            try:
-                from src.portfolio import recommendations as rec
-                rec.record([
-                    {"symbol": g["symbol"], "sector": g.get("sector"),
-                     "conviction": g["verdict"], "rationale": g["summary"],
-                     "suggested_entry": g["price"]}
-                    for g in gems
-                ], ENGINE, run_id=result["generated_at"][:10])
-            except Exception as e:
-                log.warning(f"could not record gem recommendations: {e}")
+            queue_gems(gems, run_id=result["generated_at"][:10])
         log.info(f"Hidden-gems: {len(gems)} gems from {len(items)} scanned "
                  f"in {result['elapsed_sec']}s")
         return result

@@ -1087,6 +1087,27 @@ def api_gems_last():
                             "age_label": got.get("age_label")})
 
 
+@app.post("/api/gems/queue")
+def api_gems_queue():
+    """Queue the last scan's gems for ghost testing.
+
+    A scan queues its picks as it finishes; this covers a stored scan from
+    before that wiring existed, or one whose queue entries have aged out.
+    Picks already bought or dismissed stay that way.
+    """
+    from src.data.results_store import load
+    from src.screener.hidden_gems import queue_gems
+    got = load("gems")
+    payload = (got or {}).get("payload") or {}
+    gems = payload.get("gems") or []
+    if not gems:
+        return {"ok": False, "added": 0,
+                "error": "No stored hidden-gems scan to queue. Run a scan first."}
+    run_id = str(payload.get("generated_at") or "")[:10] or None
+    res = queue_gems(gems, run_id=run_id)
+    return _scrub_for_json({"ok": "error" not in res, **res})
+
+
 # ---------------- intraday ----------------
 @app.post("/api/intraday/analyze")
 def api_intraday_analyze(body: dict):

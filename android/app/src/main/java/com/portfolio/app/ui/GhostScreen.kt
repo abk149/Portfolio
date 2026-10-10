@@ -213,6 +213,7 @@ fun GhostScreen() {
         JobBus.state("deploy_cash").finishedAt,
         JobBus.state("alloc_themes").finishedAt,
         JobBus.state("optimize").finishedAt,
+        JobBus.state("gems").finishedAt,
     )
     LaunchedEffect(producers) { if (BackendBus.running) GhostBus.refresh() }
 
@@ -275,8 +276,8 @@ fun GhostScreen() {
             "queue" -> {
                 item(key = "queue-head") {
                     SectionCard("Recommendations to test", Bull) {
-                        Lede("Every pick from Macro Ideas, DR-Quant and the cash " +
-                            "optimiser lands here on its own. Buying from this list " +
+                        Lede("Every pick from Macro Ideas, DR-Quant, Hidden Gems and " +
+                            "the cash optimiser lands here on its own. Buying from this list " +
                             "(not typing symbols in) keeps the track record about the " +
                             "system's calls, not yours.")
                         // Engines size their ideas inconsistently — the optimiser thinks
@@ -363,7 +364,8 @@ fun GhostScreen() {
                                     "so far. Run an engine again for fresh picks."
                                 else
                                     "Nothing waiting yet. Run Macro Ideas, the DR-Quant funnel, " +
-                                    "or the cash optimiser and their picks land here automatically.",
+                                    "a Hidden Gems scan or the cash optimiser and their " +
+                                    "picks land here automatically.",
                                 Muted)
                             Spacer(Modifier.height(8.dp))
                             TextButton(onClick = { GhostBus.refresh() },

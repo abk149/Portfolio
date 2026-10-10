@@ -23,6 +23,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.portfolio.app.net.Api
+import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -230,6 +231,7 @@ fun GemsScreen() {
                     color = Muted, fontSize = Type.secondary, lineHeight = 18.sp)
             }
         } else {
+            GhostQueueCard(gems)
             SectionCard("Hidden gems", Bull) {
                 Text("Ranked by gem score. Tap a card for the full signal " +
                     "checklist and thesis.", color = Muted, fontSize = Type.secondary)
@@ -237,6 +239,87 @@ fun GemsScreen() {
                 gems.forEach { GemCard(it) }
             }
         }
+    }
+}
+
+/**
+ * Where these picks are in the ghost queue.
+ *
+ * A scan queues its picks for paper testing alongside every other engine's,
+ * where they get the same sizing and research. This says how many are actually
+ * waiting there — the scan shown may be an older one, or you may have acted on
+ * some — and queues any that never made it in.
+ */
+@Composable
+private fun GhostQueueCard(gems: List<Gem>) {
+    val scope = rememberCoroutineScope()
+    var queueing by remember { mutableStateOf(false) }
+    var note by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(Unit) { if (BackendBus.running) GhostBus.refresh() }
+
+    val recs = GhostBus.recommendations
+    val status = remember(recs, gems) {
+        val syms = gems.map { it.symbol.uppercase() }.toSet()
+        val out = HashMap<String, String>()
+        arr(recs, "items")?.let { a ->
+            for (i in 0 until a.length()) {
+                val o = a.optJSONObject(i) ?: continue
+                if (o.optString("source") != "hidden_gems") continue
+                val sym = o.optString("symbol").uppercase()
+                if (sym !in syms) continue
+                // A pick queued by two scans: the live entry is the one that counts.
+                if (out[sym] != "pending") out[sym] = o.optString("status")
+            }
+        }
+        out
+    }
+    val waiting = status.values.count { it == "pending" }
+    val rejected = status.values.count { it == "blocked" }
+    val bought = status.values.count { it == "taken" }
+    val dismissed = status.values.count { it == "dismissed" }
+    val missing = gems.count { it.symbol.uppercase() !in status }
+
+    Card("Test them on paper", accent = AccentHi) {
+        if (recs == null) {
+            Lede("Checking the Ghost queue…")
+        } else {
+            Lede("Gem picks go to the Ghost queue with every other engine's, for the " +
+                "same sizing, research and paper trading — so their record can be " +
+                "compared like for like.")
+            Spacer(Modifier.height(Space.sm))
+            Note(listOfNotNull(
+                "$waiting waiting to test",
+                rejected.takeIf { it > 0 }?.let { "$it rejected by the checks" },
+                bought.takeIf { it > 0 }?.let { "$it bought" },
+                dismissed.takeIf { it > 0 }?.let { "$it dismissed" },
+                missing.takeIf { it > 0 }?.let { "$it not queued yet" },
+            ).joinToString(" · "), if (waiting > 0) Bull else Muted)
+        }
+        note?.let { Spacer(Modifier.height(Space.sm)); Banner(it, Muted) }
+        Spacer(Modifier.height(Space.md))
+        if (recs != null && missing > 0) {
+            PrimaryAction(
+                if (queueing) "Queueing…" else "Queue the $missing for testing",
+                onClick = {
+                    queueing = true
+                    scope.launch {
+                        val r = Api.gemsQueue().objOrNull()
+                        note = when {
+                            r == null -> "Couldn't reach the engine."
+                            r.optBoolean("ok") -> "Queued ${r.optInt("added")} pick(s)."
+                            else -> r.optString("error", "Couldn't queue them.")
+                        }
+                        GhostBus.refresh()
+                        queueing = false
+                    }
+                },
+                busy = queueing,
+            )
+            Spacer(Modifier.height(Space.sm))
+        }
+        SecondaryAction("Open the Ghost queue",
+            onClick = { UiNav.ghostView = "queue"; GhostBus.refresh(); UiNav.goTo("GHOST") },
+            modifier = Modifier.fillMaxWidth())
     }
 }
 

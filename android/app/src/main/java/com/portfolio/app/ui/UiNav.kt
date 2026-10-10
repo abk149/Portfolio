@@ -37,6 +37,12 @@ object UiNav {
     var ghostView by mutableStateOf("queue")
     var calendarView by mutableStateOf("events")
 
+    /** The bottom tab, by Dest name. Held here so any screen can send you to another tab. */
+    var tab by mutableStateOf("HOME")
+        private set
+
+    fun goTo(tab: String) { overlay = null; this.tab = tab }
+
     fun open(screen: Screen) { overlay = screen }
 
     fun close() { overlay = null }

@@ -100,6 +100,24 @@ class FakeLLM:
         return "ok"
 
 
+@pytest.fixture(autouse=True)
+def _isolated_stores(tmp_path, monkeypatch):
+    """Every test gets its own result store, queue and ghost book.
+
+    Without this, any test that ran an engine wrote into the developer's real
+    .cache — fake picks like "AAA" turned up in the actual ghost queue, and a
+    stub scan replaced the last real one. Tests that need a specific path
+    still patch it themselves; this is only the safe default.
+    """
+    import src.data.results_store as rs
+    from src.portfolio import ghost, recommendations as rec
+    store = tmp_path / "_stores"
+    store.mkdir(exist_ok=True)
+    monkeypatch.setattr(rs, "_dir", lambda: store)
+    monkeypatch.setattr(rec, "_store_path", lambda: store / "recommendations.json")
+    monkeypatch.setattr(ghost, "_store_path", lambda: store / "ghost_portfolio.json")
+
+
 @pytest.fixture()
 def api(tmp_path, monkeypatch):
     """A TestClient over the real app with every external edge stubbed."""
@@ -171,4 +189,18 @@ def api(tmp_path, monkeypatch):
                                               "usdinr": 94.0, "nifty_change_pct": 0.1})
 
     from fastapi.testclient import TestClient
-    return TestClient(A.app, raise_server_exceptions=False), A
+    started = set(A.JOBS)
+    yield TestClient(A.app, raise_server_exceptions=False), A
+
+    # Background jobs outlive the request that started them. If the test ends
+    # first, monkeypatch puts the real broker and LLM back while a job is still
+    # running — and it then calls the real model and writes real results. Keep
+    # the stubs in place until every job this test started has finished.
+    import time
+    deadline = time.time() + 60
+    while time.time() < deadline:
+        live = [j for k, j in list(A.JOBS.items())
+                if k not in started and j.get("status") == "running"]
+        if not live:
+            break
+        time.sleep(0.1)

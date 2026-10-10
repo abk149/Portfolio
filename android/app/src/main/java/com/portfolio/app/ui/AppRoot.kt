@@ -81,7 +81,7 @@ private fun DiscoverScreen() {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AppRoot() {
-    var dest by remember { mutableStateOf(Dest.HOME) }
+    val dest = Dest.values().firstOrNull { it.name == UiNav.tab } ?: Dest.HOME
     val overlay = UiNav.overlay
 
     // Hardware/gesture back closes a secondary screen instead of the app.
@@ -155,7 +155,7 @@ fun AppRoot() {
                         selected = dest == d && overlay == null,
                         // Tapping a tab also leaves whatever secondary screen is
                         // open — the nav bar stays usable at all times.
-                        onClick = { UiNav.close(); dest = d },
+                        onClick = { UiNav.goTo(d.name) },
                         icon = { Icon(d.icon, contentDescription = d.label) },
                         label = { Text(d.label, maxLines = 1) },
                         colors = NavigationBarItemDefaults.colors(
