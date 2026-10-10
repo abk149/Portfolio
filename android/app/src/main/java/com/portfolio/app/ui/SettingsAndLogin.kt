@@ -85,7 +85,7 @@ fun SettingsScreen(openLogin: () -> Unit) {
                 Field("Redirect URI", redirect) { redirect = it }
                 Field("Base URL", baseUrl) { baseUrl = it }
                 Text("Redirect URI must be registered verbatim in your Upstox app " +
-                    "(127.0.0.1 ≠ localhost).", color = Muted, fontSize = 11.sp,
+                    "(127.0.0.1 ≠ localhost).", color = Muted, fontSize = Type.secondary,
                     modifier = Modifier.padding(top = 6.dp))
             }
         } else {
@@ -98,7 +98,7 @@ fun SettingsScreen(openLogin: () -> Unit) {
                     "'Generate TOTP token') ONCE. The app then mints a fresh token " +
                     "automatically every day after Groww's 6 AM reset — and re-mints " +
                     "on the fly if a token is rejected. No daily manual step needed.",
-                    color = Muted, fontSize = 11.sp, modifier = Modifier.padding(top = 6.dp))
+                    color = Muted, fontSize = Type.secondary, modifier = Modifier.padding(top = 6.dp))
             }
         }
 
@@ -137,12 +137,12 @@ fun SettingsScreen(openLogin: () -> Unit) {
             Field("LLM API key", llmKey, password = true) { llmKey = it }
 
             Spacer(Modifier.height(10.dp))
-            Text("Model", color = Muted, fontSize = 11.sp)
+            Text("Model", color = Muted, fontSize = Type.secondary)
             Spacer(Modifier.height(4.dp))
             Box {
                 OutlinedButton(onClick = { expanded = true }, modifier = Modifier.fillMaxWidth()) {
                     Text(llmModel.ifBlank { "Select a model" },
-                        maxLines = 1, modifier = Modifier.weight(1f), fontSize = 13.sp)
+                        maxLines = 1, modifier = Modifier.weight(1f), fontSize = Type.body)
                     Text("▾", color = Muted)
                 }
                 DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false },
@@ -150,15 +150,15 @@ fun SettingsScreen(openLogin: () -> Unit) {
                     if (models.isNotEmpty()) {
                         DropdownMenuItem(enabled = false, onClick = {},
                             text = { Text("RECOMMENDED FOR PORTFOLIO WORK",
-                                color = AccentHi, fontSize = 10.sp) })
+                                color = AccentHi, fontSize = Type.label) })
                         models.forEach { (id, label, note) ->
                             DropdownMenuItem(
                                 onClick = { llmModel = id; expanded = false },
                                 text = {
                                     Column {
-                                        Text(label, fontSize = 13.sp,
+                                        Text(label, fontSize = Type.body,
                                             color = if (id == llmModel) Bull else OnBg)
-                                        Text(note, fontSize = 10.sp, color = Muted)
+                                        Text(note, fontSize = Type.label, color = Muted)
                                     }
                                 })
                         }
@@ -167,23 +167,23 @@ fun SettingsScreen(openLogin: () -> Unit) {
                         Divider(color = BorderCol)
                         DropdownMenuItem(enabled = false, onClick = {},
                             text = { Text("ALL MODELS ON YOUR KEY (${catalog.size})",
-                                color = Muted, fontSize = 10.sp) })
+                                color = Muted, fontSize = Type.label) })
                         catalog.forEach { id ->
                             DropdownMenuItem(onClick = { llmModel = id; expanded = false },
-                                text = { Text(id, fontSize = 12.sp,
+                                text = { Text(id, fontSize = Type.secondary,
                                     color = if (id == llmModel) Bull else OnBg) })
                         }
                     }
                     if (models.isEmpty() && catalog.isEmpty()) {
                         DropdownMenuItem(enabled = false, onClick = {},
                             text = { Text("Start the backend to load models",
-                                color = Muted, fontSize = 12.sp) })
+                                color = Muted, fontSize = Type.secondary) })
                     }
                 }
             }
             Text("The catalog lists every model your key can see — some may not be " +
                 "enabled on your account (they answer 404). Always hit Test after switching.",
-                color = Muted, fontSize = 10.sp, modifier = Modifier.padding(top = 6.dp))
+                color = Muted, fontSize = Type.label, modifier = Modifier.padding(top = 6.dp))
 
             Spacer(Modifier.height(10.dp))
             Button(
@@ -234,7 +234,7 @@ fun SettingsScreen(openLogin: () -> Unit) {
                     modifier = Modifier.weight(1f)) { Text("⏹ Stop") }
             }
             Text("Credential changes apply on the next backend start.",
-                color = Muted, fontSize = 11.sp, modifier = Modifier.padding(top = 8.dp))
+                color = Muted, fontSize = Type.secondary, modifier = Modifier.padding(top = 8.dp))
         }
 
         Box(Modifier.padding(12.dp)) {
@@ -252,19 +252,19 @@ fun SettingsScreen(openLogin: () -> Unit) {
             }.getOrNull() ?: "?"
         }
         SectionCard("About", Muted) {
-            Text("Portfolio Quant v$version", color = OnBg, fontSize = 13.sp,
+            Text("Portfolio Quant v$version", color = OnBg, fontSize = Type.body,
                 fontWeight = FontWeight.SemiBold)
             // The APK version and the Python engine build are separate things;
             // showing both makes "is my fix actually installed?" a glance
             // rather than a rebuild.
             BackendBus.backendBuild.value?.let {
                 Spacer(Modifier.height(2.dp))
-                Text("engine $it", color = Muted, fontSize = 10.5.sp)
+                Text("engine $it", color = Muted, fontSize = Type.label)
             }
             Spacer(Modifier.height(4.dp))
             Text("Python engine runs on-device. Broker, LLM and Telegram " +
                 "credentials are stored only in this app's private storage.",
-                color = Muted, fontSize = 11.sp, lineHeight = 16.sp)
+                color = Muted, fontSize = Type.secondary, lineHeight = 18.sp)
         }
         Spacer(Modifier.height(24.dp))
     }
@@ -333,7 +333,7 @@ fun LoginScreen() {
         SectionCard("Login · ${broker.replaceFirstChar { it.uppercase() }}", Bull) {
             Column(Modifier.verticalScroll(rememberScrollState())) {
                 // Broker selector — pick which one you're logging into.
-                Text("Broker", color = Muted, fontSize = 11.sp)
+                Text("Broker", color = Muted, fontSize = Type.secondary)
                 Spacer(Modifier.height(4.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     listOf("upstox", "groww").forEach { b ->
@@ -352,13 +352,13 @@ fun LoginScreen() {
                 Spacer(Modifier.height(12.dp))
 
                 if (!BackendBus.running) {
-                    StatusBanner("Start the backend first (Terminal ▶).", Warn)
+                    StatusBanner("Start the engine first (⋮ → System terminal ▶).", Warn)
                     Spacer(Modifier.height(10.dp))
                 }
                 msg?.let { StatusBanner(it, if (it.startsWith("✅")) Bull else Bear); Spacer(Modifier.height(10.dp)) }
 
                 if (broker == "upstox") {
-                    Text("A · Login link (recommended)", color = AccentHi, fontSize = 12.sp,
+                    Text("A · Login link (recommended)", color = AccentHi, fontSize = Type.secondary,
                         fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold)
                     Spacer(Modifier.height(6.dp))
                     OutlinedTextField(ak, { ak = it }, label = { Text("Client ID (API key)") },
@@ -384,7 +384,7 @@ fun LoginScreen() {
                                     "redirect_uri" to ru.trim(), "upstox_bearer_token" to "")
                                 val cfg = Api.upstoxConfig(ak.trim(), sk.trim(), ru.trim())
                                 if (cfg is Api.Resp.Err) {
-                                    msg = "❌ Backend unreachable: ${cfg.message}. Is it running (Terminal ▶)?"
+                                    msg = "❌ Backend unreachable: ${cfg.message}. Is it running (⋮ → System terminal ▶)?"
                                     busy = false; return@launch
                                 }
                                 when (val resp = Api.upstoxAuthUrl()) {
@@ -401,7 +401,7 @@ fun LoginScreen() {
 
                     loginUrl?.let { u ->
                         Spacer(Modifier.height(6.dp))
-                        Text(u, color = Muted, fontSize = 10.sp)
+                        Text(u, color = Muted, fontSize = Type.label)
                         Spacer(Modifier.height(6.dp))
                         Button(onClick = {
                             polling = true
@@ -413,12 +413,12 @@ fun LoginScreen() {
                                 CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp, color = AccentHi)
                                 Spacer(Modifier.width(8.dp))
                                 Text("Waiting for login to complete in the browser…",
-                                    color = Muted, fontSize = 11.sp)
+                                    color = Muted, fontSize = Type.secondary)
                             }
                         } else {
                             Text("Log in in the browser (it shows ✅). The app detects it " +
                                 "automatically — no need to come back and paste.",
-                                color = Muted, fontSize = 11.sp)
+                                color = Muted, fontSize = Type.secondary)
                         }
                         Spacer(Modifier.height(6.dp))
                         Button(
@@ -439,7 +439,7 @@ fun LoginScreen() {
 
                         Spacer(Modifier.height(10.dp))
                         Text("Fallback — if the browser didn't auto-complete, paste the full " +
-                            "redirect URL here:", color = Muted, fontSize = 11.sp)
+                            "redirect URL here:", color = Muted, fontSize = Type.secondary)
                         Spacer(Modifier.height(4.dp))
                         OutlinedTextField(redirectPaste, { redirectPaste = it },
                             label = { Text("Paste redirect URL") }, singleLine = true,
@@ -465,7 +465,7 @@ fun LoginScreen() {
                 }
 
                 if (broker == "groww") {
-                    Text("A · TOTP login (recommended)", color = AccentHi, fontSize = 12.sp,
+                    Text("A · TOTP login (recommended)", color = AccentHi, fontSize = Type.secondary,
                         fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold)
                     Spacer(Modifier.height(6.dp))
                     OutlinedTextField(gak, { gak = it }, label = { Text("API key") },
@@ -507,7 +507,7 @@ fun LoginScreen() {
                 }
 
                 Text("B · Direct access token (fallback)",
-                    color = AccentHi, fontSize = 12.sp,
+                    color = AccentHi, fontSize = Type.secondary,
                     fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold)
                 Spacer(Modifier.height(6.dp))
                 OutlinedTextField(token, { token = it }, label = { Text("Paste token") },

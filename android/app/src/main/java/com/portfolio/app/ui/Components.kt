@@ -8,7 +8,10 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -96,13 +99,17 @@ fun KpiGrid(pairs: List<Triple<String, String, Color>>) = MetricGrid(pairs)
  * swipe hint when wide.
  */
 @Composable
-fun DataTable(arr: JSONArray?, maxRows: Int = 60) {
+fun DataTable(arr: JSONArray?, maxRows: Int = 60, previewRows: Int = 12) {
     if (arr == null || arr.length() == 0) {
-        Text("No data.", color = Muted, fontSize = 12.sp); return
+        Note("No data."); return
     }
-    val first = arr.optJSONObject(0) ?: run { Text("No data.", color = Muted, fontSize = 12.sp); return }
-    val cols = ArrayList<String>(); first.keys().forEach { cols.add(it) }
-    val n = minOf(arr.length(), maxRows)
+    val first = arr.optJSONObject(0) ?: run { Note("No data."); return }
+    val cols = remember(arr) { ArrayList<String>().also { c -> first.keys().forEach { c.add(it) } } }
+    // A long table is mostly scrolled past. Build a preview and let the reader
+    // ask for the rest, rather than composing every row on first paint.
+    var expanded by remember(arr) { mutableStateOf(false) }
+    val cap = minOf(arr.length(), maxRows)
+    val n = if (expanded) cap else minOf(cap, previewRows)
 
     val rowH = 38.dp
     val headerH = 32.dp
@@ -117,7 +124,7 @@ fun DataTable(arr: JSONArray?, maxRows: Int = 60) {
     val rest = cols.filter { it != idCol }
 
     if (cols.size > 4) {
-        Text("Swipe values sideways →", color = Muted, fontSize = 10.sp)
+        Note("Swipe values sideways →")
         Spacer(Modifier.height(4.dp))
     }
     // Sticky first column (the identifier) + horizontally-scrollable values, so
@@ -169,9 +176,15 @@ fun DataTable(arr: JSONArray?, maxRows: Int = 60) {
             }
         }
     }
-    if (arr.length() > n) {
-        Spacer(Modifier.height(6.dp))
-        Text("… ${arr.length() - n} more rows", color = Muted, fontSize = 11.sp)
+    if (cap > previewRows) {
+        TextButton(onClick = { expanded = !expanded },
+            contentPadding = PaddingValues(horizontal = 0.dp, vertical = 4.dp)) {
+            Text(if (expanded) "Show fewer rows" else "Show all $cap rows",
+                color = AccentHi, fontSize = Type.secondary)
+        }
+    }
+    if (arr.length() > cap) {
+        Note("${arr.length() - cap} more not shown.")
     }
 }
 
@@ -208,27 +221,27 @@ fun MarkdownText(text: String, modifier: Modifier = Modifier) {
 
                 line.startsWith("### ") -> Text(
                     inline(line.removePrefix("### ")), color = OnBg,
-                    fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                    fontSize = Type.body, fontWeight = FontWeight.SemiBold)
 
                 line.startsWith("## ") -> Text(
                     inline(line.removePrefix("## ")).text.uppercase(), color = AccentHi,
-                    fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.6.sp,
+                    fontSize = Type.secondary, fontWeight = FontWeight.Bold, letterSpacing = 0.6.sp,
                     modifier = Modifier.padding(top = 6.dp))
 
                 line.startsWith("# ") -> Text(
                     inline(line.removePrefix("# ")), color = OnBg,
-                    fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                    fontSize = Type.heading, fontWeight = FontWeight.Bold)
 
                 line.trimStart().startsWith("- ") || line.trimStart().startsWith("* ") ->
                     Row(Modifier.fillMaxWidth().padding(start = 4.dp)) {
-                        Text("•", color = AccentHi, fontSize = 13.sp)
+                        Text("•", color = AccentHi, fontSize = Type.body)
                         Spacer(Modifier.width(8.dp))
                         Text(inline(line.trimStart().drop(2)), color = OnBg.copy(alpha = 0.9f),
-                            fontSize = 13.sp, lineHeight = 19.sp)
+                            fontSize = Type.body, lineHeight = 20.sp)
                     }
 
                 else -> Text(inline(line), color = OnBg.copy(alpha = 0.9f),
-                    fontSize = 13.sp, lineHeight = 19.sp)
+                    fontSize = Type.body, lineHeight = 20.sp)
             }
         }
     }
@@ -261,5 +274,5 @@ private fun inline(s: String): AnnotatedString = buildAnnotatedString {
 fun FreshnessLine(key: String) {
     val age = JobBus.age(key) ?: return
     Text("Showing the last run from $age — re-run for current data.",
-        color = Muted, fontSize = 10.sp, lineHeight = 14.sp)
+        color = Muted, fontSize = Type.label, lineHeight = 15.sp)
 }

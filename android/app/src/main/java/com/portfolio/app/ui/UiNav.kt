@@ -29,6 +29,14 @@ object UiNav {
     var overlay by mutableStateOf<Screen?>(null)
         private set
 
+    // Which sub-view each hub was last on. Held here rather than in the
+    // screens because a screen is disposed when you switch bottom tabs, and
+    // coming back to Discover should land on the engine you were using.
+    var discoverTab by mutableStateOf("Ideas")
+    var analysisTab by mutableStateOf("Performance")
+    var ghostView by mutableStateOf("queue")
+    var calendarView by mutableStateOf("events")
+
     fun open(screen: Screen) { overlay = screen }
 
     fun close() { overlay = null }

@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -64,7 +65,14 @@ object Type {
     val secondary = 12.5.sp
     // Labels above values, table headers, timestamps.
     val label = 11.sp
+    // Small-caps eyebrow above a block ("WHAT DRIVES IT"). Uppercase with
+    // tracking reads a size larger than it is, so this is the one role
+    // allowed below 11sp — and only for all-caps text.
+    val caps = 10.sp
 }
+
+/** True inside a tabbed hub, where the tab row already titles the screen. */
+val LocalInHub = compositionLocalOf { false }
 
 // ── Primitives ──────────────────────────────────────────────────────────────
 
@@ -145,13 +153,13 @@ fun Metric(
     modifier: Modifier = Modifier,
 ) {
     Column(modifier) {
-        Text(label.uppercase(), color = Muted, fontSize = 9.5.sp,
+        Text(label.uppercase(), color = Muted, fontSize = Type.caps,
             letterSpacing = 0.8.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
         Spacer(Modifier.height(3.dp))
         Text(value, color = color, fontSize = 19.sp, fontWeight = FontWeight.Bold,
             maxLines = 1, overflow = TextOverflow.Ellipsis)
         if (sub != null) {
-            Text(sub, color = Muted, fontSize = 10.5.sp, maxLines = 1,
+            Text(sub, color = Muted, fontSize = Type.label, maxLines = 1,
                 overflow = TextOverflow.Ellipsis)
         }
     }
@@ -329,7 +337,7 @@ fun DisclosureRow(
                 Text(value, color = Muted, fontSize = Type.secondary)
                 Spacer(Modifier.width(Space.sm))
             }
-            Text(if (expanded) "▲" else "▼", color = Muted, fontSize = 10.sp)
+            Text(if (expanded) "▲" else "▼", color = Muted, fontSize = Type.label)
         }
         if (expanded) content()
     }

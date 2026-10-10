@@ -101,82 +101,169 @@ private fun pairedPct(arr: JSONArray?, labelKey: String)
     return Triple(l, a, b)
 }
 
+/**
+ * The last portfolio snapshot, kept for the life of the process.
+ *
+ * HomeScreen is disposed whenever you switch tabs, and it used to re-fetch
+ * from the broker on every return — a blank screen and a spinner each time
+ * you glanced back at your own book. Now the last snapshot shows instantly
+ * and a refresh runs behind it.
+ */
+private object HomeCache {
+    var data by mutableStateOf<JSONObject?>(null)
+    var risk by mutableStateOf<JSONObject?>(null)
+    var error by mutableStateOf<String?>(null)
+    var loading by mutableStateOf(false)
+    var loadedAt by mutableStateOf(0L)
+}
+
+/** One holding, parsed once, in the shape the list needs. */
+private class Holding(
+    val symbol: String,
+    val name: String?,
+    val qty: Double,
+    val value: Double,
+    val pnl: Double,
+    val pnlPct: Double,
+    val dayValue: Double,
+    val dayPct: Double,
+)
+
+private fun parseHoldings(a: JSONArray?): List<Holding> {
+    if (a == null) return emptyList()
+    val out = ArrayList<Holding>()
+    for (i in 0 until a.length()) {
+        val o = a.optJSONObject(i) ?: continue
+        fun n(k: String) = (o.opt(k) as? Number)?.toDouble() ?: 0.0
+        fun str(vararg ks: String) = ks.asSequence().map { o.optString(it) }
+            .firstOrNull { it.isNotBlank() && it != "null" }
+        val sym = str("tradingsymbol", "trading_symbol", "symbol") ?: continue
+        val ltp = n("last_price"); val chg = n("day_change")
+        val prev = ltp - chg
+        out.add(Holding(
+            symbol = sym,
+            name = str("company_name", "name")?.takeIf { !it.equals(sym, true) },
+            qty = n("quantity"), value = n("current_value"),
+            pnl = n("pnl"), pnlPct = n("pnl_pct"),
+            dayValue = n("day_change_value"),
+            dayPct = if (prev > 0) chg / prev * 100 else 0.0,
+        ))
+    }
+    return out
+}
+
+private fun signed(v: Double, pct: Boolean = false): String =
+    (if (v >= 0) "+" else "−") +
+        (if (pct) "%.2f%%".format(kotlin.math.abs(v)) else "₹" + fmtCompact(kotlin.math.abs(v)))
+
 // ─────────────────────────────────────────────────────────────────────────────
 // HOME · Portfolio
 // ─────────────────────────────────────────────────────────────────────────────
 @Composable
 fun HomeScreen() {
-    var data by remember { mutableStateOf<JSONObject?>(null) }
-    var risk by remember { mutableStateOf<JSONObject?>(null) }
-    var loading by remember { mutableStateOf(false) }
-    var error by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
 
     fun load() {
+        if (HomeCache.loading) return
         scope.launch {
-            loading = true; error = null
+            HomeCache.loading = true
             when (val r = Api.portfolio()) {
                 is Api.Resp.Ok -> {
-                    if (r.body.has("error")) error = r.body.optString("message", "Not authenticated")
-                    else data = r.body
+                    if (r.body.has("error")) {
+                        HomeCache.error = r.body.optString("message", "Not authenticated")
+                    } else {
+                        HomeCache.data = r.body; HomeCache.error = null
+                        HomeCache.loadedAt = System.currentTimeMillis()
+                    }
                 }
-                is Api.Resp.Err -> error = r.message
+                is Api.Resp.Err -> HomeCache.error = r.message
             }
-            Api.portfolioRisk().objOrNull()?.let { risk = it }
-            loading = false
+            Api.portfolioRisk().objOrNull()?.takeIf { !it.has("error") }?.let { HomeCache.risk = it }
+            HomeCache.loading = false
         }
     }
-    LaunchedEffect(Unit) { if (BackendBus.running) load() }
+    // Show what we have at once; refresh behind it if it's more than a minute old.
+    LaunchedEffect(BackendBus.running) {
+        if (BackendBus.running &&
+            System.currentTimeMillis() - HomeCache.loadedAt > 60_000) load()
+    }
 
-    ScreenScaffold(title = "Portfolio", loading = loading, onRefresh = ::load) {
+    val data = HomeCache.data
+    val risk = HomeCache.risk
+    ScreenScaffold(title = "Portfolio", loading = HomeCache.loading, onRefresh = ::load) {
         if (!BackendBus.running) { BackendOfflineHint(); return@ScreenScaffold }
-        error?.let {
-            SectionCard("Not connected", Bear) {
-                StatusBanner(it, Bear)
-                Spacer(Modifier.height(8.dp))
-                Text("Open ⋮ → Broker login (top-right) to authenticate your broker.",
-                    color = Muted, fontSize = 12.sp)
+
+        HomeCache.error?.let {
+            if (data == null) {
+                Card("Broker not connected", accent = Bear) {
+                    Lede("Sign in to your broker to see holdings, P&L and risk.")
+                    Spacer(Modifier.height(Space.sm))
+                    Note(it, Bear)
+                    Spacer(Modifier.height(Space.md))
+                    PrimaryAction("Open broker login",
+                        onClick = { UiNav.open(UiNav.Screen.Login) })
+                }
+            } else {
+                Box(Modifier.padding(horizontal = Space.edge, vertical = Space.xs)) {
+                    Banner("Couldn't refresh — showing the last snapshot. $it", Warn)
+                }
             }
         }
+        if (data == null && HomeCache.error == null) {
+            Card {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp,
+                        color = AccentHi)
+                    Spacer(Modifier.width(Space.md))
+                    Lede("Fetching your holdings from the broker…")
+                }
+            }
+        }
+
         data?.let { d ->
             val s = d.optJSONObject("summary") ?: JSONObject()
             fun num(k: String) = (s.opt(k) as? Number)?.toDouble() ?: 0.0
-            val pnl = num("holdings_pnl")
-            val pct = num("holdings_pnl_pct")
-            val day = num("day_change_value")
-            SectionCard("Portfolio value", AccentHi) {
-                Text("₹" + fmtNum(s.opt("holdings_value")), color = OnBg,
-                    fontSize = 30.sp, fontWeight = FontWeight.Bold)
-                Spacer(Modifier.height(6.dp))
+            val holdings = remember(d) { parseHoldings(arr(d, "holdings")) }
+            val total = num("holdings_value")
+
+            // ── Hero: the number you opened the app for ──
+            Card {
+                Note("PORTFOLIO VALUE")
+                Spacer(Modifier.height(Space.xs))
+                Text("₹" + fmtNum(kotlin.math.round(total).toLong()), color = OnBg,
+                    fontSize = Type.display, fontWeight = Type.displayWeight)
+                Spacer(Modifier.height(Space.xs))
+                val pnl = num("holdings_pnl"); val day = num("day_change_value")
                 Row(verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    val up = pnl >= 0
-                    Text((if (up) "▲ ₹" else "▼ ₹") + fmtNum(kotlin.math.abs(pnl)) +
-                        "  (%.2f%%)".format(pct), color = if (up) Bull else Bear,
-                        fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
-                    Pill((if (day >= 0) "Day ▲ ₹" else "Day ▼ ₹") + fmtNum(kotlin.math.abs(day)),
-                        if (day >= 0) Bull else Bear)
+                    horizontalArrangement = Arrangement.spacedBy(Space.sm)) {
+                    Text(signed(pnl) + "  (" + signed(num("holdings_pnl_pct"), true) + ")",
+                        color = if (pnl >= 0) Bull else Bear, fontSize = Type.body,
+                        fontWeight = FontWeight.SemiBold)
+                    Note("all time")
                 }
-                Spacer(Modifier.height(14.dp))
-                KpiGrid(listOf(
+                Spacer(Modifier.height(Space.md))
+                MetricGrid(listOf(
+                    Triple("Today", signed(day), if (day >= 0) Bull else Bear),
                     Triple("Invested", "₹" + fmtCompact(s.opt("holdings_invested")), OnBg),
-                    Triple("Holdings", fmtNum(s.opt("n_holdings")), OnBg),
                 ))
             }
-            SectionCard("Holdings", AccentHi) { DataTable(arr(d, "holdings")) }
+
+            // ── Holdings: a list you can read without swiping sideways ──
+            if (holdings.isNotEmpty()) HoldingsCard(holdings, total)
+
             arr(d, "positions")?.takeIf { it.length() > 0 }?.let {
-                SectionCard("Positions", AccentHi) { DataTable(it) }
+                Card("Open positions", subtitle = "Intraday and short-term") { DataTable(it) }
             }
-            SectionCard("Allocation", AccentHi) {
-                DonutChart(remember(d) { allocationSlices(arr(d, "allocation")) })
-                Spacer(Modifier.height(10.dp))
-                DataTable(arr(d, "allocation"))
+
+            arr(d, "allocation")?.takeIf { it.length() > 0 }?.let { al ->
+                Card("Allocation") {
+                    DonutChart(remember(d) { allocationSlices(al) })
+                }
             }
         }
-        risk?.let { rk ->
-            SectionCard("Concentration risk", Warn) { DataTable(arr(rk, "concentration"), 20) }
-            SectionCard("Underperformers", Bear) { DataTable(arr(rk, "underperformers"), 20) }
-        }
+
+        risk?.let { rk -> RiskCard(rk) }
+
         if (data != null) {
             AiInsightCard(
                 jobKey = "ai_risk_review",
@@ -187,7 +274,104 @@ fun HomeScreen() {
                 cta = "✨ Review my risk",
                 accent = Warn,
             ) { Api.aiRiskReview() }
-            Spacer(Modifier.height(24.dp))
+        }
+    }
+}
+
+@Composable
+private fun HoldingsCard(holdings: List<Holding>, total: Double) {
+    var sort by remember { mutableStateOf("value") }
+    var showAll by remember { mutableStateOf(false) }
+    val sorted = remember(holdings, sort) {
+        when (sort) {
+            "pnl" -> holdings.sortedByDescending { it.pnlPct }
+            "day" -> holdings.sortedByDescending { it.dayPct }
+            else -> holdings.sortedByDescending { it.value }
+        }
+    }
+    val shown = if (showAll) sorted else sorted.take(8)
+
+    Card("Holdings", subtitle = "${holdings.size} stocks · tap one for a deep dive") {
+        ChipRow(
+            listOf("value" to "Largest", "pnl" to "Best P&L", "day" to "Today"),
+            selected = sort, onSelect = { sort = it },
+        )
+        Spacer(Modifier.height(Space.sm))
+        shown.forEachIndexed { i, h ->
+            if (i > 0) Divider(color = BorderCol.copy(alpha = 0.5f))
+            HoldingRow(h, if (total > 0) h.value / total * 100 else 0.0)
+        }
+        if (sorted.size > 8) {
+            Spacer(Modifier.height(Space.sm))
+            SecondaryAction(
+                if (showAll) "Show fewer" else "Show all ${sorted.size}",
+                onClick = { showAll = !showAll },
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+    }
+}
+
+@Composable
+private fun HoldingRow(h: Holding, weightPct: Double) {
+    Row(
+        Modifier.fillMaxWidth()
+            .clickable { UiNav.open(UiNav.Screen.DeepDive(h.symbol)) }
+            .padding(vertical = Space.md),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(h.symbol, color = OnBg, fontSize = Type.body, fontWeight = FontWeight.SemiBold,
+                maxLines = 1)
+            Text(
+                listOfNotNull(
+                    h.name,
+                    "${fmtNum(h.qty)} sh",
+                    "%.1f%% of book".format(weightPct),
+                ).joinToString(" · "),
+                color = Muted, fontSize = Type.label, maxLines = 1,
+                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+            )
+        }
+        Spacer(Modifier.width(Space.sm))
+        Column(horizontalAlignment = Alignment.End) {
+            Text("₹" + fmtCompact(h.value), color = OnBg, fontSize = Type.body,
+                fontWeight = FontWeight.SemiBold)
+            Row {
+                Text(signed(h.pnlPct, true), color = if (h.pnl >= 0) Bull else Bear,
+                    fontSize = Type.label)
+                Text("  today " + signed(h.dayPct, true),
+                    color = if (h.dayValue >= 0) Bull.copy(alpha = 0.75f) else Bear.copy(alpha = 0.75f),
+                    fontSize = Type.label)
+            }
+        }
+    }
+}
+
+/** Concentration and laggards, collapsed until you want the detail. */
+@Composable
+private fun RiskCard(rk: JSONObject) {
+    val conc = arr(rk, "concentration")
+    val under = arr(rk, "underperformers")
+    val nConc = conc?.length() ?: 0
+    val nUnder = under?.length() ?: 0
+    var openConc by remember { mutableStateOf(false) }
+    var openUnder by remember { mutableStateOf(false) }
+    Card("Risk check", accent = if (nConc + nUnder > 0) Warn else Bull) {
+        if (nConc + nUnder == 0) {
+            Lede("No position above the concentration limit and nothing down " +
+                "more than 10% — nothing to flag.")
+        } else {
+            DisclosureRow("Concentrated positions",
+                if (nConc == 0) "none" else "$nConc", openConc, { openConc = !openConc }) {
+                DataTable(conc, 20)
+                Spacer(Modifier.height(Space.sm))
+            }
+            Divider(color = BorderCol.copy(alpha = 0.5f))
+            DisclosureRow("Down more than 10%",
+                if (nUnder == 0) "none" else "$nUnder", openUnder, { openUnder = !openUnder }) {
+                DataTable(under, 20)
+            }
         }
     }
 }
@@ -208,27 +392,16 @@ fun QuantScreen() {
 
     ScreenScaffold(title = "DR-Quant", loading = job.running, onRefresh = null) {
         if (!BackendBus.running) { BackendOfflineHint(); return@ScreenScaffold }
-        SectionCard("Deep dive a stock", AccentHi) {
-            Text("Drill into last-2-quarter results, valuation issues, and a quant " +
-                "entry price for any symbol (or a funnel-validated one).",
-                color = Muted, fontSize = 12.sp)
-            Spacer(Modifier.height(8.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                OutlinedTextField(symInput, { symInput = it.uppercase() },
-                    label = { Text("Symbol (e.g. RELIANCE)") }, singleLine = true,
-                    modifier = Modifier.weight(1f))
-                Spacer(Modifier.width(8.dp))
-                Button(onClick = { if (symInput.isNotBlank()) UiNav.open(UiNav.Screen.DeepDive(symInput.trim())) },
-                    enabled = symInput.isNotBlank()) { Text("🔍 Dive") }
-            }
-        }
-        SectionCard("Funnel", Bull) {
+        SectionCard("Run the funnel", Bull) {
+            Lede("Screens the universe, validates fundamentals and technicals, " +
+                "and favours names that still have room to run over ones that already moved.")
+            Spacer(Modifier.height(Space.md))
             UniversePicker(universe) { universe = it }
             Spacer(Modifier.height(10.dp))
             Button(
                 onClick = {
                     JobBus.run("quant",
-                        "Running on-device · watch the Terminal for live progress…") {
+                        "Running on-device — progress shows in the bar above…") {
                         Api.quantRun(universe)
                     }
                 },
@@ -237,7 +410,6 @@ fun QuantScreen() {
             ) { Text(if (job.running) "Running…" else "▶ Run funnel") }
             job.status?.let { Spacer(Modifier.height(8.dp)); StatusBanner(it, if (job.running) Warn else Bear) }
         }
-        macro?.let { m -> MacroCard(m) }
         job.result?.let { res ->
             val p = res.optJSONObject("portfolio")
             val validated = arr(res, "validated")
@@ -252,13 +424,13 @@ fun QuantScreen() {
                     Spacer(Modifier.height(10.dp))
                     val names = (0 until rej.length()).joinToString(", ") { rej.optString(it) }
                     Text("Rejected ${rej.length()}: $names", color = Muted,
-                        fontSize = 11.sp, lineHeight = 16.sp)
+                        fontSize = Type.secondary, lineHeight = 18.sp)
                 }
             }
             if (validated != null && validated.length() > 0) {
                 SectionCard("Validated picks", Bull) {
                     Text("The names that survived the funnel, with why each one passed.",
-                        color = Muted, fontSize = 11.sp)
+                        color = Muted, fontSize = Type.secondary)
                     Spacer(Modifier.height(4.dp))
                     for (i in 0 until validated.length()) {
                         validated.optJSONObject(i)?.let { v ->
@@ -269,6 +441,21 @@ fun QuantScreen() {
             }
             arr(res, "intraday_alerts")?.takeIf { it.length() > 0 }?.let {
                 SectionCard("Intraday alerts", Warn) { DataTable(it) }
+            }
+        }
+        macro?.let { m -> MacroCard(m) }
+        SectionCard("Look up one stock", AccentHi) {
+            Text("Drill into last-2-quarter results, valuation issues, and a quant " +
+                "entry price for any symbol (or a funnel-validated one).",
+                color = Muted, fontSize = Type.secondary)
+            Spacer(Modifier.height(8.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                OutlinedTextField(symInput, { symInput = it.uppercase() },
+                    label = { Text("Symbol (e.g. RELIANCE)") }, singleLine = true,
+                    modifier = Modifier.weight(1f))
+                Spacer(Modifier.width(8.dp))
+                Button(onClick = { if (symInput.isNotBlank()) UiNav.open(UiNav.Screen.DeepDive(symInput.trim())) },
+                    enabled = symInput.isNotBlank()) { Text("🔍 Dive") }
             }
         }
     }
@@ -298,12 +485,12 @@ private fun MacroCard(m: JSONObject) {
     }
     SectionCard("Market backdrop", Warn) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("Regime", color = Muted, fontSize = 11.sp)
+            Text("Regime", color = Muted, fontSize = Type.secondary)
             Spacer(Modifier.width(10.dp))
             Pill(regime, regimeColor)
             Spacer(Modifier.weight(1f))
             m.optString("as_of").takeIf { it.isNotBlank() }?.let {
-                Text(it.replace("T", " "), color = Muted, fontSize = 10.sp)
+                Text(it.replace("T", " "), color = Muted, fontSize = Type.label)
             }
         }
         Spacer(Modifier.height(12.dp))
@@ -316,8 +503,8 @@ private fun MacroCard(m: JSONObject) {
         arr(m, "reasons")?.takeIf { it.length() > 0 }?.let { rs ->
             Spacer(Modifier.height(12.dp))
             for (i in 0 until rs.length())
-                Text("• " + rs.optString(i), color = Muted, fontSize = 11.sp,
-                    lineHeight = 16.sp, modifier = Modifier.padding(vertical = 1.dp))
+                Text("• " + rs.optString(i), color = Muted, fontSize = Type.secondary,
+                    lineHeight = 18.sp, modifier = Modifier.padding(vertical = 1.dp))
         }
         arr(m, "notes")?.takeIf { it.length() > 0 }?.let { ns ->
             Spacer(Modifier.height(10.dp))
@@ -355,21 +542,21 @@ private fun ValidatedCard(v: JSONObject, onDeepDive: () -> Unit) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text(v.optString("symbol", "—"), color = OnBg,
-                    fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                    fontSize = Type.heading, fontWeight = FontWeight.Bold)
                 v.optString("sector").takeIf { it.isNotBlank() && it != "null" }?.let {
-                    Text(it, color = Muted, fontSize = 11.sp)
+                    Text(it, color = Muted, fontSize = Type.secondary)
                 }
             }
             Column(horizontalAlignment = Alignment.End) {
                 Text(score?.let { "%.0f".format(it) } ?: "—",
                     color = scoreColor, fontSize = 22.sp, fontWeight = FontWeight.Bold)
-                Text("HEALTH", color = Muted, fontSize = 9.sp, letterSpacing = 0.6.sp)
+                Text("HEALTH", color = Muted, fontSize = Type.caps, letterSpacing = 0.6.sp)
             }
         }
 
         v.optString("thesis").takeIf { it.isNotBlank() && it != "null" }?.let {
             Spacer(Modifier.height(10.dp))
-            Text(it, color = OnBg.copy(alpha = 0.9f), fontSize = 12.5.sp, lineHeight = 18.sp)
+            Text(it, color = OnBg.copy(alpha = 0.9f), fontSize = Type.secondary, lineHeight = 18.sp)
         }
 
         // Only show metrics the model actually returned — a row of "null"s is
@@ -387,9 +574,9 @@ private fun ValidatedCard(v: JSONObject, onDeepDive: () -> Unit) {
                 horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                 metrics.forEach { (label, value) ->
                     Column {
-                        Text(label, color = Muted, fontSize = 9.5.sp, letterSpacing = 0.5.sp)
+                        Text(label, color = Muted, fontSize = Type.caps, letterSpacing = 0.5.sp)
                         Spacer(Modifier.height(2.dp))
-                        Text(value, color = OnBg, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                        Text(value, color = OnBg, fontSize = Type.body, fontWeight = FontWeight.SemiBold)
                     }
                 }
             }
@@ -397,19 +584,19 @@ private fun ValidatedCard(v: JSONObject, onDeepDive: () -> Unit) {
 
         arr(v, "key_risks")?.takeIf { it.length() > 0 }?.let { risks ->
             Spacer(Modifier.height(12.dp))
-            Text("KEY RISKS", color = Muted, fontSize = 9.5.sp, letterSpacing = 0.6.sp)
+            Text("KEY RISKS", color = Muted, fontSize = Type.caps, letterSpacing = 0.6.sp)
             Spacer(Modifier.height(4.dp))
             for (i in 0 until risks.length()) {
                 val r = risks.optString(i)
                 if (r.isNotBlank() && r != "null")
-                    Text("• $r", color = Warn.copy(alpha = 0.92f), fontSize = 11.5.sp,
-                        lineHeight = 16.sp, modifier = Modifier.padding(vertical = 1.dp))
+                    Text("• $r", color = Warn.copy(alpha = 0.92f), fontSize = Type.secondary,
+                        lineHeight = 18.sp, modifier = Modifier.padding(vertical = 1.dp))
             }
         }
 
         Spacer(Modifier.height(12.dp))
         TextButton(onClick = onDeepDive, contentPadding = PaddingValues(0.dp)) {
-            Text("🔍 Deep dive ${v.optString("symbol")}", color = AccentHi, fontSize = 12.sp)
+            Text("🔍 Deep dive ${v.optString("symbol")}", color = AccentHi, fontSize = Type.secondary)
         }
         // Take the idea on paper without leaving the card.
         GhostInvestRow(v.optString("symbol"), source = "dr-quant")
@@ -446,14 +633,11 @@ fun ThemesScreen() {
             Text("Pulls recent macro, news (domestic + global), and Reddit chatter, " +
                 "maps them to sectors, and picks stocks from your Universe Map — " +
                 "then allocates an amount toward the efficient frontier.",
-                color = Muted, fontSize = 12.sp)
+                color = Muted, fontSize = Type.secondary)
             Spacer(Modifier.height(8.dp))
-            Text("Freshness window", color = Muted, fontSize = 11.sp)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                listOf(7, 14, 30).forEach { d ->
-                    FilterChip(selected = days == d, onClick = { days = d }, label = { Text("${d}d") })
-                }
-            }
+            Note("LOOK BACK OVER")
+            ChipRow(listOf(7 to "7 days", 14 to "14 days", 30 to "30 days"),
+                selected = days, onSelect = { days = it })
             Spacer(Modifier.height(10.dp))
             Button(
                 onClick = {
@@ -471,28 +655,35 @@ fun ThemesScreen() {
         job.result?.let { r ->
             val macro = r.optJSONObject("macro")
             val counts = r.optJSONObject("counts")
-            SectionCard("As of ${r.optString("as_of")} · last ${r.optInt("window_days")}d", AccentHi) {
-                StatusBanner("Market mode: ${macro?.optString("mode", "—")}  ·  " +
-                    "VIX ${macro?.opt("india_vix")} · PCR ${macro?.opt("nifty_pcr")} · " +
-                    "USDINR ${macro?.opt("usdinr")}\nSignals: ${counts?.optInt("news") ?: 0} news, " +
-                    "${counts?.optInt("reddit") ?: 0} reddit, ${counts?.optInt("universe") ?: 0} universe stocks",
-                    AccentHi)
+            Card("Market backdrop",
+                subtitle = "As of ${r.optString("as_of")} · last ${r.optInt("window_days")} days") {
+                fun v(k: String) = macro?.opt(k)?.takeIf { it != JSONObject.NULL }?.let(::fmtNum) ?: "—"
+                MetricGrid(listOf(
+                    Triple("Mode", macro?.optString("mode")?.takeIf { it.isNotBlank() && it != "null" } ?: "—", AccentHi),
+                    Triple("India VIX", v("india_vix"), OnBg),
+                    Triple("Nifty PCR", v("nifty_pcr"), OnBg),
+                    Triple("USD/INR", v("usdinr"), OnBg),
+                ))
+                Spacer(Modifier.height(Space.sm))
+                Note("Read ${counts?.optInt("news") ?: 0} news items, " +
+                    "${counts?.optInt("reddit") ?: 0} corroborated Reddit posts and " +
+                    "${counts?.optInt("universe") ?: 0} universe stocks.")
             }
             r.optString("macro_view").takeIf { it.isNotBlank() }?.let { view ->
                 SectionCard("Holistic macro view", AccentHi) {
-                    Text(view, color = OnBg, fontSize = 13.sp, lineHeight = 19.sp)
+                    Text(view, color = OnBg, fontSize = Type.body, lineHeight = 20.sp)
                 }
             }
             val picks = r.optJSONArray("picks")
             if (picks == null || picks.length() == 0) {
                 SectionCard("No picks", Muted) { Text("No high-conviction picks from recent " +
                     "signals. Build/refresh the Universe Map for more coverage.",
-                    color = Muted, fontSize = 12.sp) }
+                    color = Muted, fontSize = Type.secondary) }
             } else {
                 SectionCard("Top picks (${picks.length()})", Bull) {
                     FreshnessLine("themes")
                     Text("All factors weighed together. Tap a stock for the full deep dive.",
-                        color = Muted, fontSize = 11.sp)
+                        color = Muted, fontSize = Type.secondary)
                 }
                 for (i in 0 until picks.length()) {
                     val p = picks.optJSONObject(i) ?: continue
@@ -502,9 +693,9 @@ fun ThemesScreen() {
                     val e = p.optJSONObject("entry")
                     SectionCard(sym, col, trailing = { Pill(conv, col) }) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(p.optString("sector", ""), color = Muted, fontSize = 11.sp,
+                            Text(p.optString("sector", ""), color = Muted, fontSize = Type.secondary,
                                 modifier = Modifier.weight(1f))
-                            Text("🔍 deep dive", color = AccentHi, fontSize = 11.sp,
+                            Text("🔍 deep dive", color = AccentHi, fontSize = Type.secondary,
                                 modifier = Modifier.clickable { UiNav.open(UiNav.Screen.DeepDive(sym)) })
                         }
                         if (e != null) {
@@ -516,7 +707,7 @@ fun ThemesScreen() {
                         }
                         Spacer(Modifier.height(8.dp))
                         Text(p.optString("thesis", ""), color = OnBg.copy(alpha = 0.9f),
-                            fontSize = 13.sp, lineHeight = 18.sp)
+                            fontSize = Type.body, lineHeight = 20.sp)
                         Spacer(Modifier.height(6.dp))
                         GhostInvestRow(sym, source = "ideas")
                     }
@@ -529,7 +720,7 @@ fun ThemesScreen() {
                 SectionCard("Allocate toward the frontier", Bull) {
                     Text("Deploy an amount across these ${tickers.size} idea stocks to best " +
                         "improve your portfolio's risk/return (₹ + whole shares).",
-                        color = Muted, fontSize = 12.sp)
+                        color = Muted, fontSize = Type.secondary)
                     Spacer(Modifier.height(8.dp))
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         OutlinedTextField(cash, { cash = it.filter { c -> c.isDigit() } },
@@ -622,7 +813,7 @@ fun MapScreen() {
                 Text("The first full build crawls every stock and can take a long while — " +
                     "it saves as it goes, so stopping and running it again later picks up " +
                     "where it left off rather than starting over.",
-                    color = Muted, fontSize = 10.5.sp, lineHeight = 15.sp)
+                    color = Muted, fontSize = Type.label, lineHeight = 15.sp)
             }
 
             if (job.running) {
@@ -633,17 +824,17 @@ fun MapScreen() {
                         modifier = Modifier.fillMaxWidth(), color = AccentHi, trackColor = Panel2)
                     Spacer(Modifier.height(6.dp))
                     Text("%.0f%% · %s".format(pct * 100, job.detail ?: "working…"),
-                        color = Muted, fontSize = 11.sp)
+                        color = Muted, fontSize = Type.secondary)
                 } else {
                     LinearProgressIndicator(modifier = Modifier.fillMaxWidth(),
                         color = AccentHi, trackColor = Panel2)
                     Spacer(Modifier.height(6.dp))
                     Text(job.detail ?: "Scanning the universe for price data…",
-                        color = Muted, fontSize = 11.sp)
+                        color = Muted, fontSize = Type.secondary)
                 }
                 Spacer(Modifier.height(6.dp))
                 Text("Safe to leave this screen — the crawl keeps running and saves " +
-                    "its progress every 25 stocks.", color = Muted, fontSize = 10.sp)
+                    "its progress every 25 stocks.", color = Muted, fontSize = Type.label)
             }
             job.status?.let { Spacer(Modifier.height(8.dp)); StatusBanner(it, if (job.running) Warn else Bear) }
         }
@@ -673,7 +864,7 @@ fun MapScreen() {
                 rep.optString("built_at").takeIf { it.isNotBlank() }?.let {
                     Spacer(Modifier.height(8.dp))
                     Text("Built ${it.take(16).replace("T", " ")} UTC · ${rep.optString("universe")}",
-                        color = Muted, fontSize = 10.sp)
+                        color = Muted, fontSize = Type.label)
                 }
             }
         }
@@ -690,13 +881,13 @@ fun MapScreen() {
                 Text("Where every stock sits on balance-sheet quality (→) against price " +
                     "action (↑). Both lines split at a score of 50, so the corner a " +
                     "stock lands in is what matters.",
-                    color = Muted, fontSize = 11.sp, lineHeight = 16.sp)
+                    color = Muted, fontSize = Type.secondary, lineHeight = 18.sp)
                 Spacer(Modifier.height(12.dp))
                 QuadrantScatterChart(pts, xLabel = "Fundamental score",
                     yLabel = "Technical score", highlight = quadrant)
                 Spacer(Modifier.height(12.dp))
                 Text("Tap a quadrant to filter the table below.",
-                    color = Muted, fontSize = 11.sp)
+                    color = Muted, fontSize = Type.secondary)
                 Spacer(Modifier.height(8.dp))
                 Quadrant.values().forEach { q ->
                     val n = pts.count { quadrantOf(it.x, it.y) == q }
@@ -708,14 +899,14 @@ fun MapScreen() {
                     Spacer(Modifier.height(10.dp))
                     Text("${stocks.length() - pts.size} stocks aren't plotted — they have " +
                         "no fundamental score yet (still being crawled, or the source " +
-                        "had nothing).", color = Muted, fontSize = 10.sp, lineHeight = 15.sp)
+                        "had nothing).", color = Muted, fontSize = Type.label, lineHeight = 15.sp)
                 }
             }
             val shown = filterByQuadrant(stocks, quadrant)
             SectionCard(quadrant?.let { "Universe · ${it.label}" } ?: "Universe", AccentHi) {
                 if (quadrant != null) {
                     Text("${shown.length()} stocks · ${quadrant!!.blurb}",
-                        color = Muted, fontSize = 11.sp)
+                        color = Muted, fontSize = Type.secondary)
                     Spacer(Modifier.height(8.dp))
                 }
                 DataTable(shown, 80)
@@ -741,10 +932,10 @@ private fun QuadrantRow(q: Quadrant, count: Int, selected: Boolean, onClick: () 
             .background(q.tint))
         Spacer(Modifier.width(10.dp))
         Column(Modifier.weight(1f)) {
-            Text(q.label, color = OnBg, fontSize = 12.5.sp, fontWeight = FontWeight.Medium)
-            Text(q.blurb, color = Muted, fontSize = 10.5.sp)
+            Text(q.label, color = OnBg, fontSize = Type.secondary, fontWeight = FontWeight.Medium)
+            Text(q.blurb, color = Muted, fontSize = Type.label)
         }
-        Text("$count", color = q.tint, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+        Text("$count", color = q.tint, fontSize = Type.body, fontWeight = FontWeight.Bold)
     }
 }
 
@@ -806,7 +997,7 @@ private fun filterByQuadrant(arr: JSONArray, q: Quadrant?): JSONArray {
 @Composable
 fun AnalysisScreen() {
     // Ghost has its own bottom tab now; Analysis is the tools for your own book.
-    var sub by remember { mutableStateOf("Performance") }
+    val sub = UiNav.analysisTab
     val tabs = listOf("Performance", "Optimize", "Screener", "Intraday", "KB")
     Column(Modifier.fillMaxSize()) {
         ScrollableTabRow(
@@ -814,7 +1005,7 @@ fun AnalysisScreen() {
             containerColor = Bg, edgePadding = 12.dp,
         ) {
             tabs.forEach { t ->
-                Tab(selected = sub == t, onClick = { sub = t },
+                Tab(selected = sub == t, onClick = { UiNav.analysisTab = t },
                     text = { Text(t, fontSize = Type.body) })
             }
         }
@@ -839,7 +1030,7 @@ fun AnalysisScreen() {
         SectionCard("Screener funnel", AccentHi) {
             UniversePicker(universe) { universe = it }
             Spacer(Modifier.height(6.dp))
-            Text("Min score: $minScore", color = Muted, fontSize = 12.sp)
+            Text("Min score: $minScore", color = Muted, fontSize = Type.secondary)
             Slider(value = minScore.toFloat(), onValueChange = { minScore = it.toInt() },
                 valueRange = 0f..100f)
             Button(onClick = {
@@ -859,7 +1050,7 @@ fun AnalysisScreen() {
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
         if (!BackendBus.running) { BackendOfflineHint(); return@Column }
         SectionCard("Trade analysis", AccentHi) {
-            Text("Lookback: $days days", color = Muted, fontSize = 12.sp)
+            Text("Lookback: $days days", color = Muted, fontSize = Type.secondary)
             Slider(value = days.toFloat(), onValueChange = { days = it.toInt() }, valueRange = 30f..365f)
             Button(onClick = {
                 JobBus.run("intraday", "Analysing your trades…") { Api.intradayAnalyze(days) }
@@ -884,7 +1075,7 @@ fun AnalysisScreen() {
                 val mistakes = r.optJSONArray("mistakes")
                 if (mistakes != null && mistakes.length() > 0) SectionCard("Mistakes", Bear) {
                     for (i in 0 until mistakes.length())
-                        Text("• ${mistakes.optString(i)}", color = OnBg, fontSize = 12.sp,
+                        Text("• ${mistakes.optString(i)}", color = OnBg, fontSize = Type.secondary,
                             modifier = Modifier.padding(vertical = 2.dp))
                 }
             }
@@ -905,7 +1096,7 @@ fun AnalysisScreen() {
         SectionCard("Performance over time", AccentHi) {
             Text("Reconstructs your portfolio value day-by-day from your executed " +
                 "orders, vs the capital you put in — plus money-weighted return (XIRR), " +
-                "winners and losers.", color = Muted, fontSize = 12.sp)
+                "winners and losers.", color = Muted, fontSize = Type.secondary)
             Spacer(Modifier.height(10.dp))
             Button(onClick = {
                 JobBus.run("performance",
@@ -940,7 +1131,7 @@ fun AnalysisScreen() {
                         else
                             "Period returns are raw value growth (this run predates cash-flow " +
                             "tracking) — re-run the analysis for time-weighted figures.",
-                        color = Muted, fontSize = 10.sp, lineHeight = 15.sp)
+                        color = Muted, fontSize = Type.label, lineHeight = 15.sp)
                 }
             }
             val curve = arr(r, "equity_curve")
@@ -984,7 +1175,7 @@ fun AnalysisScreen() {
                 SectionCard("Lost opportunity — sold too early", Warn) {
                     Text("Stocks you fully exited that are worth more now. " +
                         "\"Missed\" = (price now − your avg sell) × qty sold.",
-                        color = Muted, fontSize = 11.sp)
+                        color = Muted, fontSize = Type.secondary)
                     Spacer(Modifier.height(10.dp))
                     KpiGrid(listOf(
                         Triple("Total left on table", "₹" + fmtCompact(missed), Bear),
@@ -1043,7 +1234,7 @@ private fun BenchmarkSection(report: JSONObject) {
     SectionCard("You vs the market", AccentHi) {
         Text("Time-weighted return, so deposits and withdrawals don't count as " +
             "gains — this measures your stock picking against the index on equal terms.",
-            color = Muted, fontSize = 12.sp, lineHeight = 17.sp)
+            color = Muted, fontSize = Type.secondary, lineHeight = 18.sp)
         Spacer(Modifier.height(10.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp),
             modifier = Modifier.horizontalScroll(rememberScrollState())) {
@@ -1093,7 +1284,7 @@ private fun BenchmarkSection(report: JSONObject) {
         Spacer(Modifier.height(14.dp))
         val (pSeries, iSeries) = remember(b) { rebasedSeries(arr(b, "series")) }
         if (pSeries.size >= 2) {
-            Text("₹100 invested a year ago", color = Muted, fontSize = 11.sp)
+            Text("₹100 invested a year ago", color = Muted, fontSize = Type.secondary)
             Spacer(Modifier.height(6.dp))
             LineChart(listOf(
                 ChartSeries(pSeries, "You", AccentHi, filled = true),
@@ -1121,7 +1312,7 @@ private fun BenchmarkSection(report: JSONObject) {
         ))
         Spacer(Modifier.height(10.dp))
         Text(readBeta(d("beta"), d("up_capture_pct"), d("down_capture_pct")),
-            color = Muted, fontSize = 11.sp, lineHeight = 16.sp)
+            color = Muted, fontSize = Type.secondary, lineHeight = 18.sp)
     }
 
     // Rolling trailing-1Y return — "moving return", the shape of your form.
@@ -1130,7 +1321,7 @@ private fun BenchmarkSection(report: JSONObject) {
         SectionCard("Rolling 1-year return", Bull) {
             Text("At every point, what you made over the previous 12 months versus " +
                 "the index. Flat stretches above the index line are consistency; " +
-                "spikes are single bets landing.", color = Muted, fontSize = 11.sp, lineHeight = 16.sp)
+                "spikes are single bets landing.", color = Muted, fontSize = Type.secondary, lineHeight = 18.sp)
             Spacer(Modifier.height(10.dp))
             LineChart(listOf(
                 ChartSeries(rollP, "You (1Y trailing)", AccentHi),
@@ -1156,7 +1347,7 @@ private fun BenchmarkSection(report: JSONObject) {
     }
     (b ?: JSONObject()).optString("note").takeIf { it.isNotBlank() }?.let {
         SectionCard("How this is measured", Muted) {
-            Text(it, color = Muted, fontSize = 11.sp, lineHeight = 16.sp)
+            Text(it, color = Muted, fontSize = Type.secondary, lineHeight = 18.sp)
         }
     }
 }
@@ -1209,7 +1400,7 @@ private fun xyPct(o: JSONObject?): Pair<Float, Float>? {
 
         SectionCard("Invest new cash → allocation", Bull) {
             Text("Enter an amount; I'll suggest how to deploy it (₹ + whole shares) " +
-                "to best improve your portfolio's risk/return.", color = Muted, fontSize = 12.sp)
+                "to best improve your portfolio's risk/return.", color = Muted, fontSize = Type.secondary)
             Spacer(Modifier.height(8.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
                 OutlinedTextField(cash, { cash = it.filter { ch -> ch.isDigit() } },
@@ -1238,7 +1429,7 @@ private fun xyPct(o: JSONObject?): Pair<Float, Float>? {
                     Triple("Sharpe after", fmtNum(after?.opt("sharpe")), Bull),
                 ))
                 Spacer(Modifier.height(10.dp))
-                Text("Buy", color = Muted, fontSize = 11.sp)
+                Text("Buy", color = Muted, fontSize = Type.secondary)
                 Spacer(Modifier.height(4.dp))
                 DataTable(allocationBuys(arr(d, "buys")))
             }
@@ -1251,7 +1442,7 @@ private fun xyPct(o: JSONObject?): Pair<Float, Float>? {
                 }
             }
             Spacer(Modifier.height(6.dp))
-            Text("Max weight per name: $maxW%", color = Muted, fontSize = 12.sp)
+            Text("Max weight per name: $maxW%", color = Muted, fontSize = Type.secondary)
             Slider(value = maxW.toFloat(), onValueChange = { maxW = it.toInt() }, valueRange = 5f..100f)
             Button(
                 onClick = {
@@ -1358,7 +1549,7 @@ fun TerminalScreen() {
     }
     Column(Modifier.fillMaxSize().padding(12.dp)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Text("System Terminal", color = OnBg, fontSize = 16.sp, fontWeight = FontWeight.SemiBold,
+            Text("System Terminal", color = OnBg, fontSize = Type.heading, fontWeight = FontWeight.SemiBold,
                 modifier = Modifier.weight(1f))
             val (lbl, col2) = when (BackendBus.state.value) {
                 BackendBus.State.RUNNING -> "● RUNNING" to Bull
@@ -1370,7 +1561,7 @@ fun TerminalScreen() {
         }
         BackendBus.backendBuild.value?.let {
             Spacer(Modifier.height(4.dp))
-            Text("engine build $it", color = Muted, fontSize = 10.sp,
+            Text("engine build $it", color = Muted, fontSize = Type.label,
                 fontFamily = FontFamily.Monospace)
         }
         Spacer(Modifier.height(8.dp))
@@ -1380,7 +1571,7 @@ fun TerminalScreen() {
                 .background(Color(0xFF010409)).padding(8.dp),
         ) {
             items(BackendBus.logs.size) { i ->
-                Text(BackendBus.logs[i], color = AccentHi, fontFamily = FontFamily.Monospace, fontSize = 11.sp)
+                Text(BackendBus.logs[i], color = AccentHi, fontFamily = FontFamily.Monospace, fontSize = Type.secondary)
             }
         }
         Spacer(Modifier.height(8.dp))
@@ -1409,17 +1600,17 @@ fun ChatScreen() {
     Column(Modifier.fillMaxSize().padding(12.dp)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
-                Text("AI Assistant", color = OnBg, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                Text("AI Assistant", color = OnBg, fontSize = Type.heading, fontWeight = FontWeight.SemiBold)
                 Text("Knows your portfolio, the latest DR-Quant run, the Universe " +
                     "Map, your benchmark stats and the calendar.",
-                    color = Muted, fontSize = 11.sp, lineHeight = 15.sp)
+                    color = Muted, fontSize = Type.secondary, lineHeight = 18.sp)
             }
             if (msgs.isNotEmpty()) TextButton(onClick = { ChatBus.clear() }) {
-                Text("Clear", fontSize = 12.sp)
+                Text("Clear", fontSize = Type.secondary)
             }
         }
         Spacer(Modifier.height(8.dp))
-        if (!BackendBus.running) StatusBanner("Start the backend first (Terminal ▶).", Warn)
+        if (!BackendBus.running) StatusBanner("Start the engine first (⋮ → System terminal ▶).", Warn)
         LazyColumn(state = listState, modifier = Modifier.weight(1f).fillMaxWidth(),
             verticalArrangement = Arrangement.spacedBy(8.dp)) {
             items(msgs.size) { i ->
@@ -1432,7 +1623,7 @@ fun ChatScreen() {
                                 androidx.compose.foundation.shape.RoundedCornerShape(12.dp))
                             .padding(10.dp)
                     ) {
-                        if (m.fromUser) Text(m.text, color = OnBg, fontSize = 13.sp)
+                        if (m.fromUser) Text(m.text, color = OnBg, fontSize = Type.body)
                         else MarkdownText(m.text)
                     }
                 }
@@ -1443,7 +1634,7 @@ fun ChatScreen() {
             CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp, color = AccentHi)
             Spacer(Modifier.width(8.dp))
             Text("Thinking — you can leave this screen, the answer will be here.",
-                color = Muted, fontSize = 11.sp)
+                color = Muted, fontSize = Type.secondary)
         }
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             OutlinedTextField(ChatBus.draft, { ChatBus.draft = it },
@@ -1478,11 +1669,11 @@ fun DeepDiveScreen(symbol: String) {
                     CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp, color = AccentHi)
                     Spacer(Modifier.width(10.dp))
                     Text("Pulling results PDFs, fundamentals & the price model…",
-                        color = Muted, fontSize = 12.sp)
+                        color = Muted, fontSize = Type.secondary)
                 }
                 Spacer(Modifier.height(8.dp))
                 Text("This keeps running if you navigate away or minimise the app.",
-                    color = Muted, fontSize = 10.5.sp)
+                    color = Muted, fontSize = Type.label)
             }
         }
         job.status?.takeIf { !job.running }?.let {
@@ -1516,7 +1707,7 @@ fun DeepDiveScreen(symbol: String) {
                         "These come from public financial sites, which sometimes " +
                         "block or rate-limit us; the Universe Map's stored values " +
                         "are used as a fallback where it has them.",
-                        color = Muted, fontSize = 10.5.sp, lineHeight = 15.sp)
+                        color = Muted, fontSize = Type.label, lineHeight = 15.sp)
                 }
                 prov?.let { pv ->
                     val stored = pv.keys().asSequence()
@@ -1525,7 +1716,7 @@ fun DeepDiveScreen(symbol: String) {
                         Spacer(Modifier.height(6.dp))
                         Text("From the Universe Map (stored): " +
                             stored.joinToString(", ") { prettyMetric(it) },
-                            color = Muted, fontSize = 10.sp)
+                            color = Muted, fontSize = Type.label)
                     }
                 }
             }
@@ -1533,7 +1724,7 @@ fun DeepDiveScreen(symbol: String) {
             SectionCard("Take it on paper", Bull) {
                 Text("Book this at the live price and track it in the ghost " +
                     "portfolio — the system will then review it for exits like a " +
-                    "real position.", color = Muted, fontSize = 11.sp, lineHeight = 16.sp)
+                    "real position.", color = Muted, fontSize = Type.secondary, lineHeight = 18.sp)
                 Spacer(Modifier.height(8.dp))
                 GhostInvestRow(symbol, source = "deep-dive")
             }
@@ -1561,7 +1752,7 @@ fun DeepDiveScreen(symbol: String) {
                     Spacer(Modifier.height(8.dp)); StatusBanner(it, Bear)
                 }
                 a.optString("raw").takeIf { it.isNotBlank() }?.let {
-                    Spacer(Modifier.height(8.dp)); Text(it, color = Muted, fontSize = 11.sp)
+                    Spacer(Modifier.height(8.dp)); Text(it, color = Muted, fontSize = Type.secondary)
                 }
             }
 
@@ -1569,7 +1760,7 @@ fun DeepDiveScreen(symbol: String) {
                 SectionCard("Sources", Muted) {
                     for (i in 0 until srcs.length())
                         Text("• ${srcs.optJSONObject(i)?.optString("title")}",
-                            color = Muted, fontSize = 11.sp, maxLines = 2, lineHeight = 15.sp,
+                            color = Muted, fontSize = Type.secondary, maxLines = 2, lineHeight = 18.sp,
                             modifier = Modifier.padding(vertical = 2.dp))
                 }
             }
@@ -1648,10 +1839,10 @@ private fun SeasonalityCard(symbol: String) {
                 Text("${it.optString("label")}: positive in ${fmtNum(it.opt("win_rate"))}% " +
                     "of years, t-stat ${fmtNum(it.opt("t_stat"))} " +
                     "(above ~2 is where a pattern starts to look real).",
-                    color = Muted, fontSize = 10.5.sp, lineHeight = 15.sp)
+                    color = Muted, fontSize = Type.label, lineHeight = 15.sp)
             }
             Spacer(Modifier.height(10.dp))
-            Text(r.optString("caveat"), color = Muted, fontSize = 10.sp, lineHeight = 14.sp)
+            Text(r.optString("caveat"), color = Muted, fontSize = Type.label, lineHeight = 15.sp)
         }
     }
 }
@@ -1683,18 +1874,18 @@ private fun prettyMetric(key: String): String = when (key) {
 private fun deepText(label: String, value: String?) {
     if (value.isNullOrBlank()) return
     Spacer(Modifier.height(8.dp))
-    Text(label, color = Muted, fontSize = 11.sp)
-    Text(value, color = OnBg, fontSize = 13.sp, lineHeight = 18.sp)
+    Text(label, color = Muted, fontSize = Type.secondary)
+    Text(value, color = OnBg, fontSize = Type.body, lineHeight = 20.sp)
 }
 
 @Composable
 private fun deepList(label: String, arr: org.json.JSONArray?, color: Color) {
     if (arr == null || arr.length() == 0) return
     Spacer(Modifier.height(8.dp))
-    Text(label, color = color, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+    Text(label, color = color, fontSize = Type.secondary, fontWeight = FontWeight.SemiBold)
     for (i in 0 until arr.length())
-        Text("• ${arr.optString(i)}", color = OnBg.copy(alpha = 0.9f), fontSize = 12.sp,
-            lineHeight = 16.sp, modifier = Modifier.padding(vertical = 1.dp))
+        Text("• ${arr.optString(i)}", color = OnBg.copy(alpha = 0.9f), fontSize = Type.secondary,
+            lineHeight = 18.sp, modifier = Modifier.padding(vertical = 1.dp))
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1707,39 +1898,53 @@ fun ScreenScaffold(
     onRefresh: (() -> Unit)?,
     content: @Composable ColumnScope.() -> Unit,
 ) {
+    // Inside a hub (Discover) the tab row already names the screen, so a second
+    // big title would only push the content down.
+    val inHub = LocalInHub.current
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
-        Row(Modifier.fillMaxWidth().padding(start = 16.dp, top = 12.dp, end = 12.dp),
-            verticalAlignment = Alignment.CenterVertically) {
-            Text(title, color = OnBg, fontSize = Type.title, fontWeight = FontWeight.Bold,
-                modifier = Modifier.weight(1f))
-            if (loading) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = AccentHi)
-            else if (onRefresh != null) TextButton(onClick = onRefresh) { Text("Refresh") }
+        if (!inHub || loading || onRefresh != null) {
+            Row(Modifier.fillMaxWidth().padding(start = Space.edge, top = if (inHub) 0.dp else Space.md, end = Space.md),
+                verticalAlignment = Alignment.CenterVertically) {
+                if (!inHub) {
+                    Text(title, color = OnBg, fontSize = Type.title, fontWeight = FontWeight.Bold,
+                        modifier = Modifier.weight(1f))
+                } else Spacer(Modifier.weight(1f))
+                if (loading) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = AccentHi)
+                else if (onRefresh != null) TextButton(onClick = onRefresh) {
+                    Text("Refresh", fontSize = Type.secondary)
+                }
+            }
         }
         content()
-        Spacer(Modifier.height(24.dp))
+        Spacer(Modifier.height(Space.xl))
     }
 }
 
 @Composable
 fun ColumnScope.BackendOfflineHint() {
-    SectionCard("Backend offline", Warn) {
-        Text("The on-device engine isn't running yet.", color = OnBg, fontSize = 13.sp)
-        Spacer(Modifier.height(10.dp))
-        Button(onClick = { BackendBus.onStart() }, modifier = Modifier.fillMaxWidth(),
-            colors = ButtonDefaults.buttonColors(containerColor = Bull)) { Text("▶ Start backend") }
-        Spacer(Modifier.height(6.dp))
-        Text("Watch progress in the Terminal tab.", color = Muted, fontSize = 11.sp)
+    val starting = BackendBus.state.value == BackendBus.State.STARTING
+    Card("The engine is off", accent = Warn) {
+        Lede("Everything in this app runs on an analysis engine inside the phone. " +
+            "It isn't running yet.")
+        Spacer(Modifier.height(Space.md))
+        PrimaryAction(if (starting) "Starting…" else "Start the engine",
+            onClick = { BackendBus.onStart() }, busy = starting, color = Bull)
+        Spacer(Modifier.height(Space.sm))
+        Note("First start takes a little longer. Progress: ⋮ → System terminal.")
     }
 }
 
 @Composable
 fun UniversePicker(selected: String, onSelect: (String) -> Unit) {
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        UNIVERSES.forEach { u ->
-            FilterChip(selected = u == selected, onClick = { onSelect(u) }, label = { Text(u) })
-        }
-    }
+    ChipRow(
+        UNIVERSES.map { it to UNIVERSE_LABELS.getOrDefault(it, it) },
+        selected = selected, onSelect = onSelect,
+        modifier = Modifier.horizontalScroll(rememberScrollState()),
+    )
 }
+
+private val UNIVERSE_LABELS = mapOf(
+    "nifty50" to "NIFTY 50", "nifty100" to "NIFTY 100", "all_nse" to "All NSE")
 
 // ─────────────────────────────────────────────────────────────────────────────
 // AI insight card — one reusable shell for every LLM application.
@@ -1760,7 +1965,7 @@ fun AiInsightCard(
 ) {
     val job = JobBus.state(jobKey)
     SectionCard(title, accent) {
-        Text(blurb, color = Muted, fontSize = 12.sp, lineHeight = 17.sp)
+        Text(blurb, color = Muted, fontSize = Type.secondary, lineHeight = 18.sp)
         Spacer(Modifier.height(10.dp))
         Button(
             onClick = {
@@ -1785,7 +1990,7 @@ fun AiInsightCard(
                     Text("Grounded in ${g.optInt("events")} scheduled events and " +
                         "${g.optInt("news")} recent headlines" +
                         (if (g.optBoolean("has_benchmark")) ", plus your benchmark stats." else "."),
-                        color = Muted, fontSize = 10.sp)
+                        color = Muted, fontSize = Type.label)
                 }
             } else {
                 StatusBanner(r.optString("error", "The model returned nothing."), Bear)
@@ -1858,44 +2063,28 @@ fun CalendarScreen() {
         }
     }
 
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
-        if (!BackendBus.running) { BackendOfflineHint(); return@Column }
+    val refresh = {
+        JobBus.clear("calendar")
+        JobBus.run("calendar", "Reading the Fed calendar, RBI and 18 news feeds…",
+            maxSecs = 240) { Api.calendar(horizon, 7, refresh = true) }
+    }
+    val view = UiNav.calendarView
+
+    ScreenScaffold(title = "Calendar", loading = job.running, onRefresh = refresh) {
+        if (!BackendBus.running) { BackendOfflineHint(); return@ScreenScaffold }
 
         val data = job.result
-        SectionCard("Market calendar", AccentHi) {
-            Text("What's scheduled that can move your book — central-bank decisions, " +
-                "inflation and jobs prints, results season, expiry — plus the news " +
-                "bulletin behind it.", color = Muted, fontSize = 12.sp, lineHeight = 17.sp)
-            Spacer(Modifier.height(12.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                listOf(30, 60, 90).forEach { h ->
-                    FilterChip(selected = horizon == h, onClick = { horizon = h },
-                        label = { Text("${h}d") })
-                }
+        Column(Modifier.padding(horizontal = Space.edge)) {
+            Lede("Central-bank decisions, inflation and jobs prints, results " +
+                "season, expiry — and the headlines behind them.")
+            Spacer(Modifier.height(Space.md))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                ChipRow(listOf(30 to "30 days", 60 to "60 days", 90 to "90 days"),
+                    selected = horizon, onSelect = { horizon = it })
                 Spacer(Modifier.weight(1f))
-                FilterChip(selected = highOnly, onClick = { highOnly = !highOnly },
-                    label = { Text("High only") })
             }
-            Spacer(Modifier.height(10.dp))
-            Button(
-                onClick = {
-                    JobBus.clear("calendar")
-                    JobBus.run("calendar", "Reading the Fed calendar, RBI and 18 news feeds…",
-                        maxSecs = 240) { Api.calendar(horizon, 7, refresh = true) }
-                },
-                enabled = !job.running, modifier = Modifier.fillMaxWidth(),
-            ) { Text(if (job.running) "Refreshing…" else "⟳ Refresh calendar") }
             job.status?.let {
-                Spacer(Modifier.height(8.dp)); StatusBanner(it, if (job.running) Warn else Bear)
-            }
-            data?.optJSONObject("counts")?.let { c ->
-                Spacer(Modifier.height(12.dp))
-                KpiGrid(listOf(
-                    Triple("Upcoming", fmtNum(c.opt("upcoming")), OnBg),
-                    Triple("Confirmed dates", fmtNum(c.opt("confirmed")), Bull),
-                    Triple("Headlines", fmtNum(c.opt("bulletin")), OnBg),
-                    Triple("Window", "${horizon}d", Muted),
-                ))
+                Spacer(Modifier.height(Space.sm)); Banner(it, if (job.running) Warn else Bear)
             }
         }
 
@@ -1909,87 +2098,118 @@ fun CalendarScreen() {
             accent = Bull,
         ) { Api.aiBrief() }
 
+        if (data == null && !job.running) {
+            EmptyState("📅", "No calendar loaded",
+                "Pull the schedule of market-moving events and today's headlines.",
+                "Load calendar", refresh)
+        }
+
         data?.let { d ->
             val today = d.optString("today")
             // The horizon chip narrows what's already loaded, so it responds
             // instantly; Refresh is what widens the fetched window.
             val cutoff = isoPlusDays(horizon)
             val fetchedTo = d.optJSONObject("window")?.optString("to") ?: cutoff
-            val events = arr(d, "events") ?: JSONArray()
-            val rows = ArrayList<JSONObject>()
-            for (i in 0 until events.length()) {
-                val e = events.optJSONObject(i) ?: continue
-                val dt = e.optString("date")
-                if (dt < today || dt > cutoff) continue            // outside window
-                if (highOnly && e.optString("importance") != "HIGH") continue
-                rows.add(e)
+            val rows = remember(d, horizon, highOnly) {
+                val events = arr(d, "events") ?: JSONArray()
+                val out = ArrayList<JSONObject>()
+                for (i in 0 until events.length()) {
+                    val e = events.optJSONObject(i) ?: continue
+                    val dt = e.optString("date")
+                    if (dt < today || dt > cutoff) continue            // outside window
+                    if (highOnly && e.optString("importance") != "HIGH") continue
+                    out.add(e)
+                }
+                out
             }
-            SectionCard("Scheduled events", Warn) {
-                if (rows.isEmpty()) {
-                    StatusBanner("Nothing scheduled in this window. Widen it or turn " +
-                        "off \"High only\".", Muted)
-                } else {
-                    Text("Tap an event to see what it means for your holdings.",
-                        color = Muted, fontSize = 11.sp)
-                    Spacer(Modifier.height(10.dp))
-                    var lastDate = ""
-                    rows.forEach { e ->
-                        val dt = e.optString("date")
-                        if (dt != lastDate) {
-                            lastDate = dt
-                            Text(prettyDate(dt, e.optString("weekday")),
-                                color = AccentHi, fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold,
-                                modifier = Modifier.padding(top = 12.dp, bottom = 4.dp))
-                        }
-                        EventRow(e) { UiNav.open(UiNav.Screen.EventImpact(e)) }
-                    }
-                    if (cutoff > fetchedTo) {
-                        Spacer(Modifier.height(10.dp))
-                        StatusBanner("Loaded up to $fetchedTo. Tap Refresh to pull " +
-                            "events further ahead.", Muted)
-                    }
-                    Spacer(Modifier.height(12.dp))
-                    Text(d.optString("legend"), color = Muted, fontSize = 10.sp, lineHeight = 15.sp)
+            val nNews = minOf(arr(d, "bulletin")?.length() ?: 0, 30)
+
+            Row(Modifier.padding(horizontal = Space.edge, vertical = Space.sm),
+                verticalAlignment = Alignment.CenterVertically) {
+                ChipRow(listOf("events" to "Events · ${rows.size}", "news" to "News · $nNews",
+                    "sources" to "Sources"), selected = view, onSelect = { UiNav.calendarView = it },
+                    modifier = Modifier.weight(1f).horizontalScroll(rememberScrollState()))
+            }
+            if (view == "events") {
+                Row(Modifier.padding(horizontal = Space.edge),
+                    verticalAlignment = Alignment.CenterVertically) {
+                    Text("High-impact only", color = OnBg, fontSize = Type.body,
+                        modifier = Modifier.weight(1f))
+                    Switch(checked = highOnly, onCheckedChange = { highOnly = it })
                 }
             }
 
-            arr(d, "bulletin")?.takeIf { it.length() > 0 }?.let { bl ->
-                SectionCard("News bulletin", AccentHi) {
-                    Text("Filtered to market-relevant headlines from the last few days, " +
-                        "spread across sources so no single feed dominates.",
-                        color = Muted, fontSize = 11.sp)
-                    Spacer(Modifier.height(10.dp))
-                    for (i in 0 until minOf(bl.length(), 30)) {
-                        val n = bl.optJSONObject(i) ?: continue
-                        Column(Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
-                            Text(n.optString("title"), color = OnBg, fontSize = 13.sp,
-                                lineHeight = 18.sp)
-                            Spacer(Modifier.height(3.dp))
-                            Text(n.optString("source") +
-                                (n.optString("published").takeIf { it.isNotBlank() }
-                                    ?.let { " · " + it.take(22) } ?: ""),
-                                color = Muted, fontSize = 10.sp)
+            when (view) {
+                "events" -> {
+                SectionCard("Scheduled events", Warn) {
+                    if (rows.isEmpty()) {
+                        StatusBanner("Nothing scheduled in this window. Widen it or turn " +
+                            "off \"High-impact only\".", Muted)
+                    } else {
+                        Text("Tap an event to see what it means for your holdings.",
+                            color = Muted, fontSize = Type.secondary)
+                        Spacer(Modifier.height(10.dp))
+                        var lastDate = ""
+                        rows.forEach { e ->
+                            val dt = e.optString("date")
+                            if (dt != lastDate) {
+                                lastDate = dt
+                                Text(prettyDate(dt, e.optString("weekday")),
+                                    color = AccentHi, fontSize = Type.secondary,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.padding(top = 12.dp, bottom = 4.dp))
+                            }
+                            EventRow(e) { UiNav.open(UiNav.Screen.EventImpact(e)) }
                         }
-                        if (i < minOf(bl.length(), 30) - 1)
-                            Divider(color = BorderCol.copy(alpha = 0.5f))
+                        if (cutoff > fetchedTo) {
+                            Spacer(Modifier.height(10.dp))
+                            StatusBanner("Loaded up to $fetchedTo. Tap Refresh (top right) to " +
+                                "pull events further ahead.", Muted)
+                        }
+                        Spacer(Modifier.height(12.dp))
+                        Text(d.optString("legend"), color = Muted, fontSize = Type.label, lineHeight = 15.sp)
                     }
                 }
-            }
-
-            arr(d, "sources")?.let { src ->
-                SectionCard("Sources", Muted) {
-                    for (i in 0 until src.length())
-                        Text("• " + src.optString(i), color = Muted, fontSize = 11.sp,
-                            modifier = Modifier.padding(vertical = 2.dp))
-                    d.optJSONObject("source_health")?.let { h ->
+                }
+                "news" -> {
+                arr(d, "bulletin")?.takeIf { it.length() > 0 }?.let { bl ->
+                    SectionCard("News bulletin", AccentHi) {
+                        Text("Filtered to market-relevant headlines from the last few days, " +
+                            "spread across sources so no single feed dominates.",
+                            color = Muted, fontSize = Type.secondary)
                         Spacer(Modifier.height(10.dp))
-                        SourceHealthPanel(h)
+                        for (i in 0 until minOf(bl.length(), 30)) {
+                            val n = bl.optJSONObject(i) ?: continue
+                            Column(Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
+                                Text(n.optString("title"), color = OnBg, fontSize = Type.body,
+                                    lineHeight = 20.sp)
+                                Spacer(Modifier.height(3.dp))
+                                Text(n.optString("source") +
+                                    (n.optString("published").takeIf { it.isNotBlank() }
+                                        ?.let { " · " + it.take(22) } ?: ""),
+                                    color = Muted, fontSize = Type.label)
+                            }
+                            if (i < minOf(bl.length(), 30) - 1)
+                                Divider(color = BorderCol.copy(alpha = 0.5f))
+                        }
                     }
+                }
+                }
+                else -> {
+                arr(d, "sources")?.let { src ->
+                    SectionCard("Sources", Muted) {
+                        for (i in 0 until src.length())
+                            Text("• " + src.optString(i), color = Muted, fontSize = Type.secondary,
+                                modifier = Modifier.padding(vertical = 2.dp))
+                        d.optJSONObject("source_health")?.let { h ->
+                            Spacer(Modifier.height(10.dp))
+                            SourceHealthPanel(h)
+                        }
+                    }
+                }
                 }
             }
         }
-        Spacer(Modifier.height(24.dp))
     }
 
 }
@@ -2015,13 +2235,13 @@ private fun SourceHealthPanel(h: JSONObject) {
             Spacer(Modifier.width(10.dp))
             Text(if (allOk) "All news feeds responding"
                  else "${degraded!!.length()} feed(s) not responding",
-                color = Muted, fontSize = 11.sp, modifier = Modifier.weight(1f))
-            Text(if (expanded) "▲" else "▼", color = Muted, fontSize = 10.sp)
+                color = Muted, fontSize = Type.secondary, modifier = Modifier.weight(1f))
+            Text(if (expanded) "▲" else "▼", color = Muted, fontSize = Type.label)
         }
         if (!allOk && !expanded) {
             Spacer(Modifier.height(4.dp))
             Text("Tap for detail. Others cover the gap — the pool just shrinks.",
-                color = Muted, fontSize = 10.sp)
+                color = Muted, fontSize = Type.label)
         }
         if (expanded) {
             Spacer(Modifier.height(8.dp))
@@ -2034,10 +2254,10 @@ private fun SourceHealthPanel(h: JSONObject) {
                         Text(if (ok) "●" else "●", color = if (ok) Bull else Bear, fontSize = 9.sp)
                         Spacer(Modifier.width(8.dp))
                         Text(r.optString("name"), color = OnBg.copy(alpha = 0.85f),
-                            fontSize = 11.sp, modifier = Modifier.weight(1f), maxLines = 1)
+                            fontSize = Type.secondary, modifier = Modifier.weight(1f), maxLines = 1)
                         Text(if (ok) "${r.optInt("items")} · ${r.optInt("ms")}ms"
                              else r.optString("error").take(28),
-                            color = Muted, fontSize = 10.sp)
+                            color = Muted, fontSize = Type.label)
                     }
                 }
             }
@@ -2059,7 +2279,7 @@ private fun EventRow(e: JSONObject, onClick: () -> Unit) {
         Spacer(Modifier.width(10.dp))
         Column(Modifier.weight(1f)) {
             Text(categoryIcon(e.optString("category")) + "  " + e.optString("title"),
-                color = OnBg, fontSize = 13.sp, fontWeight = FontWeight.Medium, lineHeight = 18.sp)
+                color = OnBg, fontSize = Type.body, fontWeight = FontWeight.Medium, lineHeight = 20.sp)
             Spacer(Modifier.height(5.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp),
                 verticalAlignment = Alignment.CenterVertically) {
@@ -2079,13 +2299,13 @@ fun EventImpactScreen(event: JSONObject) {
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
         SectionCard(event.optString("title"), impactColor(event.optString("importance"))) {
             Text(prettyDate(event.optString("date"), event.optString("weekday")),
-                color = AccentHi, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                color = AccentHi, fontSize = Type.body, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(8.dp))
             Text(event.optString("why"), color = OnBg.copy(alpha = 0.9f),
-                fontSize = 13.sp, lineHeight = 19.sp)
+                fontSize = Type.body, lineHeight = 20.sp)
             Spacer(Modifier.height(10.dp))
             Text("Date ${event.optString("certainty")} — source: " +
-                event.optString("source"), color = Muted, fontSize = 10.sp)
+                event.optString("source"), color = Muted, fontSize = Type.label)
         }
         AiInsightCard(
             jobKey = "ai_event:" + event.optString("date") + event.optString("title"),

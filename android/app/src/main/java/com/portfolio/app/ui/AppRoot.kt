@@ -44,7 +44,7 @@ private enum class Dest(val label: String, val icon: ImageVector) {
 /** The idea engines, one hub. Each keeps its own state while you switch. */
 @Composable
 private fun DiscoverScreen() {
-    var sub by remember { mutableStateOf("Ideas") }
+    val sub = UiNav.discoverTab
     val tabs = listOf("Ideas", "DR-Quant", "Gems", "Universe map")
     Column(Modifier.fillMaxSize()) {
         ScrollableTabRow(
@@ -52,16 +52,18 @@ private fun DiscoverScreen() {
             containerColor = Bg, edgePadding = 12.dp,
         ) {
             tabs.forEach { t ->
-                Tab(selected = sub == t, onClick = { sub = t },
+                Tab(selected = sub == t, onClick = { UiNav.discoverTab = t },
                     text = { Text(t, fontSize = Type.body) })
             }
         }
         Box(Modifier.weight(1f)) {
+            CompositionLocalProvider(LocalInHub provides true) {
             when (sub) {
                 "DR-Quant" -> QuantScreen()
                 "Gems" -> GemsScreen()
                 "Universe map" -> MapScreen()
                 else -> ThemesScreen()
+            }
             }
         }
     }

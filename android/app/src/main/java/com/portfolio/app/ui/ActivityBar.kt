@@ -47,32 +47,32 @@ fun ActivityBar() {
                 Text(
                     if (jobs.size == 1) jobs[0].second.label
                     else "${jobs.size} tasks running",
-                    color = OnBg, fontSize = 12.sp, fontWeight = FontWeight.Medium,
+                    color = OnBg, fontSize = Type.secondary, fontWeight = FontWeight.Medium,
                     modifier = Modifier.weight(1f), maxLines = 1,
                 )
-                Text(if (expanded) "▲" else "▼", color = Muted, fontSize = 10.sp)
+                Text(if (expanded) "▲" else "▼", color = Muted, fontSize = Type.label)
             }
             if (!expanded && jobs.size == 1) {
                 jobs[0].second.detail?.let {
                     Spacer(Modifier.height(3.dp))
-                    Text(it, color = Muted, fontSize = 10.sp, maxLines = 1)
+                    Text(it, color = Muted, fontSize = Type.label, maxLines = 1)
                 }
             }
             if (expanded) {
                 Spacer(Modifier.height(4.dp))
                 Text("Running in the background — you can keep using the app, and " +
                     "these continue if you minimise it.",
-                    color = Muted, fontSize = 10.sp, lineHeight = 14.sp)
+                    color = Muted, fontSize = Type.label, lineHeight = 15.sp)
                 Spacer(Modifier.height(8.dp))
                 jobs.forEach { (_, st) ->
                     Column(Modifier.fillMaxWidth().padding(vertical = 5.dp)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text("•", color = AccentHi, fontSize = 11.sp)
+                            Text("•", color = AccentHi, fontSize = Type.label)
                             Spacer(Modifier.width(8.dp))
-                            Text(st.label, color = OnBg, fontSize = 11.5.sp,
+                            Text(st.label, color = OnBg, fontSize = Type.label,
                                 modifier = Modifier.weight(1f), maxLines = 1)
                             st.progress?.let {
-                                Text("%.0f%%".format(it * 100), color = AccentHi, fontSize = 11.sp)
+                                Text("%.0f%%".format(it * 100), color = AccentHi, fontSize = Type.label)
                             }
                         }
                         st.progress?.let {
@@ -85,8 +85,8 @@ fun ActivityBar() {
                         }
                         (st.detail ?: st.status)?.let {
                             Spacer(Modifier.height(3.dp))
-                            Text(it, color = Muted, fontSize = 10.sp, maxLines = 2,
-                                lineHeight = 14.sp)
+                            Text(it, color = Muted, fontSize = Type.label, maxLines = 2,
+                                lineHeight = 15.sp)
                         }
                     }
                 }

@@ -151,7 +151,7 @@ private fun ScoreRing(score: Double, color: Color, modifier: Modifier = Modifier
             )
         }
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Text("%.0f".format(score), color = color, fontSize = 16.sp,
+            Text("%.0f".format(score), color = color, fontSize = Type.heading,
                 fontWeight = FontWeight.Bold)
             Text("GEM", color = Muted, fontSize = 7.sp, letterSpacing = 0.5.sp)
         }
@@ -178,7 +178,7 @@ fun GemsScreen() {
             Text("Names that haven't had their bull run yet — long bases, far " +
                 "from their 52-week highs — but showing early accumulation and " +
                 "a fundamental inflection.",
-                color = Muted, fontSize = 12.sp, lineHeight = 17.sp)
+                color = Muted, fontSize = Type.secondary, lineHeight = 18.sp)
             Spacer(Modifier.height(10.dp))
             Button(
                 onClick = {
@@ -202,7 +202,7 @@ fun GemsScreen() {
                 Text("Run a scan to surface stocks quietly building a base " +
                     "before the crowd notices. The last result is kept on the " +
                     "backend, so re-opening this tab is instant after the first run.",
-                    color = Muted, fontSize = 12.sp, lineHeight = 17.sp)
+                    color = Muted, fontSize = Type.secondary, lineHeight = 18.sp)
             }
             return@ScreenScaffold
         }
@@ -218,7 +218,7 @@ fun GemsScreen() {
             text(res, "generated_at").takeIf { it.isNotBlank() }?.let {
                 Spacer(Modifier.height(8.dp))
                 Text("Generated ${it.replace("T", " ").take(19)}",
-                    color = Muted, fontSize = 10.sp)
+                    color = Muted, fontSize = Type.label)
             }
         }
 
@@ -227,12 +227,12 @@ fun GemsScreen() {
                 Text("The scan completed but nothing passed every filter. " +
                     "That is the engine being picky, not broken — bases with " +
                     "accumulation AND a fundamental turn are rare by design.",
-                    color = Muted, fontSize = 12.sp, lineHeight = 17.sp)
+                    color = Muted, fontSize = Type.secondary, lineHeight = 18.sp)
             }
         } else {
             SectionCard("Hidden gems", Bull) {
                 Text("Ranked by gem score. Tap a card for the full signal " +
-                    "checklist and thesis.", color = Muted, fontSize = 11.sp)
+                    "checklist and thesis.", color = Muted, fontSize = Type.secondary)
                 Spacer(Modifier.height(4.dp))
                 gems.forEach { GemCard(it) }
             }
@@ -260,21 +260,21 @@ private fun GemCard(gem: Gem) {
             ScoreRing(gem.score, vColor)
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
-                Text(gem.symbol, color = OnBg, fontSize = 16.sp,
+                Text(gem.symbol, color = OnBg, fontSize = Type.heading,
                     fontWeight = FontWeight.Bold, maxLines = 1,
                     overflow = TextOverflow.Ellipsis)
                 if (gem.name.isNotBlank() && gem.name != gem.symbol)
-                    Text(gem.name, color = Muted, fontSize = 11.5.sp, maxLines = 1,
+                    Text(gem.name, color = Muted, fontSize = Type.secondary, maxLines = 1,
                         overflow = TextOverflow.Ellipsis)
                 if (gem.sector.isNotBlank())
-                    Text(gem.sector, color = Muted, fontSize = 11.sp, maxLines = 1,
+                    Text(gem.sector, color = Muted, fontSize = Type.secondary, maxLines = 1,
                         overflow = TextOverflow.Ellipsis)
             }
             Column(horizontalAlignment = Alignment.End) {
                 Pill(verdictLabel(gem.verdict), vColor)
                 gem.price?.let {
                     Spacer(Modifier.height(6.dp))
-                    Text("₹" + fmtNum(it), color = OnBg, fontSize = 13.sp,
+                    Text("₹" + fmtNum(it), color = OnBg, fontSize = Type.body,
                         fontWeight = FontWeight.SemiBold)
                 }
             }
@@ -297,10 +297,10 @@ private fun GemCard(gem: Gem) {
                 horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                 stats.forEach { (label, value) ->
                     Column {
-                        Text(label.uppercase(), color = Muted, fontSize = 9.5.sp,
+                        Text(label.uppercase(), color = Muted, fontSize = Type.caps,
                             letterSpacing = 0.5.sp, maxLines = 1)
                         Spacer(Modifier.height(2.dp))
-                        Text(value, color = OnBg, fontSize = 13.sp,
+                        Text(value, color = OnBg, fontSize = Type.body,
                             fontWeight = FontWeight.SemiBold, maxLines = 1)
                     }
                 }
@@ -309,19 +309,19 @@ private fun GemCard(gem: Gem) {
 
         if (!expanded) {
             Spacer(Modifier.height(10.dp))
-            Text("Tap for signals & thesis  ▼", color = Muted, fontSize = 10.sp)
+            Text("Tap for signals & thesis  ▼", color = Muted, fontSize = Type.label)
         } else {
             SignalSection("Technical signals", gem.technical, AccentHi)
             SignalSection("Fundamental signals", gem.fundamental, Bull)
             if (gem.summary.isNotBlank()) {
                 Spacer(Modifier.height(12.dp))
-                Text("THESIS", color = Muted, fontSize = 9.5.sp, letterSpacing = 0.6.sp)
+                Text("THESIS", color = Muted, fontSize = Type.caps, letterSpacing = 0.6.sp)
                 Spacer(Modifier.height(4.dp))
                 Text(gem.summary, color = OnBg.copy(alpha = 0.9f),
-                    fontSize = 12.5.sp, lineHeight = 18.sp)
+                    fontSize = Type.secondary, lineHeight = 18.sp)
             }
             Spacer(Modifier.height(10.dp))
-            Text("Tap to collapse  ▲", color = Muted, fontSize = 10.sp)
+            Text("Tap to collapse  ▲", color = Muted, fontSize = Type.label)
         }
     }
 }
@@ -331,7 +331,7 @@ private fun GemCard(gem: Gem) {
 private fun SignalSection(title: String, signals: List<GemSignal>, accent: Color) {
     if (signals.isEmpty()) return
     Spacer(Modifier.height(12.dp))
-    Text(title.uppercase(), color = accent, fontSize = 10.sp,
+    Text(title.uppercase(), color = accent, fontSize = Type.caps,
         fontWeight = FontWeight.SemiBold, letterSpacing = 0.6.sp)
     Spacer(Modifier.height(6.dp))
     signals.forEach { s ->
@@ -339,21 +339,21 @@ private fun SignalSection(title: String, signals: List<GemSignal>, accent: Color
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(if (s.passed) "✓" else "✗",
                     color = if (s.passed) Bull else Bear,
-                    fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                    fontSize = Type.body, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.width(8.dp))
-                Text(s.label, color = OnBg, fontSize = 12.5.sp,
+                Text(s.label, color = OnBg, fontSize = Type.secondary,
                     fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
                 if (s.value.isNotBlank())
                     Text(s.value, color = if (s.passed) Bull else Muted,
-                        fontSize = 11.5.sp, maxLines = 1)
+                        fontSize = Type.secondary, maxLines = 1)
                 if (s.weight > 0) {
                     Spacer(Modifier.width(8.dp))
-                    Text("w${s.weight}", color = Muted, fontSize = 10.sp)
+                    Text("w${s.weight}", color = Muted, fontSize = Type.label)
                 }
             }
             if (s.detail.isNotBlank()) {
                 Spacer(Modifier.height(2.dp))
-                Text(s.detail, color = Muted, fontSize = 11.sp, lineHeight = 15.sp,
+                Text(s.detail, color = Muted, fontSize = Type.secondary, lineHeight = 18.sp,
                     modifier = Modifier.padding(start = 21.dp))
             }
         }
